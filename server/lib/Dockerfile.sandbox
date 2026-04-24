@@ -1,0 +1,23 @@
+FROM python:3.11-slim
+
+# System packages + Node.js 20
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl wget git build-essential sqlite3 procps lsof \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python packages — web, data, scraping, testing
+RUN pip install --no-cache-dir \
+    requests httpx \
+    flask fastapi "uvicorn[standard]" \
+    numpy pandas matplotlib \
+    beautifulsoup4 lxml \
+    sqlalchemy \
+    pytest black
+
+# Global Node packages
+RUN npm install -g typescript ts-node nodemon http-server
+
+WORKDIR /workspace
+CMD ["tail", "-f", "/dev/null"]

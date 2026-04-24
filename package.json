@@ -1,0 +1,29 @@
+{
+  "name": "hive",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "concurrently --names \"server,client\" --prefix-colors \"blue,green\" \"node --watch server/index.js\" \"npm run dev --prefix client\"",
+    "start": "node server/index.js",
+    "test": "node --import ./server/tests/setup.js --test server/tests/**/*.test.js",
+    "test:client": "npm test --prefix client"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "better-sqlite3": "^12.8.0",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "http-proxy-middleware": "^3.0.5",
+    "js-yaml": "^4.1.1",
+    "node-cron": "^4.2.1",
+    "ws": "^8.20.0"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "supertest": "^7.2.2"
+  }
+}

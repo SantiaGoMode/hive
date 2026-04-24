@@ -1,0 +1,370 @@
+const { WebSocketServer } = require('ws');
+const db = require('../db');
+const { readAgent, touchAgent, stripProviderPrefix } = require('./agentParser');
+const { saveSession, newSessionId } = require('./sessionWriter');
+const { getToolDefinitions, executeTool, readMemory, readShared } = require('./agentTools');
+const mcpManager = require('./mcpClient');
+const activity = require('./activityTracker');
+
+const MAX_TOOL_ROUNDS = 10;
+
+function getOllamaUrl() {
+  const row = db.prepare("SELECT value FROM app_settings WHERE key = 'ollama_url'").get();
+  return row ? row.value : 'http://localhost:11434';
+}
+
+// Strip <think>...</think> blocks that reasoning models (e.g. qwen3.5) emit.
+// Called on the accumulated text after each round; not applied mid-stream so we
+// don't accidentally split a partial tag across two chunks.
+function stripThinkingBlocks(text) {
+  return text.replace(/<think>[\s\S]*?<\/think>/g, '').trimStart();
+}
+
+// Stream one Ollama request and return { text, toolCalls }
+// Sends {type:'chunk'} events to ws as text arrives.
+async function streamOllamaRound(ws, messages, model, tools, signal, options = {}) {
+  const body = {
+    model,
+    messages,
+    stream: true,
+    // Disable thinking when no tools are present — it burns tokens with no benefit
+    // for simple chat. When tools are available, allow thinking so the model can
+    // reason about which tool to call and what arguments to pass.
+    think: tools.length > 0,
+  };
+  if (tools.length > 0) body.tools = tools;
+
+  // Inference parameters (Ollama options object)
+  const opts = {};
+  if (options.temperature != null) opts.temperature = options.temperature;
+  if (options.num_predict != null) opts.num_predict  = options.num_predict;
+  if (options.num_ctx     != null) opts.num_ctx      = options.num_ctx;
+  if (Object.keys(opts).length > 0) body.options = opts;
+
+  const res = await fetch(`${getOllamaUrl()}/api/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal,
+  });
+
+  if (!res.ok) throw new Error(`Ollama HTTP ${res.status}`);
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  let text = '';
+  let toolCalls = [];
+  let doneReason = 'stop';
+  let stats = null;
+  // Buffer for detecting/stripping mid-stream <think> blocks
+  let pendingChunk = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split('\n');
+    buf = lines.pop();
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const chunk = JSON.parse(line);
+        // Tool calls arrive in a mid-stream chunk (not the done chunk) in Ollama
+        if (chunk.message?.tool_calls?.length && !chunk.done) {
+          toolCalls = chunk.message.tool_calls;
+        }
+
+        if (chunk.message?.content) {
+          pendingChunk += chunk.message.content;
+
+          // Flush safe portion: hold back any incomplete opening <think> tag
+          // so we can strip it once the closing tag arrives.
+          const hasOpenTag  = pendingChunk.includes('<think>');
+          const hasCloseTag = pendingChunk.includes('</think>');
+
+          if (hasOpenTag && hasCloseTag) {
+            // Complete block — strip it and flush clean text
+            const cleaned = stripThinkingBlocks(pendingChunk);
+            if (cleaned) {
+              text += cleaned;
+              if (ws.readyState === ws.OPEN) {
+                ws.send(JSON.stringify({ type: 'chunk', content: cleaned }));
+              }
+            }
+            pendingChunk = '';
+          } else if (hasOpenTag && !hasCloseTag) {
+            // Partial block — hold everything until the close tag arrives
+          } else {
+            // No thinking block — flush immediately
+            text += pendingChunk;
+            if (ws.readyState === ws.OPEN) {
+              ws.send(JSON.stringify({ type: 'chunk', content: pendingChunk }));
+            }
+            pendingChunk = '';
+          }
+        }
+        if (chunk.done) {
+          doneReason = chunk.done_reason || 'stop';
+          // Capture generation stats from Ollama's done chunk
+          if (chunk.eval_count && chunk.eval_duration) {
+            const tps = chunk.eval_count / (chunk.eval_duration / 1e9);
+            stats = {
+              tps: Math.round(tps),
+              output_tokens: chunk.eval_count,
+              input_tokens: chunk.prompt_eval_count || null,
+            };
+          }
+          // Flush anything remaining (handles unclosed <think> edge case)
+          if (pendingChunk) {
+            const cleaned = stripThinkingBlocks(pendingChunk);
+            if (cleaned) {
+              text += cleaned;
+              if (ws.readyState === ws.OPEN) {
+                ws.send(JSON.stringify({ type: 'chunk', content: cleaned }));
+              }
+            }
+            pendingChunk = '';
+          }
+          if (chunk.message?.tool_calls?.length) {
+            toolCalls = chunk.message.tool_calls;
+          }
+        }
+      } catch {}
+    }
+  }
+
+  return { text, toolCalls, doneReason, stats };
+}
+
+async function runChatLoop(ws, agentId, clientMessages, model, sessionId) {
+  const agent = readAgent(agentId);
+  const ollamaUrl = getOllamaUrl();
+
+  const numPredict = agent?.max_tokens    ?? 4096;
+  const numCtx     = agent?.context_length ?? 8192;
+
+  const inferenceOptions = {
+    temperature: agent?.temperature ?? 0.7,
+    num_predict: numPredict,
+    // num_ctx is the TOTAL context window (input + output). If it's smaller than
+    // num_predict, Ollama silently caps output at (num_ctx - input_tokens).
+    // Always ensure num_ctx is large enough to fit the requested output plus
+    // a generous input budget (4k tokens for system prompt + conversation history).
+    num_ctx: Math.max(numCtx, numPredict + 4096),
+  };
+
+  // Build tool list based on which tool groups the agent has enabled
+  const tools = getToolDefinitions(agent?.tools || []);
+
+  // Build system prompt
+  const agentName  = agent?.name || agentId;
+  const userPrompt = agent?.system_prompt?.trim() || '';
+
+  const identityAnchor =
+    `You are ${agentName}, an AI assistant running in Hive.\n` +
+    `Your name is ${agentName}. You are a Hive assistant.\n` +
+    `If someone says "hello" or asks who you are, introduce yourself as a Hive assistant: ` +
+    `"Hi! I'm ${agentName}, a Hive assistant. How can I help you?"\n` +
+    `Do not identify yourself as any underlying model or company.\n\n` +
+    `FORMATTING: Always use markdown to structure your responses. ` +
+    `Use bullet points or numbered lists for multiple items, bold for key terms, ` +
+    `headers for distinct sections, and code blocks for any code or commands. ` +
+    `Never write long unbroken paragraphs — break ideas into readable chunks.\n\n`;
+
+  // Inject persistent memory and shared blackboard
+  const memory = readMemory(agent?.workspace);
+  const shared = readShared(null); // null → uses ~/.hive/shared/SHARED.md
+
+  const memoryBlock = memory
+    ? `\n\n---\n[Your memory from previous sessions]\n${memory}\n---`
+    : '';
+  const sharedBlock = shared
+    ? `\n\n---\n[Shared blackboard — notes left by other agents]\n${shared}\n---`
+    : '';
+
+  const basePrompt = identityAnchor + (userPrompt || `Be helpful, direct, and concise.`) + memoryBlock + sharedBlock;
+
+  const enabledGroups = agent?.tools || [];
+  const toolDescriptions = [];
+  if (enabledGroups.includes('agent_tools')) toolDescriptions.push('agent management, collaboration, pipelines, and schedules (list/create/update/delete agents; ask another agent a question; create and run pipelines; create, delete, and toggle scheduled runs)');
+  if (enabledGroups.includes('web_search'))  toolDescriptions.push('web search and page fetching (use for current events, recent facts, or anything that may have changed since your training)');
+  if (enabledGroups.includes('memory'))      toolDescriptions.push('persistent memory (save_memory — call this to remember things across sessions)');
+
+  // MCP server context — resolve connected servers and their tool lists
+  const mcpServerIds = enabledGroups.filter(g => g.startsWith('mcp:')).map(g => g.slice(4));
+  const mcpEntries   = mcpServerIds.map(id => mcpManager.clients.get(id)).filter(Boolean);
+
+  const toolLines = [];
+  if (toolDescriptions.length > 0 || mcpEntries.length > 0) {
+    const allDesc = [...toolDescriptions];
+    for (const e of mcpEntries) {
+      allDesc.push(`${e.server.name} (MCP server: ${e.tools.length} tools)`);
+    }
+    toolLines.push(`\n\nYou have access to the following tools: ${allDesc.join('; ')}.`);
+  }
+  if (enabledGroups.includes('web_search')) {
+    toolLines.push(
+      `For any question about current events, today's news, recent facts, live data, or anything that may have changed since your training cutoff, you MUST call web_search — do not guess or answer from memory.`,
+      `Use web_fetch to read a specific page when the URL is known or returned by a search.`,
+    );
+  }
+  if (enabledGroups.includes('agent_tools')) {
+    toolLines.push(
+      `Use agent management tools when the request involves creating, editing, or delegating to another agent. ` +
+      `Use list_pipelines / create_pipeline / run_pipeline to manage multi-step agent pipelines. ` +
+      `Use list_schedules / create_schedule / delete_schedule / toggle_schedule to manage scheduled agent runs.`,
+    );
+  }
+  if (enabledGroups.includes('memory')) {
+    toolLines.push(`Use save_memory proactively: whenever the user shares their name, preferences, goals, or anything they'd want you to recall next time — save it. Rewrite the full memory each time so it stays organized.`);
+  }
+  // Inject full MCP tool catalogue so the model knows exactly what's available
+  if (mcpEntries.length > 0) {
+    const mcpBlock = mcpEntries.map(e => {
+      const toolList = e.tools.map(t =>
+        `  - \`${e.server.id}__${t.name}\`: ${t.description || '(no description)'}`
+      ).join('\n');
+      return `**${e.server.name}** (call tools as \`${e.server.id}__<toolName>\`):\n${toolList}`;
+    }).join('\n\n');
+    toolLines.push(
+      `\n\nYou have access to the following MCP (external) tools — use them proactively whenever the user's request can be served by them:\n\n${mcpBlock}`,
+    );
+  }
+  if (toolLines.length > 0) {
+    toolLines.push(`\nFor general knowledge, opinions, or anything you can answer confidently from your own training, answer directly without calling any tool.`);
+  }
+  const toolNote = toolLines.join(' ');
+
+  const systemContent = basePrompt + toolNote;
+
+  const messages = [
+    { role: 'system', content: systemContent },
+    ...clientMessages,
+  ];
+
+  const activeSessionId = sessionId || newSessionId();
+  const ctrl = new AbortController();
+  ws._abortCtrl = ctrl;
+
+  activity.setActive(agentId);
+  try {
+    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+      const { text, toolCalls, doneReason, stats } = await streamOllamaRound(
+        ws, messages, model, tools, ctrl.signal, inferenceOptions,
+      );
+
+      const assistantMsg = { role: 'assistant', content: text };
+      if (toolCalls.length) assistantMsg.tool_calls = toolCalls;
+      messages.push(assistantMsg);
+
+      if (!toolCalls.length) {
+        // Emit generation stats before done so client can show tok/s
+        if (stats && ws.readyState === ws.OPEN) {
+          ws.send(JSON.stringify({ type: 'stats', ...stats }));
+        }
+
+        // Save session: clientMessages is the clean prior history (user+assistant only,
+        // no tool intermediates). Append the final assistant response as the last entry.
+        try {
+          const ts = Date.now();
+          const saveable = [
+            ...clientMessages
+              .filter(m => m.role === 'user' || m.role === 'assistant')
+              .map(m => ({
+                role: m.role,
+                content: Array.isArray(m.content)
+                  ? m.content.filter(p => p.type === 'text').map(p => p.text).join('\n')
+                  : (m.content || ''),
+                timestamp: ts,
+              })),
+            { role: 'assistant', content: text, timestamp: ts },
+          ];
+          saveSession(agentId, activeSessionId, saveable);
+        } catch {}
+
+        if (ws.readyState === ws.OPEN) {
+          ws.send(JSON.stringify({ type: 'done', truncated: doneReason === 'length', sessionId: activeSessionId }));
+        }
+        break;
+      }
+
+      if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: 'done_partial' }));
+
+      for (const tc of toolCalls) {
+        const toolName = tc.function?.name;
+        const rawArgs  = tc.function?.arguments ?? {};
+        const toolArgs = typeof rawArgs === 'string' ? JSON.parse(rawArgs) : rawArgs;
+
+        if (ws.readyState === ws.OPEN) {
+          const serverName = mcpManager.isMcpTool(toolName) ? mcpManager.getServerName(toolName) : null;
+          ws.send(JSON.stringify({ type: 'tool_call', name: toolName, args: toolArgs, serverName }));
+        }
+
+        const result = await executeTool(toolName, toolArgs, agentId, ollamaUrl, 0, agent?.workspace, null, ws);
+
+        if (ws.readyState === ws.OPEN) {
+          ws.send(JSON.stringify({ type: 'tool_result', name: toolName, result }));
+        }
+
+        messages.push({ role: 'tool', content: JSON.stringify(result) });
+      }
+    }
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: 'stopped' }));
+    } else {
+      if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: 'error', message: err.message }));
+    }
+  } finally {
+    ws._abortCtrl = null;
+    activity.setIdle(agentId);
+  }
+}
+
+function createWebSocketServer(server) {
+  const wss = new WebSocketServer({ noServer: true });
+
+  server.on('upgrade', (req, socket, head) => {
+    if (req.url.startsWith('/ws/chat')) {
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        wss.emit('connection', ws, req);
+      });
+    } else {
+      socket.destroy();
+    }
+  });
+
+  wss.on('connection', (ws, req) => {
+    const url     = new URL(req.url, 'http://localhost');
+    const agentId = url.pathname.split('/').pop();
+
+    ws.on('message', async (data) => {
+      let payload;
+      try { payload = JSON.parse(data); } catch { return; }
+
+      if (payload.type === 'stop') {
+        if (ws._abortCtrl) { ws._abortCtrl.abort(); ws._abortCtrl = null; }
+        return;
+      }
+
+      if (payload.type === 'chat') {
+        touchAgent(agentId);
+        const model = stripProviderPrefix(payload.model || readAgent(agentId)?.model);
+        if (!model) {
+          ws.send(JSON.stringify({ type: 'error', message: 'No model configured for this agent' }));
+          return;
+        }
+        await runChatLoop(ws, agentId, payload.messages, model, payload.sessionId || null);
+      }
+    });
+
+    ws.on('close', () => {
+      if (ws._abortCtrl) { ws._abortCtrl.abort(); ws._abortCtrl = null; }
+    });
+  });
+
+  return wss;
+}
+
+module.exports = { createWebSocketServer };
