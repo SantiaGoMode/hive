@@ -1,9 +1,13 @@
 const fs   = require('fs');
 const path = require('path');
-const { getAgentsDir } = require('./agentParser');
+const { readAgent } = require('./agentParser');
 
 function getSessionsDir(agentId) {
-  const dir = path.join(getAgentsDir(), agentId, 'sessions');
+  const agent = readAgent(agentId);
+  if (!agent) throw new Error(`Agent ${agentId} not found`);
+  if (!agent.workspace) throw new Error(`Agent ${agentId} has no workspace configured`);
+
+  const dir = path.join(agent.workspace, 'sessions');
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -28,4 +32,4 @@ function newSessionId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
 
-module.exports = { saveSession, newSessionId };
+module.exports = { saveSession, newSessionId, getSessionsDir };

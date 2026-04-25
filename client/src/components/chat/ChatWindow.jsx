@@ -258,6 +258,7 @@ export function ChatWindow({ agent, initialMessages, initialSessionId, onSession
   const [dragOver, setDragOver]           = useState(false);
   const [stats, setStats]                 = useState(null);   // { tps, output_tokens, input_tokens }
   const [ollamaDown, setOllamaDown]       = useState(false);
+  const [sessionSaveError, setSessionSaveError] = useState(null);
 
   const bottomRef  = useRef(null);
   const inputRef   = useRef(null);
@@ -266,16 +267,21 @@ export function ChatWindow({ agent, initialMessages, initialSessionId, onSession
 
   // Reset when agent changes or new chat triggered externally
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMessages(initialMessages || []);
     setSessionId(initialSessionId || null);
     setStreamingText('');
     setLiveTools([]);
     setPhase('idle');
-  }, [agent.id, initialSessionId]);
+    setSessionSaveError(null);
+  }, [agent.id, initialMessages, initialSessionId]);
 
   // Accumulated tool events ref so async handlers can read latest
   const liveToolsRef = useRef([]);
-  liveToolsRef.current = liveTools;
+
+  useEffect(() => {
+    liveToolsRef.current = liveTools;
+  }, [liveTools]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -336,6 +342,7 @@ export function ChatWindow({ agent, initialMessages, initialSessionId, onSession
     setStreamingText('');
     setLiveTools([]);
     setStats(null);
+    setSessionSaveError(null);
     liveToolsRef.current = [];
 
     let currentText = '';
@@ -418,6 +425,11 @@ export function ChatWindow({ agent, initialMessages, initialSessionId, onSession
       } else if (data.type === 'stats') {
         setStats({ tps: data.tps, output_tokens: data.output_tokens, input_tokens: data.input_tokens });
 
+      } else if (data.type === 'session_save_error') {
+        const msg = data.message || 'Response generated, but Hive could not save it to chat history.';
+        setSessionSaveError(msg);
+        toast.error(msg);
+
       } else if (data.type === 'done') {
         setOllamaDown(false);
         // Combine prior-round text with final-round text into one commit
@@ -457,7 +469,7 @@ export function ChatWindow({ agent, initialMessages, initialSessionId, onSession
       setPhase('idle');
       disconnect();
     };
-  }, [input, attachments, messages, phase, agent, connect, disconnect, commitStreamingText]);
+  }, [input, attachments, messages, phase, agent, sessionId, connect, disconnect, commitStreamingText, onSessionSaved]);
 
   const handleStop = useCallback(() => {
     const ws = connect();
@@ -539,6 +551,14 @@ export function ChatWindow({ agent, initialMessages, initialSessionId, onSession
           <AlertTriangle size={13} className="flex-shrink-0" />
           <span>Ollama is not responding. Start it with <code className="bg-yellow-500/20 px-1 rounded font-mono">ollama serve</code> then try again.</span>
           <button onClick={() => setOllamaDown(false)} className="ml-auto text-yellow-500/60 hover:text-yellow-300"><X size={13} /></button>
+        </div>
+      )}
+
+      {sessionSaveError && (
+        <div className="flex items-center gap-2.5 px-4 py-2.5 bg-red-500/10 border-t border-red-500/30 text-red-300 text-xs">
+          <AlertTriangle size={13} className="flex-shrink-0" />
+          <span>{sessionSaveError}</span>
+          <button onClick={() => setSessionSaveError(null)} className="ml-auto text-red-400/70 hover:text-red-200"><X size={13} /></button>
         </div>
       )}
 
