@@ -30,10 +30,11 @@ export const api = {
   searchSessions: (q, agentId) => req('GET', `/sessions/search?q=${encodeURIComponent(q)}${agentId ? `&agent_id=${agentId}` : ''}`),
 
   // Ollama
+  getOllamaStatus: () => req('GET', '/ollama/status'),
   getModels: () => req('GET', '/ollama/models'),
   getModelInfo: (name) => req('GET', `/ollama/models/${encodeURIComponent(name)}/info`),
   deleteModel: (name) => req('DELETE', `/ollama/models/${encodeURIComponent(name)}`),
-  pullModel: (name) => `${BASE}/ollama/pull`, // returns SSE url; caller uses fetch + streams
+  pullModel: () => `${BASE}/ollama/pull`, // returns SSE url; caller uses fetch + streams
 
   // Config
   getConfig: () => req('GET', '/config'),

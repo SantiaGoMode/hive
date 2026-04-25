@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, Search, MessageSquare, Clock, Upload, Download, ChevronRight, Zap } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { Plus, Search, MessageSquare, Clock, Upload, Download, ChevronRight, Zap, CheckCircle2, AlertCircle, PlugZap, Bot } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAgentStore } from '../stores/agentStore';
 import { AgentCard } from '../components/agents/AgentCard';
 import { AgentEditor } from '../components/agents/AgentEditor';
@@ -10,16 +10,26 @@ import { AgentCardSkeleton } from '../components/ui/Skeleton';
 import { toast } from '../stores/toastStore';
 import { api } from '../lib/api';
 import { formatDate } from '../lib/utils';
+import { STARTER_MODELS, buildStarterAgent } from '../lib/starterAgent';
 
-const STARTER_MODELS = [
-  { name: 'llama3.2:3b', label: 'Llama 3.2 3B', desc: 'Fast · 2 GB · Great for everyday tasks' },
-  { name: 'mistral:7b', label: 'Mistral 7B', desc: 'Balanced · 4.1 GB · Strong reasoning' },
-  { name: 'qwen3.5:latest', label: 'Qwen 3.5', desc: 'Advanced · 6.6 GB · Tool calling + thinking' },
-];
-
-function OnboardingScreen({ onPull, onDismiss }) {
+function OnboardingScreen({ onPull, onDismiss, onReviewAgent }) {
   const [pulling, setPulling] = useState(null);
   const [progress, setProgress] = useState({});
+  const [status, setStatus] = useState(null);
+  const [checking, setChecking] = useState(false);
+
+  const checkConnection = useCallback(async () => {
+    setChecking(true);
+    try {
+      setStatus(await api.getOllamaStatus());
+    } catch (e) {
+      setStatus({ reachable: false, error: e.message });
+    } finally {
+      setChecking(false);
+    }
+  }, []);
+
+  useEffect(() => { checkConnection(); }, [checkConnection]);
 
   const handlePull = async (modelName) => {
     setPulling(modelName);
@@ -45,11 +55,13 @@ function OnboardingScreen({ onPull, onDismiss }) {
             if (d.completed && d.total) {
               setProgress(p => ({ ...p, [modelName]: Math.round((d.completed / d.total) * 100) }));
             }
-          } catch {}
+          } catch {
+            // Ignore malformed progress chunks from the Ollama stream.
+          }
         }
       }
       toast.success(`${modelName} pulled successfully`);
-      onPull();
+      await onPull(modelName);
     } catch (e) {
       toast.error(e.message);
     } finally {
@@ -65,11 +77,21 @@ function OnboardingScreen({ onPull, onDismiss }) {
         </div>
         <h1 className="text-2xl font-bold text-gray-100">Welcome to Hive</h1>
         <p className="text-gray-400 text-sm leading-relaxed">
-          Hive runs AI agents locally using Ollama. To get started, pull a model — everything stays on your machine.
+          Pull a local model, then Hive will create a starter agent and open your first chat.
         </p>
-        <p className="text-xs text-gray-600">
-          Make sure Ollama is running: <code className="bg-gray-800 px-1.5 py-0.5 rounded font-mono">ollama serve</code>
-        </p>
+        <div className="flex flex-col sm:flex-row items-center gap-2 text-xs">
+          <div className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 ${status?.reachable ? 'border-green-500/30 bg-green-500/10 text-green-300' : 'border-yellow-500/30 bg-yellow-500/10 text-yellow-300'}`}>
+            {status?.reachable ? <CheckCircle2 size={13} /> : <AlertCircle size={13} />}
+            {status?.reachable ? `Ollama connected at ${status.url}` : (status ? 'Ollama is not reachable' : 'Checking Ollama')}
+          </div>
+          <button
+            onClick={checkConnection}
+            disabled={checking}
+            className="inline-flex items-center gap-1.5 text-gray-500 hover:text-gray-300 disabled:opacity-50"
+          >
+            <PlugZap size={12} /> {checking ? 'Checking...' : 'Test connection'}
+          </button>
+        </div>
       </div>
 
       <div className="w-full flex flex-col gap-3">
@@ -88,10 +110,10 @@ function OnboardingScreen({ onPull, onDismiss }) {
             <Button
               size="sm"
               onClick={() => handlePull(m.name)}
-              disabled={!!pulling}
+              disabled={!!pulling || status?.reachable === false}
             >
               {pulling === m.name ? (
-                progress[m.name] != null ? `${progress[m.name]}%` : 'Pulling…'
+                progress[m.name] != null ? `${progress[m.name]}%` : 'Pulling...'
               ) : (
                 <><Download size={13} /> Pull</>
               )}
@@ -100,9 +122,14 @@ function OnboardingScreen({ onPull, onDismiss }) {
         ))}
       </div>
 
-      <button onClick={onDismiss} className="text-xs text-gray-600 hover:text-gray-400 flex items-center gap-1">
-        I already have models <ChevronRight size={12} />
-      </button>
+      <div className="flex items-center gap-4">
+        <button onClick={() => onReviewAgent('')} className="text-xs text-gray-500 hover:text-gray-300 flex items-center gap-1">
+          Create agent manually <ChevronRight size={12} />
+        </button>
+        <button onClick={onDismiss} className="text-xs text-gray-600 hover:text-gray-400 flex items-center gap-1">
+          I already have models <ChevronRight size={12} />
+        </button>
+      </div>
     </div>
   );
 }
@@ -160,9 +187,11 @@ function SessionSearchResults({ results, agents, onSelect }) {
 
 export function Dashboard() {
   const navigate = useNavigate();
-  const { agents, loading, error, fetchAgents, deleteAgent } = useAgentStore();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { agents, loading, error, fetchAgents, createAgent, deleteAgent } = useAgentStore();
   const [editingAgent, setEditingAgent] = useState(null);
   const [editorOpen, setEditorOpen] = useState(false);
+  const [editorInitialValues, setEditorInitialValues] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [search, setSearch] = useState('');
   const [searchMode, setSearchMode] = useState('agents'); // 'agents' | 'sessions'
@@ -179,7 +208,35 @@ export function Dashboard() {
   }, []);
 
   const handleEdit = (agent) => { setEditingAgent(agent); setEditorOpen(true); };
-  const handleCreate = () => { setEditingAgent(null); setEditorOpen(true); };
+  const handleCreate = useCallback((initialValues = null) => {
+    setEditingAgent(null);
+    setEditorInitialValues(initialValues);
+    setEditorOpen(true);
+  }, []);
+
+  const reviewStarterAgent = useCallback((modelName) => {
+    handleCreate(buildStarterAgent(modelName));
+  }, [handleCreate]);
+
+  const startStarterAgent = useCallback(async (modelName) => {
+    try {
+      const agent = await createAgent(buildStarterAgent(modelName));
+      toast.success('Starter agent created');
+      navigate(`/chat/${agent.id}`);
+    } catch (e) {
+      toast.error(e.message || 'Could not create starter agent');
+      reviewStarterAgent(modelName);
+    }
+  }, [createAgent, navigate, reviewStarterAgent]);
+
+  useEffect(() => {
+    const modelName = searchParams.get('setupModel');
+    if (!modelName) return;
+    reviewStarterAgent(modelName);
+    const next = new URLSearchParams(searchParams);
+    next.delete('setupModel');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams, reviewStarterAgent]);
 
   const handleDelete = async () => {
     await deleteAgent(deleteTarget.id);
@@ -223,6 +280,8 @@ export function Dashboard() {
     navigate(`/chat/${agentId}`, { state: { sessionId } });
   }, [navigate]);
 
+  const firstModelName = models?.[0]?.name || '';
+
   const filtered = agents.filter(a =>
     a.name.toLowerCase().includes(search.toLowerCase()) ||
     a.description?.toLowerCase().includes(search.toLowerCase()) ||
@@ -234,7 +293,11 @@ export function Dashboard() {
   if (showOnboarding) {
     return (
       <OnboardingScreen
-        onPull={() => { api.getModels().then(setModels).catch(() => {}); fetchAgents(); }}
+        onPull={async (modelName) => {
+          api.getModels().then(setModels).catch(() => {});
+          await startStarterAgent(modelName);
+        }}
+        onReviewAgent={reviewStarterAgent}
         onDismiss={() => setOnboardingDismissed(true)}
       />
     );
@@ -252,7 +315,7 @@ export function Dashboard() {
           <Button variant="secondary" onClick={() => importInputRef.current?.click()} title="Import agent from JSON">
             <Upload size={16} /> Import
           </Button>
-          <Button onClick={handleCreate} title="New agent">
+          <Button onClick={() => handleCreate()} title="New agent">
             <Plus size={16} /> New Agent
           </Button>
         </div>
@@ -302,16 +365,40 @@ export function Dashboard() {
           {[...Array(4)].map((_, i) => <AgentCardSkeleton key={i} />)}
         </div>
       ) : filtered.length === 0 ? (
-        <div className="text-center py-20">
-          <div className="text-6xl mb-4">🤖</div>
+        <div className="text-center py-20 max-w-xl mx-auto">
+          <div className="w-14 h-14 mx-auto mb-4 bg-gray-900 border border-gray-800 rounded-2xl flex items-center justify-center">
+            <Bot size={28} className="text-gray-500" />
+          </div>
           <h2 className="text-lg font-semibold text-gray-300">
             {agents.length === 0 ? 'No agents yet' : 'No results'}
           </h2>
           <p className="text-sm text-gray-500 mt-1 mb-6">
-            {agents.length === 0 ? 'Create your first agent in 30 seconds' : 'Try a different search'}
+            {agents.length === 0
+              ? (firstModelName ? `Use ${firstModelName} to start your first chat.` : 'Pull a model or create an agent manually.')
+              : 'Try a different search'}
           </p>
           {agents.length === 0 && (
-            <Button onClick={handleCreate}><Plus size={16} /> Create your first agent</Button>
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-2">
+              {firstModelName ? (
+                <>
+                  <Button onClick={() => startStarterAgent(firstModelName)}>
+                    <MessageSquare size={16} /> Start first chat
+                  </Button>
+                  <Button variant="secondary" onClick={() => reviewStarterAgent(firstModelName)}>
+                    <Plus size={16} /> Review agent
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button onClick={() => navigate('/models')}>
+                    <Download size={16} /> Pull a model
+                  </Button>
+                  <Button variant="secondary" onClick={() => handleCreate()}>
+                    <Plus size={16} /> New Agent
+                  </Button>
+                </>
+              )}
+            </div>
           )}
         </div>
       ) : (
@@ -329,8 +416,12 @@ export function Dashboard() {
 
       <AgentEditor
         open={editorOpen}
-        onClose={() => setEditorOpen(false)}
+        onClose={() => { setEditorOpen(false); setEditorInitialValues(null); }}
         agent={editingAgent}
+        initialValues={editorInitialValues}
+        onSaved={(agent) => {
+          if (!editingAgent && agent?.id) navigate(`/chat/${agent.id}`);
+        }}
       />
 
       <DeleteConfirm

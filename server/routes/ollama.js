@@ -7,6 +7,37 @@ function getOllamaUrl() {
   return row ? row.value : 'http://localhost:11434';
 }
 
+async function checkOllamaStatus() {
+  const url = getOllamaUrl();
+  try {
+    const r = await fetch(`${url}/api/tags`);
+    if (!r.ok) {
+      return {
+        reachable: false,
+        url,
+        status: r.status,
+        error: `Ollama responded with ${r.status}`,
+      };
+    }
+    const data = await r.json();
+    return {
+      reachable: true,
+      url,
+      models: data.models || [],
+    };
+  } catch (e) {
+    return {
+      reachable: false,
+      url,
+      error: e.message,
+    };
+  }
+}
+
+router.get('/status', async (req, res) => {
+  res.json(await checkOllamaStatus());
+});
+
 router.get('/models', async (req, res) => {
   try {
     const r = await fetch(`${getOllamaUrl()}/api/tags`);
@@ -80,5 +111,7 @@ router.get('/models/:name/info', async (req, res) => {
     res.status(503).json({ error: e.message });
   }
 });
+
+router.checkOllamaStatus = checkOllamaStatus;
 
 module.exports = router;

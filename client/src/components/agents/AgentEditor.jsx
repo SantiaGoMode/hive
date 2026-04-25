@@ -79,20 +79,20 @@ const TOOLS = [
 
 
 const BASE_TABS = ['Identity', 'Model', 'System Prompt', 'Tools', 'Memory', 'Advanced'];
+const AGENT_DEFAULTS = {
+  name: '', persona_name: '', persona_role: '', description: '', avatar_color: '#3b82f6',
+  model: '', temperature: 0.7, max_tokens: 4096, context_length: 8192,
+  system_prompt: '', tools: [],
+};
 
-export function AgentEditor({ open, onClose, agent }) {
+export function AgentEditor({ open, onClose, agent, initialValues = null, onSaved }) {
   const { createAgent, updateAgent } = useAgentStore();
   const [tab, setTab] = useState(0);
   const [models, setModels] = useState([]);
   const [saving, setSaving] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
-  const DEFAULTS = {
-    name: '', persona_name: '', persona_role: '', description: '', avatar_color: '#3b82f6',
-    model: '', temperature: 0.7, max_tokens: 4096, context_length: 8192,
-    system_prompt: '', tools: [],
-  };
 
-  const [form, setForm] = useState(DEFAULTS);
+  const [form, setForm] = useState(AGENT_DEFAULTS);
   const [mcpServers, setMcpServers] = useState([]);
   const [memory, setMemory] = useState('');
   const [memorySaving, setMemorySaving] = useState(false);
@@ -108,12 +108,12 @@ export function AgentEditor({ open, onClose, agent }) {
   const TABS = hasSandbox ? [...BASE_TABS, 'Sandbox'] : BASE_TABS;
 
   useEffect(() => {
-    if (agent) setForm({ ...DEFAULTS, ...agent });
-    else setForm(DEFAULTS);
+    if (agent) setForm({ ...AGENT_DEFAULTS, ...agent });
+    else setForm({ ...AGENT_DEFAULTS, ...(initialValues || {}) });
     setTab(0);
     setShowTemplates(false);
     setMemory('');
-  }, [agent, open]);
+  }, [agent, open, initialValues]);
 
   const loadMemory = useCallback(async () => {
     if (!agent?.id) return;
@@ -218,9 +218,9 @@ export function AgentEditor({ open, onClose, agent }) {
     if (!form.name.trim()) return toast.error('Name is required');
     setSaving(true);
     try {
-      if (agent) await updateAgent(agent.id, form);
-      else await createAgent(form);
+      const saved = agent ? await updateAgent(agent.id, form) : await createAgent(form);
       toast.success(agent ? 'Agent updated' : 'Agent created');
+      onSaved?.(saved);
       onClose();
     } catch (e) {
       toast.error(e.message);
@@ -577,7 +577,6 @@ export function AgentEditor({ open, onClose, agent }) {
                 ) : sandboxFiles.map(f => {
                   const name = f.replace(/^\.\//, '');
                   const depth = (name.match(/\//g) || []).length;
-                  const isDir = false; // all entries from find are paths
                   return (
                     <button key={f} onClick={() => loadSandboxFile(name)}
                       className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-left text-xs truncate transition-colors ${sandboxSelectedFile === name ? 'bg-blue-500/15 text-blue-300' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'}`}

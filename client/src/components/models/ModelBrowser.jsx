@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Download, Trash2, HardDrive, RefreshCw, Plus } from 'lucide-react';
+import { Download, Trash2, HardDrive, RefreshCw, Plus, MessageSquare, Edit3 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../../lib/api';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
@@ -7,6 +8,7 @@ import { Badge } from '../ui/Badge';
 import { formatBytes, formatDate } from '../../lib/utils';
 import { toast } from '../../stores/toastStore';
 import { DeleteConfirm } from '../agents/DeleteConfirm';
+import { buildStarterAgent } from '../../lib/starterAgent';
 
 function PullProgress({ name, onDone }) {
   const [progress, setProgress] = useState('');
@@ -15,6 +17,7 @@ function PullProgress({ name, onDone }) {
 
   useEffect(() => {
     const ctrl = new AbortController();
+    let completed = false;
     fetch('/api/ollama/pull', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -36,8 +39,14 @@ function PullProgress({ name, onDone }) {
             const data = JSON.parse(line.slice(5));
             if (data.status) setProgress(data.status);
             if (data.completed && data.total) setPct(Math.round(data.completed / data.total * 100));
-            if (data.status === 'success' || data.status === 'done') { setDone(true); onDone(); }
-          } catch {}
+            if ((data.status === 'success' || data.status === 'done') && !completed) {
+              completed = true;
+              setDone(true);
+              onDone(name);
+            }
+          } catch {
+            // Ignore malformed progress chunks from the Ollama stream.
+          }
         }
       }
     }).catch(() => {});
@@ -63,11 +72,14 @@ function PullProgress({ name, onDone }) {
 }
 
 export function ModelBrowser() {
+  const navigate = useNavigate();
   const [models, setModels] = useState([]);
   const [loading, setLoading] = useState(true);
   const [pullName, setPullName] = useState('');
   const [pulling, setPulling] = useState([]);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [readyModel, setReadyModel] = useState(null);
+  const [creatingFor, setCreatingFor] = useState(null);
 
   const load = () => {
     setLoading(true);
@@ -80,6 +92,30 @@ export function ModelBrowser() {
     if (!pullName.trim()) return;
     setPulling(prev => [...prev, pullName.trim()]);
     setPullName('');
+  };
+
+  const handlePullDone = (name) => {
+    load();
+    setReadyModel(name);
+    setPulling(prev => prev.filter(n => n !== name));
+  };
+
+  const handleStartChat = async (modelName) => {
+    setCreatingFor(modelName);
+    try {
+      const agent = await api.createAgent(buildStarterAgent(modelName));
+      toast.success('Starter agent created');
+      navigate(`/chat/${agent.id}`);
+    } catch (e) {
+      toast.error(e.message || 'Could not create starter agent');
+      navigate(`/?setupModel=${encodeURIComponent(modelName)}`);
+    } finally {
+      setCreatingFor(null);
+    }
+  };
+
+  const handleReviewAgent = (modelName) => {
+    navigate(`/?setupModel=${encodeURIComponent(modelName)}`);
   };
 
   const handleDelete = async () => {
@@ -110,8 +146,24 @@ export function ModelBrowser() {
           </Button>
         </div>
         {pulling.map(name => (
-          <PullProgress key={name} name={name} onDone={() => { load(); setPulling(prev => prev.filter(n => n !== name)); }} />
+          <PullProgress key={name} name={name} onDone={handlePullDone} />
         ))}
+        {readyModel && (
+          <div className="mt-3 flex flex-col sm:flex-row sm:items-center gap-3 rounded-lg border border-blue-500/30 bg-blue-500/10 p-3">
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-blue-200">{readyModel} is ready</p>
+              <p className="text-xs text-blue-300/70 mt-0.5">Create a starter agent and go straight to chat.</p>
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" onClick={() => handleStartChat(readyModel)} disabled={creatingFor === readyModel}>
+                <MessageSquare size={13} /> {creatingFor === readyModel ? 'Creating...' : 'Start chat'}
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => handleReviewAgent(readyModel)}>
+                <Edit3 size={13} /> Review
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Installed models */}
@@ -128,7 +180,7 @@ export function ModelBrowser() {
         <div className="text-center py-12 text-gray-500">
           <HardDrive size={40} className="mx-auto mb-3 opacity-30" />
           <p>No models installed</p>
-          <p className="text-xs mt-1">Pull a model above to get started</p>
+          <p className="text-xs mt-1">Pull a model above, then create a starter agent for chat.</p>
         </div>
       ) : (
         <div className="flex flex-col gap-2">
@@ -146,9 +198,17 @@ export function ModelBrowser() {
                   {model.modified_at && <span className="text-xs text-gray-600">{formatDate(new Date(model.modified_at).getTime())}</span>}
                 </div>
               </div>
-              <Button size="icon" variant="ghost" onClick={() => setDeleteTarget(model)} title="Delete model">
-                <Trash2 size={14} className="text-red-400" />
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button size="sm" onClick={() => handleStartChat(model.name)} disabled={creatingFor === model.name}>
+                  <MessageSquare size={14} /> {creatingFor === model.name ? 'Creating...' : 'Start Chat'}
+                </Button>
+                <Button size="icon" variant="ghost" onClick={() => handleReviewAgent(model.name)} title="Review starter agent">
+                  <Edit3 size={14} />
+                </Button>
+                <Button size="icon" variant="ghost" onClick={() => setDeleteTarget(model)} title="Delete model">
+                  <Trash2 size={14} className="text-red-400" />
+                </Button>
+              </div>
             </div>
           ))}
         </div>
