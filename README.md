@@ -154,17 +154,21 @@ scrt4 run 'OPENAI_API_KEY=$env[OPENAI_API_KEY] ANTHROPIC_API_KEY=$env[ANTHROPIC_
   GEMINI_API_KEY=$env[GEMINI_API_KEY] LITELLM_MASTER_KEY=$env[LITELLM_MASTER_KEY] \
   ./gateway/run-gateway.sh'
 
-# 2. Hive (detached; logs → ~/.hive/hive-dev.log, stop with ./stop-dev.sh)
-scrt4 run 'GITHUB_TOKEN=$env[GITHUB_TOKEN] OPENAI_API_KEY=$env[OPENAI_API_KEY] \
-  ANTHROPIC_API_KEY=$env[ANTHROPIC_API_KEY] GEMINI_API_KEY=$env[GEMINI_API_KEY] \
-  NGROK_AUTHTOKEN=$env[NGROK_AUTHTOKEN] BRAVE_API_KEY=$env[BRAVE_API_KEY] \
-  WEBHOOK_SECRET=$env[WEBHOOK_SECRET] LLM_GATEWAY_KEY=$env[LITELLM_MASTER_KEY] \
+# 2. Hive — NO cloud provider keys here. The gateway holds those; Hive reaches
+#    cloud models only through LLM_GATEWAY_KEY. Hive gets the non-LLM secrets its
+#    own integrations need (GitHub/Brave MCP servers, ngrok, webhooks).
+scrt4 run 'GITHUB_TOKEN=$env[GITHUB_TOKEN] BRAVE_API_KEY=$env[BRAVE_API_KEY] \
+  NGROK_AUTHTOKEN=$env[NGROK_AUTHTOKEN] WEBHOOK_SECRET=$env[WEBHOOK_SECRET] \
+  LLM_GATEWAY_KEY=$env[LITELLM_MASTER_KEY] \
   ./run-dev.sh'
 ```
 
 The app runs at **http://localhost:5173** (Vite proxies the API to the server on port 3001). On first boot, an onboarding screen lets you pull a model from the UI.
 
+> **Why no `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` in the Hive launch?** That's the point of the gateway: the real provider keys live *only* in the gateway container. `keyFor()` (`server/lib/providers/index.js`) reads `process.env` first, so injecting them into Hive would put the real keys in the same process that runs agent code — defeating the isolation. Hive authenticates to the gateway with `LLM_GATEWAY_KEY` instead.
 > `LLM_GATEWAY_KEY` is required only when the gateway has master-key auth enabled. Full gateway + spend/budget setup: [`gateway/README.md`](gateway/README.md).
+>
+> *(If you run **without** the gateway, then Hive does need the per-provider keys — add them to this launch and skip `LLM_GATEWAY_KEY`.)*
 
 ---
 
