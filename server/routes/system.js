@@ -5,6 +5,7 @@ const ngrokService = require('../lib/ngrokService');
 const { getSystemMemory } = require('../lib/systemMemory');
 const { getOllamaUrl, ollamaApiUrl } = require('../lib/ollamaUrl');
 const { settingSecret } = require('../lib/secrets');
+const { assertCanExposePublicly } = require('../lib/auth');
 
 // GET /api/system/status — RAM + running Ollama models
 router.get('/status', async (req, res) => {
@@ -61,6 +62,8 @@ router.post('/ngrok/start', async (req, res) => {
     if (!authtoken) {
       return res.status(400).json({ error: 'Ngrok Auth Token is not configured in settings or NGROK_AUTHTOKEN' });
     }
+
+    assertCanExposePublicly();
     
     const url = await ngrokService.startTunnel({
       authtoken,

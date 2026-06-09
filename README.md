@@ -159,7 +159,8 @@ scrt4 run 'OPENAI_API_KEY=$env[OPENAI_API_KEY] ANTHROPIC_API_KEY=$env[ANTHROPIC_
 #    own integrations need (GitHub/Brave MCP servers, ngrok, webhooks).
 scrt4 run 'GITHUB_TOKEN=$env[GITHUB_TOKEN] BRAVE_API_KEY=$env[BRAVE_API_KEY] \
   NGROK_AUTHTOKEN=$env[NGROK_AUTHTOKEN] WEBHOOK_SECRET=$env[WEBHOOK_SECRET] \
-  LLM_GATEWAY_KEY=$env[LITELLM_MASTER_KEY] \
+  LLM_GATEWAY_KEY=$env[LITELLM_MASTER_KEY] HIVE_AUTH_TOKEN=$env[HIVE_AUTH_TOKEN] \
+  VITE_HIVE_AUTH_TOKEN=$env[HIVE_AUTH_TOKEN] \
   ./run-dev.sh'
 ```
 
@@ -192,8 +193,9 @@ The app runs at **http://localhost:5173** (Vite proxies the API to the server on
 - **No plaintext secrets at rest** — verified across the repo; cloud keys live in the gateway, other tokens are `env:` references resolved from the vault at runtime.
 - **Per-agent spend budgets** cap runaway cost; the gateway enforces hard limits via per-agent virtual keys.
 - **Gateway bound to loopback** and (optionally) master-key authenticated.
+- **Hive API hardening** restricts browser CORS to localhost plus `HIVE_ALLOWED_ORIGINS` / `hive_allowed_origins`, gates API and chat WebSocket traffic with `HIVE_AUTH_TOKEN` / `hive_auth_token` when configured, and refuses to start ngrok unless Hive auth is enabled.
 
-⚠️ The server itself currently has open CORS and no app-level auth — keep it on localhost, and avoid exposing it via ngrok without adding an auth gate (tracked in [`TODO.md`](TODO.md)).
+For localhost-only development, Hive allows loopback API/WebSocket requests without a token. If you configure `HIVE_AUTH_TOKEN`, set the same token as `VITE_HIVE_AUTH_TOKEN` for the Vite client or store it in browser localStorage as `hive.authToken`.
 
 ---
 

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Download, Trash2, HardDrive, RefreshCw, Plus, Cpu } from 'lucide-react';
-import { api } from '../../lib/api';
+import { api, getHiveAuthToken } from '../../lib/api';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Badge } from '../ui/Badge';
@@ -16,9 +16,13 @@ function PullProgress({ name, onDone }) {
 
   useEffect(() => {
     const ctrl = new AbortController();
+    const token = getHiveAuthToken();
     fetch('/api/ollama/pull', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'x-hive-auth-token': token } : {}),
+      },
       body: JSON.stringify({ name }),
       signal: ctrl.signal,
     }).then(async res => {

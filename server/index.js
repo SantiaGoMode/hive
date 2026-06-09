@@ -14,16 +14,26 @@ const mcpManager = require('./lib/mcpClient');
 const ngrokService = require('./lib/ngrokService');
 const db = require('./db');
 const { settingSecret } = require('./lib/secrets');
+const {
+  assertCanExposePublicly,
+  createCorsOptions,
+  createMutatingRateLimiter,
+  createOriginGuard,
+  requireHiveAuth,
+} = require('./lib/auth');
 
 const app = express();
 const server = http.createServer(app);
 
-app.use(cors());
+app.use(createOriginGuard());
+app.use(cors(createCorsOptions()));
 app.use(express.json({
   verify: (req, res, buf) => {
     req.rawBody = buf;
   }
 }));
+app.use('/api', requireHiveAuth());
+app.use('/api', createMutatingRateLimiter());
 
 app.use('/api/agents', require('./routes/agents'));
 app.use('/api/sessions', require('./routes/sessions'));
@@ -67,6 +77,7 @@ server.listen(PORT, async () => {
     if (authtoken) {
       console.log('Starting ngrok tunnel...');
       try {
+        assertCanExposePublicly();
         const url = await ngrokService.startTunnel({
           authtoken,
           domain: rowDomain?.value || null,

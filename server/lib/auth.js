@@ -1,0 +1,208 @@
+const crypto = require('crypto');
+
+const DEFAULT_LOCAL_ORIGINS = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://localhost:5173',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:3001',
+  'http://127.0.0.1:5173',
+  'http://[::1]:3000',
+  'http://[::1]:3001',
+  'http://[::1]:5173',
+];
+
+const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+function readSetting(key) {
+  try {
+    const db = require('../db');
+    return db.prepare('SELECT value FROM app_settings WHERE key = ?').get(key)?.value || '';
+  } catch {
+    return '';
+  }
+}
+
+function splitList(value) {
+  if (!value) return [];
+  return String(value)
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function configuredAuthToken(options = {}) {
+  if (options.token !== undefined) return options.token || '';
+  return process.env.HIVE_AUTH_TOKEN || readSetting('hive_auth_token') || '';
+}
+
+function configuredAllowedOrigins(options = {}) {
+  const extra = [
+    ...splitList(process.env.HIVE_ALLOWED_ORIGINS),
+    ...splitList(readSetting('hive_allowed_origins')),
+    ...splitList(options.allowedOrigins),
+  ];
+  return new Set([...DEFAULT_LOCAL_ORIGINS, ...extra]);
+}
+
+function normalizeIp(value = '') {
+  if (!value) return '';
+  if (value.startsWith('::ffff:')) return value.slice(7);
+  return value;
+}
+
+function isLoopbackHost(hostname = '') {
+  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+}
+
+function isLoopbackAddress(address = '') {
+  const ip = normalizeIp(address);
+  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+}
+
+function isAllowedOrigin(origin, options = {}) {
+  if (!origin) return true;
+  if (configuredAllowedOrigins(options).has(origin)) return true;
+  try {
+    const url = new URL(origin);
+    return isLoopbackHost(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function getForwardedFor(req) {
+  const value = req.headers?.['x-forwarded-for'];
+  if (!value || Array.isArray(value)) return '';
+  return value.split(',')[0].trim();
+}
+
+function getRemoteAddress(req) {
+  return req.socket?.remoteAddress || req.connection?.remoteAddress || '';
+}
+
+function isLocalRequest(req, options = {}) {
+  const forwardedFor = getForwardedFor(req);
+  if (forwardedFor && !isLoopbackAddress(forwardedFor)) return false;
+  return isLoopbackAddress(getRemoteAddress(req)) && isAllowedOrigin(req.headers?.origin, options);
+}
+
+function timingSafeEqualString(a, b) {
+  const left = Buffer.from(String(a));
+  const right = Buffer.from(String(b));
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
+function extractAuthToken(req) {
+  const auth = req.headers?.authorization || '';
+  if (typeof auth === 'string' && auth.toLowerCase().startsWith('bearer ')) {
+    return auth.slice(7).trim();
+  }
+  const headerToken = req.headers?.['x-hive-auth-token'];
+  if (typeof headerToken === 'string') return headerToken.trim();
+  try {
+    const url = new URL(req.url || req.originalUrl || '/', 'http://localhost');
+    return (url.searchParams.get('hive_token') || url.searchParams.get('token') || '').trim();
+  } catch {
+    return '';
+  }
+}
+
+function hasValidAuth(req, options = {}) {
+  const expected = configuredAuthToken(options);
+  if (!expected) return isLocalRequest(req, options);
+  const actual = extractAuthToken(req);
+  return !!actual && timingSafeEqualString(actual, expected);
+}
+
+function isIncomingWebhook(req) {
+  return (req.originalUrl || req.url || '').startsWith('/api/webhooks/incoming/');
+}
+
+function createOriginGuard(options = {}) {
+  return function originGuard(req, res, next) {
+    if (!isAllowedOrigin(req.headers.origin, options)) {
+      return res.status(403).json({ error: 'Origin is not allowed by Hive CORS policy' });
+    }
+    next();
+  };
+}
+
+function createCorsOptions(options = {}) {
+  return {
+    origin(origin, callback) {
+      callback(null, origin && isAllowedOrigin(origin, options) ? origin : false);
+    },
+    credentials: true,
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-hive-auth-token'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  };
+}
+
+function requireHiveAuth(options = {}) {
+  return function hiveAuth(req, res, next) {
+    if (req.method === 'OPTIONS' || isIncomingWebhook(req)) return next();
+    if (hasValidAuth(req, options)) return next();
+    res.status(401).json({ error: 'Hive authentication is required' });
+  };
+}
+
+function createMutatingRateLimiter(options = {}) {
+  const limit = options.limit || Number(process.env.HIVE_MUTATION_RATE_LIMIT || 120);
+  const windowMs = options.windowMs || Number(process.env.HIVE_MUTATION_RATE_WINDOW_MS || 60_000);
+  const buckets = new Map();
+
+  return function mutatingRateLimiter(req, res, next) {
+    if (!MUTATING_METHODS.has(req.method) || isIncomingWebhook(req)) return next();
+
+    const now = Date.now();
+    const token = extractAuthToken(req);
+    const identity = token ? `token:${crypto.createHash('sha256').update(token).digest('hex')}` : `ip:${getRemoteAddress(req)}`;
+    const bucket = buckets.get(identity);
+
+    if (!bucket || now > bucket.resetAt) {
+      buckets.set(identity, { count: 1, resetAt: now + windowMs });
+      return next();
+    }
+
+    bucket.count += 1;
+    if (bucket.count > limit) {
+      res.set('Retry-After', String(Math.ceil((bucket.resetAt - now) / 1000)));
+      return res.status(429).json({ error: 'Too many mutating requests; slow down and retry shortly' });
+    }
+
+    next();
+  };
+}
+
+function assertCanExposePublicly(options = {}) {
+  if (!configuredAuthToken(options)) {
+    throw new Error('Hive auth must be configured with HIVE_AUTH_TOKEN or hive_auth_token before starting ngrok');
+  }
+}
+
+function rejectSocket(socket, statusCode, message) {
+  socket.write(
+    `HTTP/1.1 ${statusCode} ${message}\r\n` +
+    'Connection: close\r\n' +
+    'Content-Type: text/plain\r\n' +
+    `Content-Length: ${Buffer.byteLength(message)}\r\n` +
+    '\r\n' +
+    message
+  );
+  socket.destroy();
+}
+
+module.exports = {
+  DEFAULT_LOCAL_ORIGINS,
+  assertCanExposePublicly,
+  configuredAuthToken,
+  createCorsOptions,
+  createMutatingRateLimiter,
+  createOriginGuard,
+  hasValidAuth,
+  isAllowedOrigin,
+  rejectSocket,
+  requireHiveAuth,
+};

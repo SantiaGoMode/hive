@@ -1,7 +1,23 @@
 const BASE = '/api';
+const AUTH_STORAGE_KEY = 'hive.authToken';
+
+export function getHiveAuthToken() {
+  const envToken = import.meta.env?.VITE_HIVE_AUTH_TOKEN || '';
+  if (envToken) return envToken;
+  try {
+    return localStorage.getItem(AUTH_STORAGE_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+function authHeaders(headers = {}) {
+  const token = getHiveAuthToken();
+  return token ? { ...headers, 'x-hive-auth-token': token } : headers;
+}
 
 async function req(method, path, body) {
-  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  const opts = { method, headers: authHeaders({ 'Content-Type': 'application/json' }) };
   if (body) opts.body = JSON.stringify(body);
   const res = await fetch(`${BASE}${path}`, opts);
   if (!res.ok) {
@@ -59,7 +75,7 @@ export const api = {
   runPipeline: (id, input, signal) =>
     fetch(`${BASE}/pipelines/${id}/run`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ input }),
       signal,
     }),
@@ -68,7 +84,7 @@ export const api = {
   retryPipelineStep: (id, step_index, prev_output, input, signal) =>
     fetch(`${BASE}/pipelines/${id}/run-step`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ step_index, prev_output, input }),
       signal,
     }),
@@ -114,7 +130,7 @@ export const api = {
   launchColony: (goal, model, recipeId, opts = {}) =>
     fetch(`${BASE}/colony`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         goal, model, recipe_id: recipeId,
         team_id: opts.teamId,
@@ -132,7 +148,7 @@ export const api = {
   // Resumable tail of an existing colony. Replays log entries from the DB
   // since=<seq> and then attaches to the live bus if the run is ongoing.
   streamColony: (id, since = 0, signal) =>
-    fetch(`${BASE}/colony/${id}/stream?since=${since}`, { method: 'GET', signal }),
+    fetch(`${BASE}/colony/${id}/stream?since=${since}`, { method: 'GET', headers: authHeaders(), signal }),
 
   // Staff
   getStaffProfiles: () => req('GET', '/staff/profiles'),
@@ -190,3 +206,8 @@ export const api = {
 };
 
 export const WS_URL = `ws://${location.host}/ws/chat`;
+export function buildWebSocketUrl(agentId) {
+  const token = getHiveAuthToken();
+  const url = `${WS_URL}/${agentId}`;
+  return token ? `${url}?hive_token=${encodeURIComponent(token)}` : url;
+}

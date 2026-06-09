@@ -1,12 +1,12 @@
 import { useRef, useCallback } from 'react';
-import { WS_URL } from '../lib/api';
+import { buildWebSocketUrl } from '../lib/api';
 
 export function useWebSocket(agentId) {
   const wsRef = useRef(null);
 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return wsRef.current;
-    const ws = new WebSocket(`${WS_URL}/${agentId}`);
+    const ws = new WebSocket(buildWebSocketUrl(agentId));
     wsRef.current = ws;
     return ws;
   }, [agentId]);

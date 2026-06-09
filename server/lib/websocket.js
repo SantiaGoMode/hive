@@ -7,6 +7,7 @@ const mcpManager = require('./mcpClient');
 const activity = require('./activityTracker');
 const providers = require('./providers');
 const { getOllamaUrl } = require('./ollamaUrl');
+const { hasValidAuth, isAllowedOrigin, rejectSocket } = require('./auth');
 
 const MAX_TOOL_ROUNDS = 10;
 
@@ -255,11 +256,17 @@ async function runChatLoop(ws, agentId, clientMessages, model, sessionId) {
   }
 }
 
-function createWebSocketServer(server) {
+function createWebSocketServer(server, authOptions = {}) {
   const wss = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', (req, socket, head) => {
     if (req.url.startsWith('/ws/chat')) {
+      if (!isAllowedOrigin(req.headers.origin, authOptions)) {
+        return rejectSocket(socket, 403, 'Origin is not allowed');
+      }
+      if (!hasValidAuth(req, authOptions)) {
+        return rejectSocket(socket, 401, 'Hive authentication is required');
+      }
       wss.handleUpgrade(req, socket, head, (ws) => {
         wss.emit('connection', ws, req);
       });

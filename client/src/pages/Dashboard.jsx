@@ -8,7 +8,7 @@ import { DeleteConfirm } from '../components/agents/DeleteConfirm';
 import { Button } from '../components/ui/Button';
 import { AgentCardSkeleton } from '../components/ui/Skeleton';
 import { toast } from '../stores/toastStore';
-import { api } from '../lib/api';
+import { api, getHiveAuthToken } from '../lib/api';
 import { formatDate } from '../lib/utils';
 import { hasAnyModelOption } from '../lib/modelLabels';
 
@@ -25,9 +25,13 @@ function OnboardingScreen({ onPull, onDismiss, onCloudSetup }) {
   const handlePull = async (modelName) => {
     setPulling(modelName);
     try {
+      const token = getHiveAuthToken();
       const res = await fetch(`/api/ollama/pull`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'x-hive-auth-token': token } : {}),
+        },
         body: JSON.stringify({ name: modelName }),
       });
       const reader = res.body.getReader();

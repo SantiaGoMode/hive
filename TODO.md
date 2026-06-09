@@ -10,7 +10,7 @@ Roadmap board by the **Phase** field.
 ---
 
 ## ▶ P1 — Security & Reliability (do first)
-- [ ] 🔴 [#20](../../issues/20) API hardening — lock down CORS, add an auth gate, guard ngrok exposure
+- [x] 🔴 [#20](../../issues/20) API hardening — lock down CORS, add an auth gate, guard ngrok exposure
 - [ ] 🔴 [#21](../../issues/21) Audit sandbox path containment (prevent `../` escape)
 - [ ] 🔴 [#3](../../issues/3) Unified Run Cancellation — *parent of #37*
 - [ ] 🔴 [#2](../../issues/2) Guided First-Run Agent Setup
