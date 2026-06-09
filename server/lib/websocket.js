@@ -38,6 +38,29 @@ async function streamRound(ws, messages, model, tools, signal, options = {}) {
   return { text, toolCalls, doneReason, stats };
 }
 
+function toSessionContent(content) {
+  if (Array.isArray(content)) {
+    return content
+      .filter(part => part.type === 'text')
+      .map(part => part.text)
+      .join('\n');
+  }
+  return content || '';
+}
+
+function buildSaveableMessages(clientMessages, assistantText, timestamp = Date.now()) {
+  return [
+    ...clientMessages
+      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .map(m => ({
+        role: m.role,
+        content: toSessionContent(m.content),
+        timestamp,
+      })),
+    { role: 'assistant', content: assistantText, timestamp },
+  ];
+}
+
 async function runChatLoop(ws, agentId, clientMessages, model, sessionId) {
   const agent = readAgent(agentId);
   const ollamaUrl = getOllamaUrl();
@@ -169,25 +192,32 @@ async function runChatLoop(ws, agentId, clientMessages, model, sessionId) {
 
         // Save session: clientMessages is the clean prior history (user+assistant only,
         // no tool intermediates). Append the final assistant response as the last entry.
+        let savedSession = false;
         try {
-          const ts = Date.now();
-          const saveable = [
-            ...clientMessages
-              .filter(m => m.role === 'user' || m.role === 'assistant')
-              .map(m => ({
-                role: m.role,
-                content: Array.isArray(m.content)
-                  ? m.content.filter(p => p.type === 'text').map(p => p.text).join('\n')
-                  : (m.content || ''),
-                timestamp: ts,
-              })),
-            { role: 'assistant', content: text, timestamp: ts },
-          ];
+          const saveable = buildSaveableMessages(clientMessages, text);
           saveSession(agentId, activeSessionId, saveable);
-        } catch {}
+          savedSession = true;
+        } catch (err) {
+          console.error('[hive] failed to save chat session', {
+            agentId,
+            sessionId: activeSessionId,
+            error: err.message,
+          });
+          if (ws.readyState === ws.OPEN) {
+            ws.send(JSON.stringify({
+              type: 'session_save_error',
+              message: 'Response generated, but Hive could not save it to chat history.',
+              detail: err.message,
+            }));
+          }
+        }
 
         if (ws.readyState === ws.OPEN) {
-          ws.send(JSON.stringify({ type: 'done', truncated: doneReason === 'length', sessionId: activeSessionId }));
+          ws.send(JSON.stringify({
+            type: 'done',
+            truncated: doneReason === 'length',
+            ...(savedSession ? { sessionId: activeSessionId } : {}),
+          }));
         }
         break;
       }
@@ -270,4 +300,4 @@ function createWebSocketServer(server) {
   return wss;
 }
 
-module.exports = { createWebSocketServer };
+module.exports = { createWebSocketServer, buildSaveableMessages };
