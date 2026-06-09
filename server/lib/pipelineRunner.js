@@ -31,7 +31,21 @@ function renderStepPrompt(step, input, prev) {
     .replace(/\{prev\}/g, prev);
 }
 
-async function runPipelineById(pipelineId, input, { emit = null, hivePath = null } = {}) {
+function abortError() {
+  const err = new Error('Pipeline run was stopped');
+  err.name = 'AbortError';
+  return err;
+}
+
+function isAbortError(err, signal = null) {
+  return signal?.aborted || err?.name === 'AbortError' || err?.message === 'Pipeline run was stopped' || err?.message === 'Colony run was stopped';
+}
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw abortError();
+}
+
+async function runPipelineById(pipelineId, input, { emit = null, hivePath = null, signal = null } = {}) {
   const row = db.prepare('SELECT * FROM pipelines WHERE id = ?').get(pipelineId);
   if (!row) throw new Error('Pipeline not found');
 
@@ -58,99 +72,139 @@ async function runPipelineById(pipelineId, input, { emit = null, hivePath = null
     else db.prepare('UPDATE pipeline_runs SET trace=? WHERE id=?').run(JSON.stringify(trace), runId);
   };
 
-  for (let g = 0; g < stepGroups.length; g++) {
-    const group = stepGroups[g];
-    const groupPrev = prevOutput;
+  try {
+    throwIfAborted(signal);
 
-    for (const idx of group.indices) {
-      const step = steps[idx];
-      const agent = readAgent(step.agent_id);
-      const label = step.label || `Step ${idx + 1}`;
-      if (!agent) {
-        const entry = { step: idx, label, agent_name: step.agent_id, status: 'error', error: 'Agent not found', duration_ms: 0, group: g };
-        trace.push(entry);
-        updateTrace('error');
-        emit?.({ type: 'step_error', ...entry });
-        throw new Error(entry.error);
-      }
-      if (!agent.model) {
-        const entry = { step: idx, label, agent_name: agent.name, status: 'error', error: 'No model configured', duration_ms: 0, group: g };
-        trace.push(entry);
-        updateTrace('error');
-        emit?.({ type: 'step_error', ...entry });
-        throw new Error(entry.error);
-      }
-    }
+    for (let g = 0; g < stepGroups.length; g++) {
+      throwIfAborted(signal);
+      const group = stepGroups[g];
+      const groupPrev = prevOutput;
 
-    if (!group.parallel) {
-      const idx = group.indices[0];
-      const step = steps[idx];
-      const agent = readAgent(step.agent_id);
-      const label = step.label || `Step ${idx + 1}`;
-      const prompt = renderStepPrompt(step, cleanInput, groupPrev);
-      const toolsOverride = Array.isArray(step.tools) && step.tools.length > 0 ? step.tools : null;
-
-      emit?.({ type: 'step_start', step: idx, label, agent_name: agent.name, group: g });
-      const stepStart = Date.now();
-      try {
-        const output = await runAgentOnce(agent, [{ role: 'user', content: prompt }], ollamaUrl, 0, null, resolvedHivePath, toolsOverride);
-        const entry = { step: idx, label, agent_name: agent.name, status: 'done', output, duration_ms: Date.now() - stepStart, group: g };
-        trace.push(entry);
-        updateTrace();
-        emit?.({ type: 'step_done', ...entry });
-        prevOutput = output;
-      } catch (e) {
-        const entry = { step: idx, label, agent_name: agent.name, status: 'error', error: e.message, duration_ms: Date.now() - stepStart, group: g };
-        trace.push(entry);
-        updateTrace('error');
-        emit?.({ type: 'step_error', ...entry });
-        throw e;
-      }
-    } else {
       for (const idx of group.indices) {
         const step = steps[idx];
         const agent = readAgent(step.agent_id);
         const label = step.label || `Step ${idx + 1}`;
-        emit?.({ type: 'step_start', step: idx, label, agent_name: agent.name, group: g });
+        if (!agent) {
+          const entry = { step: idx, label, agent_name: step.agent_id, status: 'error', error: 'Agent not found', duration_ms: 0, group: g };
+          trace.push(entry);
+          updateTrace('error');
+          emit?.({ type: 'step_error', ...entry });
+          throw new Error(entry.error);
+        }
+        if (!agent.model) {
+          const entry = { step: idx, label, agent_name: agent.name, status: 'error', error: 'No model configured', duration_ms: 0, group: g };
+          trace.push(entry);
+          updateTrace('error');
+          emit?.({ type: 'step_error', ...entry });
+          throw new Error(entry.error);
+        }
       }
 
-      const results = await Promise.all(group.indices.map(async (idx) => {
+      if (!group.parallel) {
+        const idx = group.indices[0];
         const step = steps[idx];
         const agent = readAgent(step.agent_id);
         const label = step.label || `Step ${idx + 1}`;
         const prompt = renderStepPrompt(step, cleanInput, groupPrev);
         const toolsOverride = Array.isArray(step.tools) && step.tools.length > 0 ? step.tools : null;
+
+        emit?.({ type: 'step_start', step: idx, label, agent_name: agent.name, group: g });
         const stepStart = Date.now();
         try {
-          const output = await runAgentOnce(agent, [{ role: 'user', content: prompt }], ollamaUrl, 0, null, resolvedHivePath, toolsOverride);
+          throwIfAborted(signal);
+          const output = await runAgentOnce(agent, [{ role: 'user', content: prompt }], ollamaUrl, 0, null, resolvedHivePath, toolsOverride, undefined, signal);
+          throwIfAborted(signal);
           const entry = { step: idx, label, agent_name: agent.name, status: 'done', output, duration_ms: Date.now() - stepStart, group: g };
+          trace.push(entry);
+          updateTrace();
           emit?.({ type: 'step_done', ...entry });
-          return entry;
+          prevOutput = output;
         } catch (e) {
-          const entry = { step: idx, label, agent_name: agent.name, status: 'error', error: e.message, duration_ms: Date.now() - stepStart, group: g };
-          emit?.({ type: 'step_error', ...entry });
-          return entry;
+          const stopped = isAbortError(e, signal);
+          const entry = {
+            step: idx,
+            label,
+            agent_name: agent.name,
+            status: stopped ? 'stopped' : 'error',
+            error: stopped ? 'Pipeline run was stopped' : e.message,
+            duration_ms: Date.now() - stepStart,
+            group: g,
+          };
+          trace.push(entry);
+          updateTrace(stopped ? 'stopped' : 'error');
+          emit?.({ type: stopped ? 'step_stopped' : 'step_error', ...entry });
+          throw stopped ? abortError() : e;
         }
-      }));
+      } else {
+        for (const idx of group.indices) {
+          const step = steps[idx];
+          const agent = readAgent(step.agent_id);
+          const label = step.label || `Step ${idx + 1}`;
+          emit?.({ type: 'step_start', step: idx, label, agent_name: agent.name, group: g });
+        }
 
-      trace.push(...results);
-      updateTrace();
-      const failed = results.find(r => r.status === 'error');
-      if (failed) {
-        db.prepare('UPDATE pipeline_runs SET status=? WHERE id=?').run('error', runId);
-        throw new Error(failed.error);
+        const results = await Promise.all(group.indices.map(async (idx) => {
+          const step = steps[idx];
+          const agent = readAgent(step.agent_id);
+          const label = step.label || `Step ${idx + 1}`;
+          const prompt = renderStepPrompt(step, cleanInput, groupPrev);
+          const toolsOverride = Array.isArray(step.tools) && step.tools.length > 0 ? step.tools : null;
+          const stepStart = Date.now();
+          try {
+            throwIfAborted(signal);
+            const output = await runAgentOnce(agent, [{ role: 'user', content: prompt }], ollamaUrl, 0, null, resolvedHivePath, toolsOverride, undefined, signal);
+            throwIfAborted(signal);
+            const entry = { step: idx, label, agent_name: agent.name, status: 'done', output, duration_ms: Date.now() - stepStart, group: g };
+            emit?.({ type: 'step_done', ...entry });
+            return entry;
+          } catch (e) {
+            const stopped = isAbortError(e, signal);
+            const entry = {
+              step: idx,
+              label,
+              agent_name: agent.name,
+              status: stopped ? 'stopped' : 'error',
+              error: stopped ? 'Pipeline run was stopped' : e.message,
+              duration_ms: Date.now() - stepStart,
+              group: g,
+            };
+            emit?.({ type: stopped ? 'step_stopped' : 'step_error', ...entry });
+            return entry;
+          }
+        }));
+
+        trace.push(...results);
+        updateTrace();
+        const stopped = results.find(r => r.status === 'stopped');
+        if (stopped || signal?.aborted) {
+          updateTrace('stopped');
+          throw abortError();
+        }
+        const failed = results.find(r => r.status === 'error');
+        if (failed) {
+          db.prepare('UPDATE pipeline_runs SET status=? WHERE id=?').run('error', runId);
+          throw new Error(failed.error);
+        }
+        prevOutput = results.map(r => r.output).join('\n\n---\n\n');
       }
-      prevOutput = results.map(r => r.output).join('\n\n---\n\n');
     }
+
+    const total_ms = Date.now() - pipelineStart;
+    db.prepare(
+      'UPDATE pipeline_runs SET trace=?, final_output=?, total_ms=?, status=? WHERE id=?',
+    ).run(JSON.stringify(trace), prevOutput, total_ms, 'done', runId);
+
+    emit?.({ type: 'done', final_output: prevOutput, total_ms });
+    return { run_id: runId, final_output: prevOutput, total_ms, trace };
+  } catch (e) {
+    if (!isAbortError(e, signal)) throw e;
+    const total_ms = Date.now() - pipelineStart;
+    db.prepare(
+      'UPDATE pipeline_runs SET trace=?, total_ms=?, status=? WHERE id=?',
+    ).run(JSON.stringify(trace), total_ms, 'stopped', runId);
+    emit?.({ type: 'stopped', run_id: runId, total_ms });
+    throw abortError();
   }
-
-  const total_ms = Date.now() - pipelineStart;
-  db.prepare(
-    'UPDATE pipeline_runs SET trace=?, final_output=?, total_ms=?, status=? WHERE id=?',
-  ).run(JSON.stringify(trace), prevOutput, total_ms, 'done', runId);
-
-  emit?.({ type: 'done', final_output: prevOutput, total_ms });
-  return { run_id: runId, final_output: prevOutput, total_ms, trace };
 }
 
-module.exports = { groupSteps, runPipelineById, renderStepPrompt };
+module.exports = { abortError, groupSteps, isAbortError, runPipelineById, renderStepPrompt };

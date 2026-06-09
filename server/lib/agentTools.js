@@ -1773,7 +1773,7 @@ const TOOLS = {
         },
       },
     },
-    async handler({ pipeline_id, input }, { ollamaUrl, hivePath }) {
+    async handler({ pipeline_id, input }, { ollamaUrl, hivePath, signal }) {
       const row = db.prepare('SELECT * FROM pipelines WHERE id = ?').get(pipeline_id);
       if (!row) return { error: `Pipeline "${pipeline_id}" not found` };
       const steps = JSON.parse(row.steps || '[]');
@@ -1796,6 +1796,11 @@ const TOOLS = {
 
       let prevOutput = input.trim();
       for (const group of groups) {
+        if (signal?.aborted) {
+          const err = new Error('Pipeline run was stopped');
+          err.name = 'AbortError';
+          throw err;
+        }
         const groupPrev = prevOutput;
 
         // Validate all agents in the group first
@@ -1815,8 +1820,9 @@ const TOOLS = {
             .replace(/\{prev\}/g,  groupPrev);
           const toolsOverride = Array.isArray(step.tools) && step.tools.length > 0 ? step.tools : null;
           try {
-            prevOutput = await runAgentOnce(agent, [{ role: 'user', content: prompt }], ollamaUrl, 0, null, hivePath, toolsOverride);
+            prevOutput = await runAgentOnce(agent, [{ role: 'user', content: prompt }], ollamaUrl, 0, null, hivePath, toolsOverride, undefined, signal);
           } catch (e) {
+            if (e.name === 'AbortError' || signal?.aborted) throw e;
             return { error: `Step ${idx + 1} (${agent.name}) failed: ${e.message}` };
           }
         } else {
@@ -1829,13 +1835,19 @@ const TOOLS = {
                 .replace(/\{prev\}/g,  groupPrev);
               const toolsOverride = Array.isArray(step.tools) && step.tools.length > 0 ? step.tools : null;
               try {
-                const output = await runAgentOnce(agent, [{ role: 'user', content: prompt }], ollamaUrl, 0, null, hivePath, toolsOverride);
+                const output = await runAgentOnce(agent, [{ role: 'user', content: prompt }], ollamaUrl, 0, null, hivePath, toolsOverride, undefined, signal);
                 return { idx, output, error: null };
               } catch (e) {
-                return { idx, output: null, error: e.message };
+                return { idx, output: null, error: e.message, aborted: e.name === 'AbortError' || signal?.aborted };
               }
             }),
           );
+          const aborted = results.find(r => r.aborted);
+          if (aborted) {
+            const err = new Error('Pipeline run was stopped');
+            err.name = 'AbortError';
+            throw err;
+          }
           const failed = results.find(r => r.error);
           if (failed) return { error: `Step ${failed.idx + 1} failed: ${failed.error}` };
           prevOutput = results.map(r => r.output).join('\n\n---\n\n');

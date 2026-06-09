@@ -3,7 +3,7 @@ const router = express.Router();
 const db = require('../db');
 const { readAgent } = require('../lib/agentParser');
 const { runAgentOnce } = require('../lib/agentTools');
-const { runPipelineById } = require('../lib/pipelineRunner');
+const { abortError, isAbortError, runPipelineById } = require('../lib/pipelineRunner');
 const { getOllamaUrl } = require('../lib/ollamaUrl');
 
 function newId() {
@@ -99,23 +99,33 @@ router.post('/:id/run', async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
+  let sawStopped = false;
   const emit = (obj) => {
-    if (!res.writableEnded) res.write(`data: ${JSON.stringify(obj)}\n\n`);
+    if (obj?.type === 'stopped') sawStopped = true;
+    if (!res.writableEnded && !res.destroyed) res.write(`data: ${JSON.stringify(obj)}\n\n`);
   };
 
   // Prime the connection so the proxy knows it's a live stream
   res.write(': connected\n\n');
 
+  const ctrl = new AbortController();
+  res.on('close', () => {
+    if (!res.writableFinished && !ctrl.signal.aborted) ctrl.abort();
+  });
+
   const heartbeat = setInterval(() => {
-    if (!res.writableEnded) res.write(': heartbeat\n\n');
+    if (!res.writableEnded && !res.destroyed) res.write(': heartbeat\n\n');
   }, 10000);
   try {
-    await runPipelineById(req.params.id, input, { emit });
+    await runPipelineById(req.params.id, input, { emit, signal: ctrl.signal });
   } catch (e) {
-    emit({ type: 'error', error: e.message });
+    if (isAbortError(e, ctrl.signal)) {
+      if (!sawStopped) emit({ type: 'stopped' });
+    }
+    else emit({ type: 'error', error: e.message });
   } finally {
     clearInterval(heartbeat);
-    res.end();
+    if (!res.writableEnded && !res.destroyed) res.end();
   }
 });
 
@@ -145,7 +155,11 @@ router.post('/:id/run-step', async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  const emit = (obj) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(obj)}\n\n`); };
+  const emit = (obj) => { if (!res.writableEnded && !res.destroyed) res.write(`data: ${JSON.stringify(obj)}\n\n`); };
+  const ctrl = new AbortController();
+  res.on('close', () => {
+    if (!res.writableFinished && !ctrl.signal.aborted) ctrl.abort();
+  });
 
   const ollamaUrl = getOllamaUrl();
   const hivePath  = require('path').join(require('os').homedir(), '.hive');
@@ -159,13 +173,20 @@ router.post('/:id/run-step', async (req, res) => {
   const stepStart = Date.now();
   const toolsOverride = Array.isArray(step.tools) && step.tools.length > 0 ? step.tools : null;
   try {
-    const output = await runAgentOnce(agent, [{ role: 'user', content: prompt }], ollamaUrl, 0, null, hivePath, toolsOverride);
+    if (ctrl.signal.aborted) throw abortError();
+    const output = await runAgentOnce(agent, [{ role: 'user', content: prompt }], ollamaUrl, 0, null, hivePath, toolsOverride, undefined, ctrl.signal);
+    if (ctrl.signal.aborted) throw abortError();
     emit({ type: 'step_done', step: step_index, label, agent_name: agent.name, output, duration_ms: Date.now() - stepStart });
   } catch (e) {
-    emit({ type: 'step_error', step: step_index, label, agent_name: agent.name, error: e.message, duration_ms: Date.now() - stepStart });
+    if (isAbortError(e, ctrl.signal)) {
+      emit({ type: 'step_stopped', step: step_index, label, agent_name: agent.name, error: 'Pipeline step retry was stopped', duration_ms: Date.now() - stepStart });
+      emit({ type: 'stopped' });
+    } else {
+      emit({ type: 'step_error', step: step_index, label, agent_name: agent.name, error: e.message, duration_ms: Date.now() - stepStart });
+    }
   }
 
-  res.end();
+  if (!res.writableEnded && !res.destroyed) res.end();
 });
 
 module.exports = router;
