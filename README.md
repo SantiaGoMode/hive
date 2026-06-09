@@ -189,7 +189,7 @@ The app runs at **http://localhost:5173** (Vite proxies the API to the server on
 - **Per-agent spend budgets** cap runaway cost; the gateway enforces hard limits via per-agent virtual keys.
 - **Gateway bound to loopback** and (optionally) master-key authenticated.
 
-⚠️ The server itself currently has open CORS and no app-level auth — keep it on localhost, and avoid exposing it via ngrok without adding an auth gate (tracked in [`plans/TODO.md`](plans/TODO.md)).
+⚠️ The server itself currently has open CORS and no app-level auth — keep it on localhost, and avoid exposing it via ngrok without adding an auth gate (tracked in [`TODO.md`](TODO.md)).
 
 ---
 
@@ -223,11 +223,11 @@ server/          Express API, WebSocket, providers, colony/pipeline/staff runner
 client/          React + Vite dashboard
 gateway/         LiteLLM + Postgres Docker stack (see gateway/README.md)
 scripts/         detached-launch helpers (spawn/stop)
-plans/           TODO.md (active) + archive/ (historical design docs)
 docs/            screenshots + supplementary docs
+TODO.md          active tech-debt & enhancements list
 ```
 
-Outstanding tech debt and enhancements are tracked in **[`plans/TODO.md`](plans/TODO.md)**.
+Outstanding tech debt and enhancements are tracked in **[`TODO.md`](TODO.md)** at the repo root.
 
 ---
 

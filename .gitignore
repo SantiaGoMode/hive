@@ -17,7 +17,6 @@ client/dist/
 
 # Internal planning docs
 PRD-*.md
-TODO.md
 
 # Colony run exports
 colony_output/
