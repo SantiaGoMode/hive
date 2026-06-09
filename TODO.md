@@ -1,63 +1,72 @@
-# Hive — Tech Debt & Enhancements TODO
+# Hive — Roadmap & Tech-Debt TODO
 
-> Single source of truth for outstanding work. Generated from a full-codebase analysis
-> (2026-06). Older design docs were moved to [`plans/archive/`](./archive/) to avoid
-> confusion — they're historical, not active.
+> Readable companion to the GitHub **Hive Roadmap** project (issues are the source of truth).
+> Ordered by execution phase: **P1 first → P4 last**. Each item links its issue, priority, and
+> key dependencies. Priority: `🔴 critical · 🟠 high · 🟡 med · ⚪ low`.
 
-**Legend:** Impact `High/Med/Low` · Effort `S/M/L`
+Filter on GitHub: `is:issue is:open label:critical`, `label:"priority: high"`, or group the
+Roadmap board by the **Phase** field.
 
-## ⭐ Top priorities (highest leverage)
-- [ ] **Security: lock down CORS + add an auth gate** — `app.use(cors())` is wide open and there's no auth/rate-limit; combined with the ngrok tunnel this is an open remote-control surface. `server/index.js:21`, `:60-90`. **High · M**
-- [ ] **Audit sandbox path containment** — `routes/sandbox.js` reads/writes by `?path=` under a workspace; confirm no `../` escape + add a containment test. `server/routes/sandbox.js`, `server/lib/sandbox.js`. **High · S**
-- [ ] **Unify SSE/stream parsing** — 4+ copies with *inconsistent delimiters* (`split('\n\n')` vs `split('\n')`) = latent bug. Extract one `streamSSE()` util. `Dashboard.jsx:33`, `PipelinesPage.jsx:524/570`, `ColonyPage.jsx:2314`. **High · M**
-- [ ] **Route-level code-splitting** — `App.jsx` eager-imports all 11 pages → ~716KB bundle. `React.lazy`+`Suspense` + vite `manualChunks`. `client/src/App.jsx`, `client/vite.config.js`. **High · S**
-- [ ] **Stop swallowing errors** — ~145 empty `catch {}` blocks hide failures. Add a `logSwallowed(ctx, err)` helper and route them through it. server-wide. **High · M**
+---
 
-## Server
-- [ ] **Split `agentTools.js` (2,413 lines)** into `server/lib/tools/` with a registry (46 handlers + `runAgentOnce` + prompt assembly). **High · L**
-- [ ] **Split `colonyRunner.js` (1,488 lines)** — extract prompt builders, deliverable assembly, blackboard digest. **High · L**
-- [ ] **Split `routes/colony.js` (775 lines, 30+ endpoints)** into `colony/teams.js`, `colony/runs.js`, etc. **Med · M**
-- [ ] **Dedupe chat system-prompt assembly** — built differently in `websocket.js:60-142` and the colony path; extract `buildSystemPrompt(agent, {mode})`. **Med · M**
-- [ ] **Structured logging + `/api/system/metrics`** — replace scattered `console.*`; add levels, request ids, active-runs/scheduler/gateway health. **Med · M**
-- [ ] **Versioned migrations** — replace 31 bare `try{ALTER TABLE}catch{}` (`db.js:241-271`) with a `schema_version` table + ordered runner. **Med · M**
-- [ ] **Cache `getSetting`/gateway config** — re-prepared per request (`providers/index.js:24-29,57-62`); memoize with write-invalidation. **Low · S**
-- [ ] **Staff scheduler: backoff + dedupe error posts** — clock-bump-on-error is in (fixed), but add backoff/jitter and suppress repeated identical "Could not generate…" system messages. `staffScheduler.js`. **Med · S**
-- [ ] **Unify scheduler lifecycle** — `scheduler.js` + `staffScheduler.js` are two ad-hoc `setInterval` loops; add a registry with heartbeat/last-tick. **Low · M**
-- [ ] **Consolidate GitHub token lookup** — `GITHUB_TOKEN`/`GH_TOKEN`/`GITHUB_PERSONAL_ACCESS_TOKEN` read in different places; one resolver + `.env.example`. **Med · S**
+## ▶ P1 — Security & Reliability (do first)
+- [ ] 🔴 [#20](../../issues/20) API hardening — lock down CORS, add an auth gate, guard ngrok exposure
+- [ ] 🔴 [#21](../../issues/21) Audit sandbox path containment (prevent `../` escape)
+- [ ] 🔴 [#3](../../issues/3) Unified Run Cancellation — *parent of #37*
+- [ ] 🔴 [#2](../../issues/2) Guided First-Run Agent Setup
+- [ ] 🟠 [#26](../../issues/26) Stop swallowing errors (~145 empty `catch`) + `logSwallowed()`
+- [ ] 🟠 [#37](../../issues/37) Real abort for the Ollama path — *child of #3; do after #43*
 
-## Client
-- [ ] **Decompose `ColonyPage.jsx` (3,045 lines)** into `pages/colony/*` + a `useColonyStream` hook. **High · L**
-- [ ] **Decompose `PipelinesPage.jsx` (997) & `StaffPage.jsx` (916)**. **Med · L**
-- [ ] **Shared `<ModelSelect>`** consuming `modelLabels` — model picker/labeling is duplicated across AgentEditor, ChatWindow, ModelBrowser, StaffPage, ColonyPage, SettingsPage. Promote `gateway/hive-*` aliases as recommended. **Med · M**
-- [ ] **Shared `<ToolGroupPicker>`** — tool-group UI + hardcoded group list rebuilt in AgentEditor, PipelinesPage, SchedulesPage, ChatWindow. **Med · M**
-- [ ] **Add an ErrorBoundary** around `<Routes>` — a throw currently blanks the whole SPA. `App.jsx`. **Med · S**
-- [ ] **Accessibility pass** — near-zero `aria-*`/`role`, clickable `<div>`s, no `alt`. Roles/labels, focusable controls, labeled icon buttons. **Med · M**
+## ▶ P2 — Foundations (build the safety net + shared utils before refactoring)
+- [ ] 🟠 [#5](../../issues/5) Streaming Event Parser library — *blocks #23, #6*
+- [ ] 🟠 [#43](../../issues/43) Test `providers/index.js` — *blocks #37*
+- [ ] 🟠 [#44](../../issues/44) Test `websocket.js` chat loop — *blocks #30*
+- [ ] 🟠 [#45](../../issues/45) Test `staffScheduler.js` — *blocks #34, #35*
+- [ ] 🟡 [#24](../../issues/24) Shared `<ModelSelect>` — *blocks #23, #6*
+- [ ] 🟡 [#4](../../issues/4) Shared Tool Configuration component — *blocks #23, #6*
+- [ ] 🟡 [#31](../../issues/31) Structured logging + `/api/system/metrics` — *feeds #7*
+- [ ] 🟡 [#32](../../issues/32) Versioned schema migrations
+- [ ] 🟡 [#36](../../issues/36) Consolidate env/config + `.env.example`
+- [ ] 🟡 [#46](../../issues/46) Tests for untested libs (pipelineRunner, sandbox, …)
+- [ ] 🟡 [#47](../../issues/47) HTTP route tests via supertest
+- [ ] 🟡 [#48](../../issues/48) Server eslint + CI workflow — *parent of #42*
 
-## Gateway / LLM
-- [ ] **Real abort for the Ollama path** — `ai-sdk-ollama` doesn't cancel the HTTP socket (`providers/index.js:184-274`); call Ollama's API directly with an abort signal, or track upstream. **High · M**
-- [ ] **Derive gateway alias list** — `GATEWAY_ALIASES` (`listModels.js:93`) hand-mirrors `litellm.config.yaml`; query the gateway `/models` or parse the yaml to avoid drift. **Med · S**
-- [ ] **Gateway startup health probe + Settings status** — server boot never verifies the gateway; failures surface only per-request. **Med · M**
-- [ ] **Tune response caching** — `ttl:3600` can replay stale identical chat replies for an hour; lower TTL or scope caching to idempotent/pipeline calls. `gateway/litellm.config.yaml`. **Med · S**
-- [ ] **Spend persistence + dashboard** — confirm SpendLogs/budgets survive container restarts; surface per-agent spend, budget headroom, cache hit-rate in the UI. **Med · M**
-- [ ] **CI lint of gateway model ids** — validate `litellm.config.yaml` pools resolve (catch model deprecations). **Low · S**
+## ▶ P3 — Refactors (depend on P2 foundations)
+- [ ] 🟠 [#27](../../issues/27) Split `agentTools.js` (2,413 lines) into a tools/ registry
+- [ ] 🟠 [#28](../../issues/28) Split `colonyRunner.js` (1,488 lines)
+- [ ] 🟠 [#22](../../issues/22) Route-level code-splitting (~716KB bundle)
+- [ ] 🟠 [#23](../../issues/23) Decompose oversized client pages — *after #5, #24, #4*
+- [ ] 🟡 [#29](../../issues/29) Split `routes/colony.js` (775 lines)
+- [ ] 🟡 [#30](../../issues/30) Dedupe chat system-prompt assembly — *after #44*
+- [ ] 🟡 [#6](../../issues/6) Pipeline Builder Refactor — *after #4, #5, #24*
+- [ ] 🟡 [#25](../../issues/25) Client ErrorBoundary around routes
+- [ ] 🟡 [#34](../../issues/34) Staff scheduler backoff + dedupe error posts — *after #45*
+- [ ] 🟡 [#38](../../issues/38) Derive gateway alias list (avoid drift) — *related #24*
+- [ ] ⚪ [#33](../../issues/33) Memoize `getSetting` / gateway-config reads
+- [ ] ⚪ [#35](../../issues/35) Unify scheduler lifecycle + heartbeat — *after #45*
 
-## Testing
-- [ ] **Test `providers/index.js`** — gateway routing, `gatewayConfig`, key resolution, abort race (currently only adapters are tested). **High · M**
-- [ ] **Test `websocket.js` chat loop** — streaming + tool-loop + session-save (0 coverage). **High · M**
-- [ ] **Test `staffScheduler.js`** — due-selection, single-speaker cap, clock-bump-on-error. **High · M**
-- [ ] **Cover untested libs** — prioritize `pipelineRunner.js`, `sandbox.js`; then githubBoard, colonyTeams, session reader/writer. **Med · L**
-- [ ] **HTTP route tests (supertest is already a devDep)** — agents, mcp, pipelines, schedules, staff, system, skills, sandbox, ollama. **Med · L**
-- [ ] **Client tests (vitest + RTL)** — none today; start with the extracted SSE util + `<ModelSelect>`; wire a `client` test script. **Med · L**
+## ▶ P4 — Observability & Polish (last)
+- [ ] 🟡 [#7](../../issues/7) Workflow Health Dashboard — *needs #31, #39, #41 (sub-issues)*
+- [ ] 🟡 [#39](../../issues/39) Gateway startup health probe + Settings status — *child of #7*
+- [ ] 🟡 [#41](../../issues/41) Gateway spend persistence + per-agent dashboard — *child of #7*
+- [ ] 🟡 [#40](../../issues/40) Tune response cache TTL / scope caching
+- [ ] 🟡 [#8](../../issues/8) Accessible Modal & Form System
+- [ ] 🟡 [#10](../../issues/10) Frontend Regression Test Suite
+- [ ] ⚪ [#9](../../issues/9) Progressive Advanced Settings
+- [ ] ⚪ [#42](../../issues/42) CI lint: validate gateway model ids resolve — *child of #48*
+- [ ] ⚪ [#49](../../issues/49) Gateway auto-start + portable `run-gateway.sh`
 
-## DevEx / Ops
-- [ ] **Server lint + CI** — client has eslint; server has none, no CI running `npm test`. Add server eslint + a GitHub Actions workflow. **Med · M**
-- [ ] **`.env.example` + config docs** — ~18 distinct `process.env` reads, undocumented. **Med · S**
-- [ ] **Repo hygiene** — decide tracked-vs-ignored for `PR_BODY.md`, `ISSUE_REVIEW_COMMENT.md`, `CHANGELOG.md`, scratch files. **Low · S**
-- [ ] **Gateway auto-start + portable script** — `run-gateway.sh:13` hardcodes an absolute user path in its doc string; document/script the scrt4 launch + optional login auto-start. **Low · S**
+---
 
-## Recently completed (for context — do not redo)
-- ✅ scrt4 secret isolation: 0 plaintext secrets at rest; cloud keys via gateway, GitHub/Brave/ngrok via `env:` refs.
-- ✅ LiteLLM gateway (Docker): failover aliases, retries/cooldowns, Postgres spend tracking, per-agent budgets, response caching, master-key auth.
-- ✅ scrt4 long-running launch fix (`scripts/spawn-detached.sh`, `run-dev.sh`).
-- ✅ Client/server audit fixes (gateway models selectable + labeled, `testProvider` auth).
-- ✅ Staff-chat starvation fix (clock-bump-on-error).
+## Dependency quick-reference
+- **Shared client utils before page refactors:** #5, #24, #4 → #23, #6
+- **Tests before the code they guard:** #43 → #37 · #44 → #30 · #45 → #34, #35
+- **Sub-issue rollups:** #7 ← #31, #39, #41 · #3 ← #37 · #48 ← #42
+
+## ✅ Recently completed (do not redo)
+- scrt4 secret isolation — 0 plaintext secrets at rest (cloud keys via gateway; GitHub/Brave/ngrok via `env:` refs).
+- LiteLLM gateway (Docker) — failover aliases, retries/cooldowns, Postgres spend tracking, per-agent budgets, response caching, master-key auth.
+- scrt4 long-running launch fix (`scripts/spawn-detached.sh`, `run-dev.sh`).
+- Client/server audit fixes (gateway models selectable + labeled, `testProvider` auth).
+- Staff-chat starvation fix (clock-bump-on-error).
+- Repo cleanup + full README rewrite with screenshots.
