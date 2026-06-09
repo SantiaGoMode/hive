@@ -2140,11 +2140,14 @@ const TOOLS = {
     async handler({ path: filePath, content }, { callerAgentId }) {
       const sandbox  = require('./sandbox');
       const dir      = sandbox.workspaceDir(callerAgentId);
-      const resolved = path.resolve(path.join(dir, stripWorkspacePrefix(filePath)));
-      if (!resolved.startsWith(dir)) return { error: 'Path must be inside the sandbox workspace' };
-      fs.mkdirSync(path.dirname(resolved), { recursive: true });
-      fs.writeFileSync(resolved, content, 'utf8');
-      return { success: true, path: filePath, bytes: content.length };
+      try {
+        const resolved = sandbox.resolveWorkspacePath(dir, stripWorkspacePrefix(filePath), { allowMissing: true });
+        fs.mkdirSync(path.dirname(resolved), { recursive: true });
+        fs.writeFileSync(resolved, content, 'utf8');
+        return { success: true, path: filePath, bytes: content.length };
+      } catch (e) {
+        return { error: e.message };
+      }
     },
   },
 
@@ -2167,11 +2170,13 @@ const TOOLS = {
     async handler({ path: filePath }, { callerAgentId }) {
       const sandbox  = require('./sandbox');
       const dir      = sandbox.workspaceDir(callerAgentId);
-      const resolved = path.resolve(path.join(dir, stripWorkspacePrefix(filePath)));
-      if (!resolved.startsWith(dir)) return { error: 'Path must be inside the sandbox workspace' };
-      if (!fs.existsSync(resolved))  return { error: `File not found: ${filePath}` };
-      const content = fs.readFileSync(resolved, 'utf8');
-      return { content: content.slice(0, 16000), truncated: content.length > 16000 };
+      try {
+        const resolved = sandbox.resolveWorkspacePath(dir, stripWorkspacePrefix(filePath), { allowMissing: false });
+        const content = fs.readFileSync(resolved, 'utf8');
+        return { content: content.slice(0, 16000), truncated: content.length > 16000 };
+      } catch (e) {
+        return { error: e.message };
+      }
     },
   },
 
@@ -2194,11 +2199,13 @@ const TOOLS = {
     async handler({ path: filePath }, { callerAgentId }) {
       const sandbox  = require('./sandbox');
       const dir      = sandbox.workspaceDir(callerAgentId);
-      const resolved = path.resolve(path.join(dir, stripWorkspacePrefix(filePath)));
-      if (!resolved.startsWith(dir)) return { error: 'Path must be inside the sandbox workspace' };
-      if (!fs.existsSync(resolved))  return { error: `Not found: ${filePath}` };
-      fs.rmSync(resolved, { recursive: true, force: true });
-      return { success: true, deleted: filePath };
+      try {
+        const resolved = sandbox.resolveWorkspacePath(dir, stripWorkspacePrefix(filePath), { allowMissing: false });
+        fs.rmSync(resolved, { recursive: true, force: true });
+        return { success: true, deleted: filePath };
+      } catch (e) {
+        return { error: e.message };
+      }
     },
   },
 
@@ -2222,13 +2229,15 @@ const TOOLS = {
     async handler({ from, to }, { callerAgentId }) {
       const sandbox   = require('./sandbox');
       const dir       = sandbox.workspaceDir(callerAgentId);
-      const srcRes    = path.resolve(path.join(dir, stripWorkspacePrefix(from)));
-      const dstRes    = path.resolve(path.join(dir, stripWorkspacePrefix(to)));
-      if (!srcRes.startsWith(dir) || !dstRes.startsWith(dir)) return { error: 'Paths must be inside the sandbox workspace' };
-      if (!fs.existsSync(srcRes)) return { error: `Not found: ${from}` };
-      fs.mkdirSync(path.dirname(dstRes), { recursive: true });
-      fs.renameSync(srcRes, dstRes);
-      return { success: true, from, to };
+      try {
+        const srcRes = sandbox.resolveWorkspacePath(dir, stripWorkspacePrefix(from), { allowMissing: false });
+        const dstRes = sandbox.resolveWorkspacePath(dir, stripWorkspacePrefix(to), { allowMissing: true });
+        fs.mkdirSync(path.dirname(dstRes), { recursive: true });
+        fs.renameSync(srcRes, dstRes);
+        return { success: true, from, to };
+      } catch (e) {
+        return { error: e.message };
+      }
     },
   },
 
@@ -2250,11 +2259,11 @@ const TOOLS = {
     },
     async handler({ directory = '.' }, { callerAgentId }) {
       const sandbox = require('./sandbox');
-      const { stdout } = await sandbox.exec(
-        callerAgentId,
-        `find ${directory} -maxdepth 3 -not -path '*/node_modules/*' -not -path '*/.git/*' -not -path '*/.*' | sort | head -100`,
-      );
-      return { files: stdout.trim().split('\n').filter(Boolean) };
+      try {
+        return { files: sandbox.listWorkspaceFiles(callerAgentId, stripWorkspacePrefix(directory), { maxDepth: 3, limit: 100 }) };
+      } catch (e) {
+        return { error: e.message };
+      }
     },
   },
 

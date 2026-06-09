@@ -3,7 +3,7 @@ const path = require('path');
 const os   = require('os');
 const fs   = require('fs');
 
-const HIVE_DIR     = path.join(os.homedir(), '.hive');
+const HIVE_DIR     = process.env.HIVE_HOME || path.join(os.homedir(), '.hive');
 const IMAGE        = 'hive-sandbox:latest';
 const FALLBACK_IMG = 'python:3.11-slim';
 const EXEC_TIMEOUT = 60_000; // ms
@@ -19,7 +19,12 @@ const _portCache = {};
 const _repoMounts = {};
 
 function setAgentRepo(agentId, repoPath) {
-  if (repoPath && fs.existsSync(repoPath)) _repoMounts[agentId] = repoPath;
+  validateAgentId(agentId);
+  if (repoPath && fs.existsSync(repoPath)) {
+    const real = fs.realpathSync(repoPath);
+    if (!fs.statSync(real).isDirectory()) throw new Error('Sandbox repo path must be an existing directory');
+    _repoMounts[agentId] = real;
+  }
   else delete _repoMounts[agentId];
 }
 
@@ -49,13 +54,97 @@ function capabilities() {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function containerName(agentId) {
-  return `hive-sandbox-${agentId}`;
+  return `hive-sandbox-${safeAgentId(agentId)}`;
 }
 
 function sandboxDir(agentId) {
-  const dir = path.join(HIVE_DIR, 'agents', agentId, 'sandbox');
+  const dir = path.join(HIVE_DIR, 'agents', safeAgentId(agentId), 'sandbox');
   fs.mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+function validateAgentId(agentId) {
+  if (!/^[a-zA-Z0-9_-]{1,80}$/.test(String(agentId || ''))) {
+    throw new Error('Invalid sandbox agent id');
+  }
+}
+
+function safeAgentId(agentId) {
+  validateAgentId(agentId);
+  return String(agentId);
+}
+
+function isInside(root, candidate) {
+  const rel = path.relative(root, candidate);
+  return rel === '' || (!!rel && !rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+function stripWorkspacePrefix(userPath) {
+  return String(userPath || '').replace(/^\/?(?:workspace\/)+/, '');
+}
+
+function nearestExistingPath(candidate, root) {
+  let current = candidate;
+  while (!fs.existsSync(current)) {
+    const parent = path.dirname(current);
+    if (parent === current) return root;
+    current = parent;
+  }
+  return current;
+}
+
+function resolveWorkspacePath(workspaceRoot, userPath, options = {}) {
+  if (!userPath || typeof userPath !== 'string') throw new Error('path required');
+  if (userPath.includes('\0')) throw new Error('Sandbox path contains an invalid character');
+
+  const root = fs.realpathSync(workspaceRoot);
+  const rel = options.stripWorkspacePrefix === false ? userPath : stripWorkspacePrefix(userPath);
+  if (path.isAbsolute(rel)) throw new Error('Sandbox path must be relative to /workspace');
+
+  const candidate = path.resolve(root, rel);
+  if (!isInside(root, candidate)) throw new Error('Sandbox path must stay inside /workspace');
+
+  const existing = fs.existsSync(candidate) ? candidate : nearestExistingPath(candidate, root);
+  const realExisting = fs.realpathSync(existing);
+  if (!isInside(root, realExisting)) throw new Error('Sandbox path must stay inside /workspace');
+
+  if (!options.allowMissing && !fs.existsSync(candidate)) throw new Error(`Sandbox path not found: ${userPath}`);
+  if (fs.existsSync(candidate)) {
+    const realCandidate = fs.realpathSync(candidate);
+    if (!isInside(root, realCandidate)) throw new Error('Sandbox path must stay inside /workspace');
+    return realCandidate;
+  }
+
+  return candidate;
+}
+
+function listWorkspaceFiles(agentId, directory = '.', options = {}) {
+  const root = workspaceDir(agentId);
+  const start = resolveWorkspacePath(root, directory, { allowMissing: false });
+  const maxDepth = options.maxDepth ?? 3;
+  const limit = options.limit ?? 100;
+  const files = [];
+
+  function walk(absPath, depth) {
+    if (files.length >= limit || depth > maxDepth) return;
+    const entries = fs.statSync(absPath).isDirectory()
+      ? fs.readdirSync(absPath, { withFileTypes: true })
+      : [];
+
+    for (const entry of entries) {
+      if (files.length >= limit) break;
+      if (entry.name === 'node_modules' || entry.name === '.git' || entry.name.startsWith('.')) continue;
+      const child = path.join(absPath, entry.name);
+      const rel = path.relative(root, child);
+      files.push(rel);
+      if (entry.isDirectory()) walk(child, depth + 1);
+    }
+  }
+
+  if (fs.statSync(start).isDirectory()) walk(start, 1);
+  else files.push(path.relative(root, start));
+
+  return files.sort();
 }
 
 function isDockerAvailable() {
@@ -129,6 +218,7 @@ function hostPort(agentId, containerPort) {
 // ── Container lifecycle ───────────────────────────────────────────────────────
 
 async function ensureContainer(agentId) {
+  validateAgentId(agentId);
   if (!isDockerAvailable()) throw new Error('Docker is not available or not running');
   const name   = containerName(agentId);
   const dir    = workspaceDir(agentId);
@@ -167,6 +257,7 @@ async function ensureContainer(agentId) {
 // ── Command execution ─────────────────────────────────────────────────────────
 
 async function exec(agentId, cmd, timeoutMs = EXEC_TIMEOUT) {
+  validateAgentId(agentId);
   await ensureContainer(agentId);
   return new Promise((resolve) => {
     let stdout = '', stderr = '';
@@ -194,6 +285,7 @@ async function execBackground(agentId, cmd, logFile = '/tmp/hive_server.log') {
 // ── Status & info ─────────────────────────────────────────────────────────────
 
 function getStatus(agentId) {
+  validateAgentId(agentId);
   if (!isDockerAvailable()) return { docker: false, status: 'docker-unavailable' };
   const status = containerStatus(agentId);
   const ports  = status === 'running' ? loadPortMap(agentId) : {};
@@ -201,10 +293,11 @@ function getStatus(agentId) {
 }
 
 async function reset(agentId) {
+  validateAgentId(agentId);
   try { execSync(`docker rm -f ${containerName(agentId)}`, { stdio: 'ignore' }); } catch {}
   delete _portCache[agentId];
   delete _repoMounts[agentId];
-  const dir = path.join(HIVE_DIR, 'agents', agentId, 'sandbox');
+  const dir = path.join(HIVE_DIR, 'agents', safeAgentId(agentId), 'sandbox');
   if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
 }
 
@@ -240,6 +333,7 @@ module.exports = {
   setAgentRepo, capabilities, workspaceDir,
   sandboxDir, hostPort, loadPortMap,
   isDockerAvailable, containerName,
+  resolveWorkspacePath, listWorkspaceFiles,
   cleanupContainer,
   warmImage,
 };
