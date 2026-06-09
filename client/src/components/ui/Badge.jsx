@@ -7,15 +7,16 @@ const colors = {
   red: 'bg-red-500/10 text-red-400 border-red-500/20',
   gray: 'bg-gray-700/50 text-gray-400 border-gray-600/50',
   purple: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
+  teal: 'bg-teal-500/10 text-teal-400 border-teal-500/20',
 };
 
-export function Badge({ color = 'gray', className, children }) {
+export function Badge({ color = 'gray', className, children, ...props }) {
   return (
     <span className={cn(
       'inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium border',
       colors[color],
       className,
-    )}>
+    )} {...props}>
       {children}
     </span>
   );

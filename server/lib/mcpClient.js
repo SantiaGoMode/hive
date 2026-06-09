@@ -13,11 +13,29 @@
 const { spawn } = require('child_process');
 const readline   = require('readline');
 const db         = require('../db');
+const { parseEnvRef, resolveSecret } = require('./secrets');
 
 const MCP_TIMEOUT_MS     = 45_000;   // generous for first-time npx download
 const MCP_PROTOCOL       = '2024-11-05';
 const MCP_RESULT_MAX_LEN = 8_000;    // cap tool results to avoid blowing context window
 const MCP_RECONNECT_DELAYS = [2_000, 5_000, 15_000]; // exponential backoff in ms
+
+function resolveEnv(env = {}) {
+  const out = {};
+  for (const [key, value] of Object.entries(env || {})) {
+    out[key] = resolveSecret(value);
+  }
+  return out;
+}
+
+function maskEnvForStatus(env = {}, secretKeys = []) {
+  const secrets = new Set(secretKeys || []);
+  const out = {};
+  for (const [key, value] of Object.entries(env || {})) {
+    out[key] = secrets.has(key) && value && !parseEnvRef(value) ? '••••••••' : value;
+  }
+  return out;
+}
 
 // ── Stdio transport ────────────────────────────────────────────────────────────
 
@@ -25,7 +43,7 @@ class StdioMcpConnection {
   constructor(command, args, env) {
     this.command   = command;
     this.args      = args;
-    this.env       = { ...process.env, ...env };
+    this.env       = { ...process.env, ...resolveEnv(env) };
     this.proc      = null;
     this.pending   = new Map();   // id → { resolve, reject, timer }
     this._nextId   = 1;
@@ -258,12 +276,13 @@ class McpManager {
 
   // Connect a single server config and cache its tools
   async _connect(server) {
+    const env = JSON.parse(server.env || '{}');
     const conn = server.transport === 'http'
       ? new HttpMcpConnection(server.url)
       : new StdioMcpConnection(
           server.command,
           JSON.parse(server.args  || '[]'),
-          JSON.parse(server.env   || '{}'),
+          env,
         );
 
     await conn.connect();
@@ -434,11 +453,13 @@ class McpManager {
     const servers = db.prepare('SELECT * FROM mcp_servers ORDER BY created_at DESC').all();
     return servers.map(s => {
       const client = this.clients.get(s.id);
+      const env = JSON.parse(s.env || '{}');
+      const secretKeys = JSON.parse(s.env_secret_keys || '[]');
       return {
         ...s,
         args:            JSON.parse(s.args            || '[]'),
-        env:             JSON.parse(s.env             || '{}'),
-        env_secret_keys: JSON.parse(s.env_secret_keys || '[]'),
+        env:             maskEnvForStatus(env, secretKeys),
+        env_secret_keys: secretKeys,
         connected:       !!client,
         tool_count:      client?.tools?.length ?? 0,
         tool_names:      client?.tools?.map(t => t.name) ?? [],
@@ -448,4 +469,7 @@ class McpManager {
   }
 }
 
-module.exports = new McpManager();
+const manager = new McpManager();
+manager._test = { resolveEnv, maskEnvForStatus };
+
+module.exports = manager;

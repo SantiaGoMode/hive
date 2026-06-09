@@ -9,6 +9,7 @@ import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
 import { AgentAvatar } from '../components/agents/AgentAvatar';
 import { download, exportMarkdown, formatDate } from '../lib/utils';
+import { modelBadge } from '../lib/modelLabels';
 
 export function ChatPage() {
   const { agentId } = useParams();
@@ -95,6 +96,7 @@ export function ChatPage() {
 
   if (loading) return <div className="flex items-center justify-center h-64 text-gray-500">Loading…</div>;
   if (!agent)  return <div className="flex items-center justify-center h-64 text-gray-500">Agent not found</div>;
+  const model = agent.model ? modelBadge(agent.model) : null;
 
   return (
     <div className="flex flex-col h-full">
@@ -107,7 +109,7 @@ export function ChatPage() {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className="font-semibold text-gray-100 truncate">{agent.name}</span>
-            {agent.model && <Badge color="blue" className="text-xs">{agent.model}</Badge>}
+            {model && <Badge color={model.color} className="text-xs max-w-xs truncate" title={model.title}>{model.text}</Badge>}
           </div>
         </div>
         <Button size="sm" variant="ghost" onClick={startNewChat} title="New chat (⌘N)">

@@ -1,0 +1,95 @@
+# Hive LLM gateway — LiteLLM proxy config.
+#
+# Two routing layers:
+#   1. WILDCARD pass-through (openai/*, anthropic/*, gemini/*) — preserves Hive's
+#      existing "<provider>/<model>" ids unchanged. Single deployment each, no failover.
+#   2. CAPABILITY ALIASES (hive-smart / hive-coding / hive-cheap / hive-bigctx) — each
+#      is a multi-provider POOL. A failure on one provider is retried against the others
+#      in the same pool (num_retries), and whole-pool failures fall through per
+#      router_settings.fallbacks. Hive can ask for an alias instead of a concrete model
+#      to get automatic provider failover.
+#
+# Real keys are read from the CONTAINER environment (os.environ/...), injected by scrt4
+# at `docker compose up`. They are never written into this file.
+#
+# NOTE: after editing this file, reload with `docker compose -f gateway/docker-compose.yml
+# restart` (restart preserves the injected env; `up -d` won't reload a changed mount, and
+# `--force-recreate` would drop the keys).
+
+model_list:
+  # ── Wildcard pass-through (unchanged behavior) ──
+  - model_name: "openai/*"
+    litellm_params: { model: "openai/*", api_key: os.environ/OPENAI_API_KEY }
+  - model_name: "anthropic/*"
+    litellm_params: { model: "anthropic/*", api_key: os.environ/ANTHROPIC_API_KEY }
+  - model_name: "gemini/*"
+    litellm_params: { model: "gemini/*", api_key: os.environ/GEMINI_API_KEY }
+
+  # ── hive-smart: strongest general pool (3-provider failover) ──
+  - model_name: hive-smart
+    litellm_params: { model: anthropic/claude-sonnet-4-6, api_key: os.environ/ANTHROPIC_API_KEY }
+  - model_name: hive-smart
+    litellm_params: { model: openai/gpt-4o, api_key: os.environ/OPENAI_API_KEY }
+  - model_name: hive-smart
+    litellm_params: { model: gemini/gemini-2.5-pro, api_key: os.environ/GEMINI_API_KEY }
+
+  # ── hive-coding: coding-strong pool ──
+  - model_name: hive-coding
+    litellm_params: { model: anthropic/claude-sonnet-4-6, api_key: os.environ/ANTHROPIC_API_KEY }
+  - model_name: hive-coding
+    litellm_params: { model: openai/gpt-4o, api_key: os.environ/OPENAI_API_KEY }
+
+  # ── hive-cheap: low-cost pool ──
+  - model_name: hive-cheap
+    litellm_params: { model: openai/gpt-4o-mini, api_key: os.environ/OPENAI_API_KEY }
+  - model_name: hive-cheap
+    litellm_params: { model: anthropic/claude-haiku-4-5-20251001, api_key: os.environ/ANTHROPIC_API_KEY }
+  - model_name: hive-cheap
+    litellm_params: { model: gemini/gemini-2.5-flash, api_key: os.environ/GEMINI_API_KEY }
+
+  # ── hive-bigctx: large-context target for context-window fallbacks ──
+  - model_name: hive-bigctx
+    litellm_params: { model: gemini/gemini-2.5-pro, api_key: os.environ/GEMINI_API_KEY }
+
+litellm_settings:
+  drop_params: true          # tolerate provider-unsupported params instead of erroring
+  request_timeout: 600
+  # Response caching (experiment): identical requests (same model+messages+params)
+  # reuse the response for `ttl` seconds. In-memory (no Redis) since num_workers=1.
+  # Saves cost/latency on retries and duplicate calls. CAVEAT: an identical chat
+  # message returns the cached reply (no variation) within the window — disable by
+  # commenting `cache` out and restarting if that's unwanted.
+  cache: true
+  cache_params:
+    type: local
+    ttl: 3600
+
+router_settings:
+  routing_strategy: simple-shuffle   # within a pool; on failure retry the other deployments
+  num_retries: 2                     # try up to 3 deployments in a pool before falling through
+  allowed_fails: 3                   # failures before a deployment is cooled down
+  cooldown_time: 30                  # seconds a flapping deployment sits out
+  # Make billing/quota-class errors fail OVER to other providers instead of surfacing.
+  # Anthropic "credit too low" is a 400 (BadRequest), OpenAI quota is a 429 (RateLimit) —
+  # both should move to the next deployment/pool rather than abort the agent round.
+  retry_policy:
+    BadRequestErrorRetries: 2
+    RateLimitErrorRetries: 2
+    InternalServerErrorRetries: 2
+    TimeoutErrorRetries: 2
+  # Each chain ends in hive-bigctx (single-provider) so a whole-pool failure still lands
+  # on a working provider rather than returning an error.
+  fallbacks:
+    - { hive-smart:  ["hive-cheap", "hive-bigctx"] }
+    - { hive-coding: ["hive-smart", "hive-cheap", "hive-bigctx"] }
+    - { hive-cheap:  ["hive-bigctx"] }
+  context_window_fallbacks:
+    - { hive-smart:  ["hive-bigctx"] }
+    - { hive-coding: ["hive-bigctx"] }
+    - { hive-cheap:  ["hive-bigctx"] }
+
+general_settings:
+  # Auth on: every request needs a key (the master key, or a virtual key minted
+  # from it). Injected from the scrt4 vault at launch — never stored in this file.
+  master_key: os.environ/LITELLM_MASTER_KEY
+  store_model_in_db: false

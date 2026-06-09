@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Download, Trash2, HardDrive, RefreshCw, Plus } from 'lucide-react';
+import { Download, Trash2, HardDrive, RefreshCw, Plus, Cpu } from 'lucide-react';
 import { api } from '../../lib/api';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
@@ -7,6 +7,7 @@ import { Badge } from '../ui/Badge';
 import { formatBytes, formatDate } from '../../lib/utils';
 import { toast } from '../../stores/toastStore';
 import { DeleteConfirm } from '../agents/DeleteConfirm';
+import { localModelBudgetGb, recommendedOllamaModels, stretchModelBudgetGb } from '../../lib/ollamaRecommendations';
 
 function PullProgress({ name, onDone }) {
   const [progress, setProgress] = useState('');
@@ -68,18 +69,25 @@ export function ModelBrowser() {
   const [pullName, setPullName] = useState('');
   const [pulling, setPulling] = useState([]);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [systemStatus, setSystemStatus] = useState(null);
 
   const load = () => {
     setLoading(true);
     api.getModels().then(setModels).catch(() => setModels([])).finally(() => setLoading(false));
+    api.getSystemStatus().then(setSystemStatus).catch(() => setSystemStatus(null));
   };
 
   useEffect(() => { load(); }, []);
 
   const handlePull = () => {
     if (!pullName.trim()) return;
-    setPulling(prev => [...prev, pullName.trim()]);
+    const name = pullName.trim();
+    setPulling(prev => prev.includes(name) ? prev : [...prev, name]);
     setPullName('');
+  };
+
+  const startPull = (name) => {
+    setPulling(prev => prev.includes(name) ? prev : [...prev, name]);
   };
 
   const handleDelete = async () => {
@@ -90,12 +98,69 @@ export function ModelBrowser() {
     } catch (e) { toast.error(e.message); }
   };
 
+  const recommended = recommendedOllamaModels(systemStatus?.memory, models);
+  const pullingSet = new Set(pulling);
+  const budgetGb = localModelBudgetGb(systemStatus?.memory);
+  const stretchGb = stretchModelBudgetGb(systemStatus?.memory);
+
   return (
     <div className="flex flex-col gap-4">
+      {/* Recommended local models */}
+      <div className="p-4 bg-gray-900 border border-gray-800 rounded-xl flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-200 flex items-center gap-2">
+              <Cpu size={14} /> Recommended for This System
+            </h3>
+            <p className="text-xs text-gray-500 mt-1">
+              Showing curated Ollama models up to a {stretchGb} GB stretch budget; {budgetGb} GB and under are marked comfortable.
+            </p>
+          </div>
+          <Button size="icon" variant="ghost" onClick={load} disabled={loading} title="Refresh recommendations">
+            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+          </Button>
+        </div>
+
+        {recommended.length === 0 ? (
+          <p className="text-xs text-gray-600 italic">No curated local models fit the detected system budget.</p>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            {recommended.map(model => {
+              const pullingModel = pullingSet.has(model.name);
+              return (
+                <div key={model.name} className="flex flex-col gap-3 p-3 rounded-lg border border-gray-800 bg-gray-950/50">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-gray-200 truncate">{model.title}</p>
+                      <p className="text-xs font-mono text-gray-500 truncate">{model.name}</p>
+                    </div>
+                    <div className="flex gap-1 shrink-0">
+                      <Badge color={model.fit === 'stretch' ? 'yellow' : 'blue'}>{model.fit === 'stretch' ? 'Stretch' : model.sizeLabel}</Badge>
+                      {model.installed && <Badge color="green">Installed</Badge>}
+                    </div>
+                  </div>
+                  <p className="text-xs text-gray-500 leading-relaxed">{model.description}</p>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-gray-600" title={model.fitReason}>{model.family} · {model.sizeLabel} · ~{model.estimatedRamGb} GB RAM</span>
+                    <Button
+                      size="sm"
+                      onClick={() => startPull(model.name)}
+                      disabled={model.installed || pullingModel}
+                    >
+                      <Download size={12} /> {model.installed ? 'Installed' : pullingModel ? 'Pulling' : 'Install'}
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
       {/* Pull new model */}
       <div className="p-4 bg-gray-900 border border-gray-800 rounded-xl">
         <h3 className="text-sm font-semibold text-gray-200 mb-3 flex items-center gap-2">
-          <Plus size={14} /> Pull a Model
+          <Plus size={14} /> Pull Custom Model
         </h3>
         <div className="flex gap-2">
           <Input
@@ -105,10 +170,11 @@ export function ModelBrowser() {
             className="flex-1"
             onKeyDown={e => e.key === 'Enter' && handlePull()}
           />
-          <Button onClick={handlePull} disabled={!pullName.trim()}>
+          <Button onClick={handlePull} disabled={!pullName.trim() || pullingSet.has(pullName.trim())}>
             <Download size={14} /> Pull
           </Button>
         </div>
+        <p className="text-xs text-gray-600 mt-2">Custom pulls are not filtered; use this for exact Ollama tags you already know your machine can run.</p>
         {pulling.map(name => (
           <PullProgress key={name} name={name} onDone={() => { load(); setPulling(prev => prev.filter(n => n !== name)); }} />
         ))}

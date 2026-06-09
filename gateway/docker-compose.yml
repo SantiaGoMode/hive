@@ -1,0 +1,54 @@
+# Hive LLM gateway — LiteLLM + Postgres in Docker.
+#
+# - Bound to 127.0.0.1 ONLY (never reachable off-box).
+# - Real provider keys arrive as container env, forwarded from the `docker
+#   compose up` process env, which scrt4 populates from the vault at launch.
+#   They are never stored in this file, the host DB, or Hive's process.
+# - Postgres backs spend tracking, budgets, and virtual-key management. The DB
+#   is NOT published to the host (only reachable inside the compose network),
+#   so its local-only credentials below are not a real secret.
+# - `up -d` is natively detached → returns inside scrt4's ~10s CLI window.
+services:
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    container_name: hive-llm-gateway
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4000:4000"          # loopback publish only
+    volumes:
+      - ./litellm.config.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml", "--host", "0.0.0.0", "--port", "4000", "--num_workers", "1"]
+    environment:                        # pass-through from the (scrt4-injected) launch env
+      - OPENAI_API_KEY
+      - ANTHROPIC_API_KEY
+      - GEMINI_API_KEY
+      - LITELLM_MASTER_KEY              # from vault; enables auth + virtual keys + budgets
+      - DATABASE_URL=postgresql://litellm:litellm@postgres:5432/litellm
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:4000/health/liveliness', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: hive-llm-gateway-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: litellm        # local-only; DB is not published to the host
+      POSTGRES_DB: litellm
+    volumes:
+      - hive-llm-gateway-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm -d litellm"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  hive-llm-gateway-pgdata:

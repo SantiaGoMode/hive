@@ -32,10 +32,18 @@ describe('createColony', () => {
   it('stores the goal and model correctly', () => {
     const id = createColony('Store check goal', 'mistral');
     created.push(id);
-    const row = db.prepare('SELECT goal, model, status FROM colonies WHERE id=?').get(id);
+    const row = db.prepare('SELECT goal, model, status, recipe_id FROM colonies WHERE id=?').get(id);
     assert.equal(row.goal, 'Store check goal');
     assert.equal(row.model, 'mistral');
     assert.equal(row.status, 'running'); // default
+    assert.equal(row.recipe_id, 'development_team'); // post-redesign default
+  });
+
+  it('stores an explicit recipe id', () => {
+    const id = createColony('Recipe check goal', 'mistral', 'research_brief');
+    created.push(id);
+    const row = db.prepare('SELECT recipe_id FROM colonies WHERE id=?').get(id);
+    assert.equal(row.recipe_id, 'research_brief');
   });
 });
 
@@ -52,6 +60,7 @@ describe('listColonies', () => {
     const found = list.find(c => c.id === id);
     assert.ok(found, 'New colony should appear in list');
     assert.equal(found.goal, 'List test goal');
+    assert.equal(found.recipe_id, 'development_team');
   });
 
   it('returns agent_ids as an array (not a raw JSON string)', () => {

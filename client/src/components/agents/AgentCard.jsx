@@ -5,6 +5,7 @@ import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { formatDate, download } from '../../lib/utils';
 import { useActivityStore } from '../../stores/activityStore';
+import { modelBadge } from '../../lib/modelLabels';
 
 const EXPORT_FIELDS = [
   'name', 'persona_role', 'model',
@@ -14,6 +15,7 @@ const EXPORT_FIELDS = [
 export function AgentCard({ agent, onEdit, onDelete }) {
   const navigate = useNavigate();
   const isStreaming = useActivityStore(s => s.statuses[agent.id] === 'streaming');
+  const model = agent.model ? modelBadge(agent.model) : null;
 
   const handleExport = () => {
     const data = Object.fromEntries(EXPORT_FIELDS.map(k => [k, agent[k] ?? null]));
@@ -31,8 +33,8 @@ export function AgentCard({ agent, onEdit, onDelete }) {
             <p className="text-xs font-medium mt-0.5 truncate" style={{ color: agent.avatar_color }}>
               {agent.persona_role}
             </p>
-          ) : agent.model ? (
-            <Badge color="blue" className="mt-1">{agent.model}</Badge>
+          ) : model ? (
+            <Badge color={model.color} className="mt-1 max-w-full truncate" title={model.title}>{model.text}</Badge>
           ) : null}
         </div>
 
@@ -46,9 +48,9 @@ export function AgentCard({ agent, onEdit, onDelete }) {
         )}
       </div>
 
-      {agent.persona_role && agent.model && (
+      {agent.persona_role && model && (
         <div className="-mt-1">
-          <Badge color="blue">{agent.model}</Badge>
+          <Badge color={model.color} className="max-w-full truncate" title={model.title}>{model.text}</Badge>
         </div>
       )}
 

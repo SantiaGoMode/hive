@@ -7,12 +7,12 @@ describe('sseToEntries', () => {
   it('handles agent_ready: registers agent in nameMap and returns agent_ready entry', () => {
     const nameMap = {};
     const entries = sseToEntries(
-      { type: 'agent_ready', agent: { id: 'a1', name: 'backend-dev', avatar_color: '#3b82f6' }, role: 'worker' },
+      { type: 'agent_ready', agent: { id: 'a1', name: 'backend-dev', avatar_color: '#3b82f6', model: 'qwen3:8b', tools: ['protocol', 'github'] }, role: 'worker' },
       nameMap,
       1000
     );
     expect(entries).toHaveLength(1);
-    expect(entries[0]).toMatchObject({ type: 'agent_ready', agent: 'backend-dev', role: 'worker', ts: 1000 });
+    expect(entries[0]).toMatchObject({ type: 'agent_ready', agent: 'backend-dev', role: 'worker', model: 'qwen3:8b', tools: ['protocol', 'github'], ts: 1000 });
     expect(nameMap['a1']).toBe('backend-dev');
   });
 
@@ -36,6 +36,22 @@ describe('sseToEntries', () => {
   it('handles error: maps to error type', () => {
     const entries = sseToEntries({ type: 'error', message: 'Something blew up' }, {}, 5000);
     expect(entries[0]).toMatchObject({ type: 'error', content: 'Something blew up' });
+  });
+
+  it('handles thinking: keeps finalized reasoning visible after token preview clears', () => {
+    const entries = sseToEntries(
+      { type: 'thinking', agent: 'Maya Chen', content: 'I should inspect PRD.md and the issue card.', truncated: true },
+      {},
+      5500
+    );
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      type: 'thinking',
+      agent: 'Maya Chen',
+      content: 'I should inspect PRD.md and the issue card.',
+      truncated: true,
+      ts: 5500,
+    });
   });
 
   it('handles ws tool_call: returns tool_call with agent=Orchestrator', () => {
@@ -101,9 +117,33 @@ describe('sseToEntries', () => {
 
 describe('dbLogToEntries', () => {
   it('maps agent_ready kind to type agent_ready', () => {
-    const dbLog = [{ kind: 'agent_ready', agent: { name: 'tester', avatar_color: '#10b981' }, role: 'worker', ts: 1000 }];
+    const dbLog = [{ kind: 'agent_ready', agent: { name: 'tester', avatar_color: '#10b981', model: 'anthropic/claude-sonnet-4-6', tools: ['protocol'] }, role: 'worker', ts: 1000 }];
     const result = dbLogToEntries(dbLog, {});
-    expect(result[0]).toMatchObject({ type: 'agent_ready', agent: 'tester', role: 'worker', ts: 1000 });
+    expect(result[0]).toMatchObject({ type: 'agent_ready', agent: 'tester', role: 'worker', model: 'anthropic/claude-sonnet-4-6', tools: ['protocol'], ts: 1000 });
+  });
+
+  it('maps stored thinking kind to a replayable thinking entry', () => {
+    const result = dbLogToEntries([{ kind: 'thinking', agent: 'Ari Morgan', content: 'Need to re-ask worker with source context.', truncated: false, ts: 1500 }], {});
+    expect(result[0]).toMatchObject({
+      type: 'thinking',
+      agent: 'Ari Morgan',
+      content: 'Need to re-ask worker with source context.',
+      truncated: false,
+      ts: 1500,
+    });
+  });
+
+  it('maps run lifecycle rows that were previously DB-only', () => {
+    const result = dbLogToEntries([
+      { kind: 'preflight', message: 'Models ready', ts: 100 },
+      { kind: 'recipe', name: 'Development Team', ts: 200 },
+      { kind: 'sandbox_cleanup', message: 'Cleaned up 2 sandbox containers.', ts: 300 },
+    ], {});
+    expect(result).toEqual([
+      { type: 'system', message: 'Models ready', ts: 100 },
+      { type: 'system', message: 'Recipe: Development Team', ts: 200 },
+      { type: 'system', message: 'Cleaned up 2 sandbox containers.', ts: 300 },
+    ]);
   });
 
   it('maps round kind to type round', () => {

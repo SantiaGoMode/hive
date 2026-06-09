@@ -1,24 +1,21 @@
 const express = require('express');
 const router  = express.Router();
-const os      = require('os');
 const db      = require('../db');
-
-function getOllamaUrl() {
-  const row = db.prepare("SELECT value FROM app_settings WHERE key='ollama_url'").get();
-  return row?.value || 'http://localhost:11434';
-}
+const ngrokService = require('../lib/ngrokService');
+const { getSystemMemory } = require('../lib/systemMemory');
+const { getOllamaUrl, ollamaApiUrl } = require('../lib/ollamaUrl');
+const { settingSecret } = require('../lib/secrets');
 
 // GET /api/system/status — RAM + running Ollama models
 router.get('/status', async (req, res) => {
-  const total  = os.totalmem();
-  const free   = os.freemem();
+  const memory = getSystemMemory();
 
   let models = [];
   let ollamaReachable = false;
   const ollamaUrl = getOllamaUrl();
 
   try {
-    const r = await fetch(`${ollamaUrl}/api/ps`, { signal: AbortSignal.timeout(4000) });
+    const r = await fetch(ollamaApiUrl('ps'), { signal: AbortSignal.timeout(4000) });
     if (r.ok) {
       const data = await r.json();
       models = data.models || [];
@@ -27,7 +24,7 @@ router.get('/status', async (req, res) => {
   } catch {}
 
   res.json({
-    memory: { total, free, used: total - free },
+    memory,
     models,
     ollama_reachable: ollamaReachable,
     ollama_url: ollamaUrl,
@@ -52,6 +49,39 @@ router.post('/model/stop', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// ── NGROK ─────────────────────────────────────────────────────────────────────
+
+router.post('/ngrok/start', async (req, res) => {
+  try {
+    const authtoken = settingSecret('ngrok_authtoken', ['NGROK_AUTHTOKEN']);
+    const rowDomain = db.prepare("SELECT value FROM app_settings WHERE key='ngrok_domain'").get();
+    
+    if (!authtoken) {
+      return res.status(400).json({ error: 'Ngrok Auth Token is not configured in settings or NGROK_AUTHTOKEN' });
+    }
+    
+    const url = await ngrokService.startTunnel({
+      authtoken,
+      domain: rowDomain?.value || null,
+      port: process.env.PORT || 3001
+    });
+    
+    res.json({ success: true, url });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.post('/ngrok/stop', async (req, res) => {
+  await ngrokService.stopTunnel();
+  res.json({ success: true });
+});
+
+router.get('/ngrok/status', (req, res) => {
+  const url = ngrokService.getTunnelUrl();
+  res.json({ running: !!url, url });
 });
 
 module.exports = router;

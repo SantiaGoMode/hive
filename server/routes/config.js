@@ -4,22 +4,68 @@ const path = require('path');
 const os = require('os');
 const router = express.Router();
 const db = require('../db');
+const { hasEnvSecret, parseEnvRef } = require('../lib/secrets');
 
 const DASH_DIR = path.join(os.homedir(), '.hive');
 
-router.get('/', (req, res) => {
+// Secret settings are never returned in cleartext. The UI shows the mask and
+// only sends a new value when the user actually edits the field.
+const SECRET_KEYS = ['anthropic_api_key', 'openai_api_key', 'gemini_api_key', 'ngrok_authtoken', 'llm_gateway_key'];
+const SECRET_ENV = {
+  anthropic_api_key: ['ANTHROPIC_API_KEY'],
+  openai_api_key: ['OPENAI_API_KEY'],
+  gemini_api_key: ['GEMINI_API_KEY'],
+  ngrok_authtoken: ['NGROK_AUTHTOKEN'],
+  llm_gateway_key: ['LLM_GATEWAY_KEY'],
+};
+
+function maskSecret(value) {
+  if (!value) return '';
+  if (parseEnvRef(value)) return value;
+  return `••••••••${value.slice(-4)}`;
+}
+
+function isMasked(value) {
+  return typeof value === 'string' && value.includes('•');
+}
+
+function readConfig() {
   const rows = db.prepare('SELECT key, value FROM app_settings').all();
-  res.json(Object.fromEntries(rows.map(r => [r.key, r.value])));
+  const out = {};
+  for (const r of rows) out[r.key] = SECRET_KEYS.includes(r.key) ? maskSecret(r.value) : r.value;
+  // Always advertise the secret keys (masked/empty) so the UI can render inputs.
+  for (const k of SECRET_KEYS) if (!(k in out)) out[k] = '';
+  for (const [key, envNames] of Object.entries(SECRET_ENV)) {
+    if (!out[key] && hasEnvSecret(envNames)) out[key] = '••••••••env';
+    out[`${key}_from_env`] = hasEnvSecret(envNames);
+  }
+  return out;
+}
+
+function clearStoredSecrets() {
+  const stmt = db.prepare('DELETE FROM app_settings WHERE key = ?');
+  for (const key of SECRET_KEYS) stmt.run(key);
+  return readConfig();
+}
+
+router.get('/', (req, res) => {
+  res.json(readConfig());
 });
 
 router.put('/', (req, res) => {
-  const allowed = ['ollama_url', 'theme', 'accent_color', 'font_size'];
+  const allowed = ['ollama_url', 'theme', 'accent_color', 'font_size', 'ngrok_authtoken', 'ngrok_domain', 'ngrok_enabled', 'webhook_public_url', 'llm_gateway_url', ...SECRET_KEYS];
   const stmt = db.prepare('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)');
   for (const key of allowed) {
-    if (req.body[key] !== undefined) stmt.run(key, req.body[key]);
+    if (req.body[key] === undefined) continue;
+    // Never persist a masked placeholder back over a real secret.
+    if (SECRET_KEYS.includes(key) && isMasked(req.body[key])) continue;
+    stmt.run(key, req.body[key]);
   }
-  const rows = db.prepare('SELECT key, value FROM app_settings').all();
-  res.json(Object.fromEntries(rows.map(r => [r.key, r.value])));
+  res.json(readConfig());
+});
+
+router.delete('/secrets', (req, res) => {
+  res.json(clearStoredSecrets());
 });
 
 router.delete('/shared-blackboard', (req, res) => {
@@ -31,5 +77,7 @@ router.delete('/shared-blackboard', (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+router._test = { readConfig, clearStoredSecrets };
 
 module.exports = router;

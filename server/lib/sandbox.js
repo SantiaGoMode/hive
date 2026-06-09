@@ -13,6 +13,39 @@ const PUBLISHED_PORTS = [3000, 5000, 8000, 8080];
 // in-memory port map: agentId → { containerPort: hostPort }
 const _portCache = {};
 
+// agentId → absolute repo path to mount as the agent's /workspace. Set by the
+// colony runner for coding workers so they edit the real project, not an empty
+// scratch dir. When unset, the agent gets its private sandbox dir.
+const _repoMounts = {};
+
+function setAgentRepo(agentId, repoPath) {
+  if (repoPath && fs.existsSync(repoPath)) _repoMounts[agentId] = repoPath;
+  else delete _repoMounts[agentId];
+}
+
+// What the workspace volume should be for this agent (repo if assigned + exists).
+function workspaceDir(agentId) {
+  const repo = _repoMounts[agentId];
+  if (repo && fs.existsSync(repo)) return repo;
+  return sandboxDir(agentId);
+}
+
+// Report sandbox capability so the colony can tell the user up front whether
+// real coding is possible (Docker running + image available).
+function capabilities() {
+  const docker = isDockerAvailable();
+  if (!docker) {
+    return { docker: false, ready: false, message: 'Docker is not available or not running. Coding agents cannot build/run code until Docker is started.' };
+  }
+  const img = imageExists(IMAGE) ? IMAGE : (imageExists(FALLBACK_IMG) ? FALLBACK_IMG : null);
+  return {
+    docker: true,
+    ready: !!img,
+    image: img,
+    message: img ? `Sandbox ready (image: ${img}).` : `Docker is running but no sandbox image is built yet; it will build on first use.`,
+  };
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function containerName(agentId) {
@@ -98,7 +131,7 @@ function hostPort(agentId, containerPort) {
 async function ensureContainer(agentId) {
   if (!isDockerAvailable()) throw new Error('Docker is not available or not running');
   const name   = containerName(agentId);
-  const dir    = sandboxDir(agentId);
+  const dir    = workspaceDir(agentId);
   const status = containerStatus(agentId);
 
   if (status === 'running') return dir;
@@ -170,8 +203,27 @@ function getStatus(agentId) {
 async function reset(agentId) {
   try { execSync(`docker rm -f ${containerName(agentId)}`, { stdio: 'ignore' }); } catch {}
   delete _portCache[agentId];
+  delete _repoMounts[agentId];
   const dir = path.join(HIVE_DIR, 'agents', agentId, 'sandbox');
   if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+}
+
+function cleanupContainer(agentId) {
+  if (!agentId || !isDockerAvailable()) return false;
+  const status = containerStatus(agentId);
+  if (status === 'missing') {
+    delete _portCache[agentId];
+    delete _repoMounts[agentId];
+    return false;
+  }
+  try {
+    execSync(`docker rm -f ${containerName(agentId)}`, { stdio: 'ignore' });
+    delete _portCache[agentId];
+    delete _repoMounts[agentId];
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // Pre-build the image in the background at startup if not present
@@ -185,7 +237,9 @@ function warmImage() {
 module.exports = {
   ensureContainer, exec, execBackground,
   getStatus, reset,
+  setAgentRepo, capabilities, workspaceDir,
   sandboxDir, hostPort, loadPortMap,
   isDockerAvailable, containerName,
+  cleanupContainer,
   warmImage,
 };

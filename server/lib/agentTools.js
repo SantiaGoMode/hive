@@ -3,6 +3,82 @@ const path = require('path');
 const { listAgents, readAgent, writeAgent, deleteAgent, stripProviderPrefix } = require('./agentParser');
 const mcpManager = require('./mcpClient');
 const db = require('../db');
+const providers = require('./providers');
+const protocol = require('./colonyProtocol');
+const { updateGitHubIssue, detectGitHubRepo } = require('./githubBoard');
+const { normalizeOllamaUrl } = require('./ollamaUrl');
+
+const MODEL_ROUND_TIMEOUT_MS = 180_000;
+
+// Resolve the canonical role key for the calling agent inside a colony run.
+// Recipe operators seed a roleByAgentId map in colonyContext; fall back to an
+// explicit arg, then the agent's persona_role/name so the blackboard still gets
+// a readable author label.
+function resolveRoleKey(colonyContext, callerAgentId, explicit) {
+  if (explicit) return explicit;
+  const map = colonyContext?.roleByAgentId;
+  if (map && callerAgentId && typeof map.get === 'function') {
+    const key = map.get(callerAgentId);
+    if (key) return key;
+  }
+  return null;
+}
+
+// Classify a tool result as a permission/authorization failure. Used by the
+// circuit-breaker so agents stop hammering a tool that needs a credential or
+// scope, and the user gets one actionable message instead of a retry loop.
+const PERMISSION_ERROR_RE = /\b(permission denied|not authoriz|unauthoriz|forbidden|access denied|EACCES|insufficient (?:scope|permission|access)|requires? (?:the )?[\w .-]*(?:scope|permission|token|credential)|missing (?:scope|permission|token|credential|api key)|no (?:api key|token|credential)|authentication (?:failed|required)|401|403)\b/i;
+
+// Agents see the workspace as "/workspace" inside the sandbox and routinely
+// prefix relative paths with it ("workspace/frontend/...", "/workspace/app.py"),
+// which used to create a literal nested workspace/ directory in the repo.
+// Strip the prefix so paths always resolve from the repo/workspace root.
+function stripWorkspacePrefix(p) {
+  return String(p || '').replace(/^\/?(?:workspace\/)+/, '');
+}
+
+function isPermissionError(result) {
+  if (!result || typeof result !== 'object') return false;
+  const msg = typeof result.error === 'string' ? result.error : '';
+  return PERMISSION_ERROR_RE.test(msg);
+}
+
+function permissionGuidance(toolName, errMsg) {
+  return `ACTION REQUIRED — "${toolName}" failed with a permissions/auth error: ${errMsg}. ` +
+    `This means a credential, API key, or scope is missing — it will NOT succeed on retry. ` +
+    `Stop attempting this action. Report to the user exactly what needs to be enabled (e.g. set the ` +
+    `relevant API key/token in Settings → Integrations, or grant the MCP server the required scope), ` +
+    `then continue with any work that does not depend on it.`;
+}
+
+function agentLabel(colonyContext, callerAgentId, explicitRole) {
+  const roleKey = resolveRoleKey(colonyContext, callerAgentId, explicitRole);
+  const meta = roleKey ? protocol.DEV_TEAM_ROLES[roleKey] : null;
+  if (meta) return meta.name;
+  const a = callerAgentId ? readAgent(callerAgentId) : null;
+  return a?.persona_role || a?.name || roleKey || 'agent';
+}
+
+const PROJECT_CONTEXT_FILES = ['PRD.md', 'docs/PRD.md', 'docs/prd.md', 'README.md', 'readme.md', 'SPEC.md', 'docs/SPEC.md'];
+const PROJECT_CONTEXT_MAX_CHARS = 9000;
+
+function readProjectContextFiles(repoPath) {
+  if (!repoPath) return [];
+  const files = [];
+  for (const rel of PROJECT_CONTEXT_FILES) {
+    try {
+      const p = path.join(repoPath, rel);
+      if (!fs.existsSync(p) || !fs.statSync(p).isFile()) continue;
+      const content = fs.readFileSync(p, 'utf8');
+      files.push({
+        path: rel,
+        content: content.slice(0, PROJECT_CONTEXT_MAX_CHARS),
+        truncated: content.length > PROJECT_CONTEXT_MAX_CHARS,
+      });
+    } catch {}
+  }
+  return files;
+}
 
 // ── Shared blackboard ─────────────────────────────────────────────────────────
 // A single SHARED.md file all agents can read and write.
@@ -38,6 +114,40 @@ function readMemory(workspace) {
 // agent gets a real answer even if the target needs to call tools (e.g. web search).
 
 const MAX_SUB_ROUNDS = 6;
+
+async function validateAgentModel(model, ollamaUrl) {
+  const parsed = providers.parseModel(model);
+  if (!parsed.modelId) return { ok: false, error: 'model is empty' };
+  const normalizedOllamaUrl = normalizeOllamaUrl(ollamaUrl);
+
+  if (parsed.provider !== 'ollama') {
+    if (!providers.hasKey(parsed.provider)) {
+      const label = providers.LABEL?.[parsed.provider] || parsed.provider;
+      return { ok: false, error: `${label} API key is not set. Add it in Settings → Model Providers or set the provider environment variable.` };
+    }
+    return { ok: true, provider: parsed.provider, modelId: parsed.modelId };
+  }
+
+  try {
+    const tagsRes = await fetch(`${normalizedOllamaUrl}/api/tags`);
+    if (tagsRes.ok) {
+      const { models = [] } = await tagsRes.json();
+      const modelValid = models.some(m =>
+        m.name === parsed.modelId ||
+        m.name === `${parsed.modelId}:latest` ||
+        m.name.startsWith(`${parsed.modelId}:`),
+      );
+      if (modelValid) return { ok: true, provider: 'ollama', modelId: parsed.modelId };
+    }
+  } catch {}
+
+  return {
+    ok: false,
+    provider: 'ollama',
+    modelId: parsed.modelId,
+    error: `Model "${model}" is not installed on Ollama. Install it with: ollama pull ${parsed.modelId}`,
+  };
+}
 
 // ── Text tool call parser ─────────────────────────────────────────────────────
 // Some models (llama3.1, mistral-7b) describe tool calls in markdown/JSON prose
@@ -122,104 +232,85 @@ async function runAgentOnce(targetAgent, userMessages, ollamaUrl, depth, ws = nu
   // because it misreads a WARNING as failure). Break the loop with an error.
   let lastCallKey = null;
   let consecutiveRepeats = 0;
+  // Permission circuit-breaker: tools that have already returned a permission/
+  // auth error this turn. On the first hit we tell the agent what to do; a second
+  // hit on the same tool short-circuits so it can't loop on an unfixable error.
+  const permissionTools = (colonyContext && colonyContext.permissionTools) || new Set();
+  if (colonyContext && !colonyContext.permissionTools) colonyContext.permissionTools = permissionTools;
+
+  // Per-agent budget: mint (once) a gateway virtual key carrying this agent's
+  // max_budget so the gateway enforces the cap. Falls back to the shared key.
+  let agentGatewayKey = targetAgent.gateway_key || null;
+  if (!agentGatewayKey && Number(targetAgent.gateway_budget_usd) > 0) {
+    try { agentGatewayKey = await providers.ensureAgentGatewayKey(targetAgent); } catch {}
+  }
 
   for (let round = 0; round < maxRounds; round++) {
     if (signal?.aborted) throw new Error('Colony run was stopped');
 
-    const modelName = stripProviderPrefix(targetAgent.model).toLowerCase();
-    // Only send think:true for models that support extended reasoning.
-    // Sending it to other models (llama3.1, mistral, etc.) returns HTTP 400.
-    const supportsThinking = /qwen3|deepseek-r1|phi4-reasoning/.test(modelName);
-    const body = {
-      model:  stripProviderPrefix(targetAgent.model),
-      messages,
-      stream: true,
-      ...(supportsThinking ? { think: true } : {}),
-    };
-    if (targetTools.length > 0) body.tools = targetTools;
-
-    let res;
-    try {
-      res = await fetch(`${ollamaUrl}/api/chat`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(body),
-        ...(signal ? { signal } : {}),
-      });
-    } catch (fetchErr) {
-      if (fetchErr.name === 'AbortError') throw fetchErr;
-      const code = fetchErr.cause?.code;
-      const model = stripProviderPrefix(targetAgent.model);
-      if (code === 'ECONNREFUSED') {
-        throw new Error(`Ollama is not running (ECONNREFUSED). Start Ollama and try again.`);
-      } else if (code === 'ECONNRESET') {
-        throw new Error(`Ollama closed the connection while running "${model}" — the model likely ran out of memory. Try switching to a smaller model (e.g. qwen3.5 or llama3.1:8b).`);
-      } else if (code === 'ETIMEDOUT' || code === 'UND_ERR_CONNECT_TIMEOUT') {
-        throw new Error(`Ollama timed out running "${model}" — the model may be too large or slow. Try a smaller model.`);
-      } else {
-        throw new Error(`Ollama request failed for "${model}": ${fetchErr.message}. The model may have crashed or run out of memory — try a smaller model.`);
-      }
-    }
-
-    if (!res.ok) {
-      const model = stripProviderPrefix(targetAgent.model);
-      if (res.status === 404) {
-        throw new Error(`Model "${model}" not found on Ollama. Pull it first with: ollama pull ${model}`);
-      }
-      throw new Error(`Ollama error ${res.status} for model "${model}"`);
-    }
-
-    // Stream NDJSON chunks from Ollama and accumulate into a synthetic message.
-    // Each chunk has shape { message: { content?, thinking?, tool_calls? }, done }.
-    // We publish token deltas to the WS so the UI can render them live, and
-    // accumulate the final content + tool_calls for the tool loop below.
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = '';
+    // Stream one model round through the provider layer (Ollama or a cloud
+    // provider, routed by the model id prefix). The provider yields normalized
+    // events; we accumulate them into the same { content, thinking, tool_calls }
+    // shape the tool loop below already expects.
     const acc = { content: '', thinking: '', tool_calls: null };
 
-    const handleChunk = (chunk) => {
-      const m = chunk.message || {};
-      if (typeof m.content === 'string' && m.content.length > 0) {
-        acc.content += m.content;
-        if (ws && ws.readyState === ws.OPEN) {
-          ws.send(JSON.stringify({ type: 'token', subAgent: agentName, delta: m.content, kind: 'content' }));
-        }
-      }
-      if (typeof m.thinking === 'string' && m.thinking.length > 0) {
-        acc.thinking += m.thinking;
-        if (ws && ws.readyState === ws.OPEN) {
-          ws.send(JSON.stringify({ type: 'token', subAgent: agentName, delta: m.thinking, kind: 'thinking' }));
-        }
-      }
-      if (m.tool_calls?.length) {
-        acc.tool_calls = m.tool_calls;
-      }
-    };
-
+    const roundAc = new AbortController();
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      try { roundAc.abort(); } catch {}
+    }, MODEL_ROUND_TIMEOUT_MS);
+    const onAbort = () => { try { roundAc.abort(); } catch {} };
+    if (signal) {
+      if (signal.aborted) onAbort();
+      else signal.addEventListener('abort', onAbort, { once: true });
+    }
     try {
-      while (true) {
-        if (signal?.aborted) throw new Error('Colony run was stopped');
-        const { done: streamDone, value } = await reader.read();
-        if (streamDone) break;
-        buf += decoder.decode(value, { stream: true });
-        let nl;
-        while ((nl = buf.indexOf('\n')) >= 0) {
-          const line = buf.slice(0, nl).trim();
-          buf = buf.slice(nl + 1);
-          if (!line) continue;
-          try { handleChunk(JSON.parse(line)); } catch {}
+      for await (const ev of providers.streamChat(targetAgent.model, {
+        messages,
+        tools: targetTools,
+        options: {
+          ...(colonyContext?.reasoningByAgentId?.has?.(targetAgent.id)
+            ? { reasoning: colonyContext.reasoningByAgentId.get(targetAgent.id) }
+            : {}),
+          // Spend attribution (gateway logs this per request).
+          metadata: {
+            agent_id: targetAgent.id,
+            agent_name: agentName,
+            ...(colonyContext?.colonyId ? { colony_id: colonyContext.colonyId } : {}),
+            ...(colonyContext?.roleByAgentId?.get?.(targetAgent.id)
+              ? { role: colonyContext.roleByAgentId.get(targetAgent.id) }
+              : {}),
+            source: colonyContext ? 'colony' : (depth > 0 ? 'sub_agent' : 'agent'),
+          },
+          // Per-agent virtual key (budget enforcement) when minted; else shared key.
+          gatewayKey: agentGatewayKey || undefined,
+        },
+        signal: roundAc.signal,
+      })) {
+        if (ev.type === 'content') {
+          acc.content += ev.delta;
+          if (ws && ws.readyState === ws.OPEN) {
+            ws.send(JSON.stringify({ type: 'token', subAgent: agentName, delta: ev.delta, kind: 'content' }));
+          }
+        } else if (ev.type === 'thinking') {
+          acc.thinking += ev.delta;
+          if (ws && ws.readyState === ws.OPEN) {
+            ws.send(JSON.stringify({ type: 'token', subAgent: agentName, delta: ev.delta, kind: 'thinking' }));
+          }
+        } else if (ev.type === 'tool_call') {
+          (acc.tool_calls ||= []).push(ev.call);
         }
-      }
-      // Flush any trailing chunk without a newline (test server sends a single
-      // JSON blob + stream close, with no terminating \n).
-      const tail = buf.trim();
-      if (tail) {
-        try { handleChunk(JSON.parse(tail)); } catch {}
       }
     } catch (streamErr) {
-      if (streamErr.name === 'AbortError' || streamErr.message === 'Colony run was stopped') throw streamErr;
-      throw new Error(`Ollama stream failed: ${streamErr.message}`);
+      if (timedOut) throw new Error(`Model request timed out for "${targetAgent.model}" after ${Math.round(MODEL_ROUND_TIMEOUT_MS / 1000)}s`);
+      if (streamErr.name === 'AbortError' || streamErr.message === 'Colony run was stopped' || signal?.aborted) throw streamErr;
+      throw new Error(`Model request failed for "${targetAgent.model}": ${streamErr.message}`);
+    } finally {
+      clearTimeout(timeout);
+      if (signal) {
+        try { signal.removeEventListener('abort', onAbort); } catch {}
+      }
     }
 
     // If the model didn't emit proper tool_calls but wrote JSON tool descriptions
@@ -235,6 +326,10 @@ async function runAgentOnce(targetAgent, userMessages, ollamaUrl, depth, ws = nu
       ...(acc.thinking ? { thinking: acc.thinking } : {}),
       ...(acc.tool_calls ? { tool_calls: acc.tool_calls } : {}),
     };
+
+    if (acc.thinking && ws && ws.readyState === ws.OPEN) {
+      ws.send(JSON.stringify({ type: 'thinking', subAgent: agentName, content: acc.thinking }));
+    }
 
     messages.push({ role: 'assistant', content: msg.content || '', ...(msg.tool_calls?.length ? { tool_calls: msg.tool_calls } : {}) });
 
@@ -276,15 +371,26 @@ async function runAgentOnce(targetAgent, userMessages, ollamaUrl, depth, ws = nu
         result = {
           error: `Duplicate call detected: "${toolName}" has been called with identical arguments ${consecutiveRepeats} times in a row. The previous call likely succeeded (check the prior result). Stop retrying this operation and move on to the next task.`,
         };
+      } else if (permissionTools.has(toolName)) {
+        // Already failed on permissions once — do not run it again.
+        result = { error: `HALTED: "${toolName}" already failed with a permissions/auth error and was not retried. The required access is still not enabled. Report what the user needs to enable and proceed without this tool.`, permission_required: true, halted: true };
       } else {
         result = await executeTool(toolName, args, targetAgent.id, ollamaUrl, depth + 1, targetAgent.workspace, hivePath, ws, maxRounds, signal, colonyContext);
+        if (isPermissionError(result)) {
+          permissionTools.add(toolName);
+          const original = result.error;
+          result = { error: permissionGuidance(toolName, original), permission_required: true, tool: toolName, original_error: original };
+          if (ws && ws.readyState === ws.OPEN) {
+            ws.send(JSON.stringify({ type: 'permission_required', subAgent: agentName, name: toolName, message: original }));
+          }
+        }
       }
 
       if (ws && ws.readyState === ws.OPEN) {
         ws.send(JSON.stringify({ type: 'sub_tool_result', subAgent: agentName, name: toolName, result }));
       }
 
-      messages.push({ role: 'tool', content: JSON.stringify(result) });
+      messages.push({ role: 'tool', content: JSON.stringify(result), tool_call_id: tc.id, name: toolName });
     }
   }
 
@@ -302,15 +408,15 @@ const TOOLS = {
       type: 'function',
       function: {
         name: 'list_models',
-        description: 'List all Ollama models that are currently installed and available to assign to agents. Call this before create_agent so you know which model names are valid.',
+        description: 'List models available to assign to agents, across all configured providers (Ollama plus any cloud provider with an API key set). Cloud model ids are prefixed (e.g. "anthropic/claude-...", "openai/gpt-...", "gemini/..."); Ollama models use their bare name. Call this before create_agent so you know which model ids are valid.',
         parameters: { type: 'object', properties: {}, required: [] },
       },
     },
-    async handler(_, { ollamaUrl }) {
-      const res = await fetch(`${ollamaUrl}/api/tags`);
-      if (!res.ok) return { error: `Ollama HTTP ${res.status}` };
-      const data = await res.json();
-      return (data.models || []).map(m => m.name);
+    async handler() {
+      const { listAllModels } = require('./providers/listModels');
+      const grouped = await listAllModels();
+      // Flatten to a list of valid model ids the model field accepts.
+      return Object.values(grouped).flat().map(m => m.id);
     },
   },
 
@@ -356,13 +462,13 @@ const TOOLS = {
       type: 'function',
       function: {
         name: 'create_agent',
-        description: 'Create a new Hive agent. Omit model to use the same model as the caller. If you specify a model it must be already installed on Ollama — if it is not found the worker will fall back to the caller\'s model.',
+        description: 'Create a new Hive agent. Omit model to use the same model as the caller. Models can be bare Ollama ids or cloud-prefixed ids such as "anthropic/claude-...", "openai/gpt-...", or "gemini/...". Call list_models first when possible.',
         parameters: {
           type: 'object',
           properties: {
             name:          { type: 'string', description: 'Display name' },
             description:   { type: 'string', description: 'What this agent does' },
-            model:         { type: 'string', description: 'Ollama model name. Omit to use the same model as the caller.' },
+            model:         { type: 'string', description: 'Model id. Use bare Ollama names for local models, or provider-prefixed cloud ids like anthropic/claude-sonnet-4-6. Omit to use the same model as the caller.' },
             system_prompt: { type: 'string', description: 'System prompt / personality' },
             temperature:   { type: 'number', description: 'Temperature 0-2' },
             tools:         { type: 'array', items: { type: 'string' }, description: 'Tool group IDs to enable' },
@@ -375,31 +481,19 @@ const TOOLS = {
       if (!agentName) return { error: 'name is required' };
       // Resolve the worker's model:
       // 1. If no model specified, inherit the caller's model.
-      // 2. If a model is specified, validate it exists on Ollama.
-      //    If it doesn't exist, fall back to the caller's model and include a warning.
-      //    This prevents hallucinated model names (e.g. "qwen3.5:latest") from causing
-      //    silent 404 failures on every ask_agent call.
+      // 2. If a model is specified, validate it for its provider. Ollama must be
+      //    installed locally; cloud providers must have a key configured. Unknown
+      //    cloud model names are allowed as custom ids once the provider is usable.
       const callerModel = callerAgentId ? readAgent(callerAgentId)?.model : null;
       if (!rest.model) {
         if (callerModel) rest.model = callerModel;
       } else {
-        // Validate the specified model exists on Ollama
-        const specifiedModel = stripProviderPrefix(rest.model);
-        let modelValid = false;
-        try {
-          const tagsRes = await fetch(`${ollamaUrl}/api/tags`);
-          if (tagsRes.ok) {
-            const { models = [] } = await tagsRes.json();
-            modelValid = models.some(m =>
-              m.name === specifiedModel ||
-              m.name === `${specifiedModel}:latest` ||
-              m.name.startsWith(`${specifiedModel}:`),
-            );
-          }
-        } catch {}
-        if (!modelValid && callerModel) {
-          rest._model_warning = `Model "${rest.model}" is not installed on Ollama. Falling back to "${callerModel}". Install it with: ollama pull ${specifiedModel}`;
+        const validation = await validateAgentModel(rest.model, ollamaUrl);
+        if (!validation.ok && callerModel) {
+          rest._model_warning = `${validation.error}. Falling back to "${callerModel}".`;
           rest.model = callerModel;
+        } else if (!validation.ok) {
+          return { error: validation.error };
         }
       }
       // Enforce per-colony worker cap. The orchestrator counts as one slot, so
@@ -457,7 +551,11 @@ const TOOLS = {
         if (looksLikeResearcher && !tools.includes('web_search')) {
           tools.push('web_search');
         }
+        // Every colony worker joins the shared Blackboard / protocol surface.
+        if (!tools.includes('protocol')) tools.push('protocol');
         rest.tools = tools;
+        // Colony-owned worker — keep it out of the main Agents list.
+        rest.ephemeral = true;
       }
       // Prevent duplicate names within a colony — name lookup would be ambiguous.
       if (colonyContext?.colonyId) {
@@ -508,6 +606,9 @@ const TOOLS = {
       delete rest._model_warning;
       const agent = writeAgent(null, { name: agentName, ...rest });
       if (colonyContext?.workersCreated) colonyContext.workersCreated.add(agent.id);
+      if (colonyContext?.reasoningByAgentId) {
+        colonyContext.reasoningByAgentId.set(agent.id, !!colonyContext.workerReasoningDefault);
+      }
       return {
         success: true,
         agent_id: agent.id,
@@ -572,6 +673,7 @@ const TOOLS = {
 
   ask_agent: {
     group: 'agent_tools',
+    groups: ['agent_tools', 'delegation'],
     definition: {
       type: 'function',
       function: {
@@ -646,6 +748,9 @@ const TOOLS = {
       // Append assistant reply to the thread so the next call has full context.
       if (histories) {
         histories.get(resolvedId).push({ role: 'assistant', content: response });
+        if (colonyContext?.colonyId) {
+          try { protocol.persistAgentHistory(colonyContext.colonyId, resolvedId, histories.get(resolvedId)); } catch {}
+        }
       }
 
       // Track which plan steps have been delegated to workers.
@@ -664,10 +769,87 @@ const TOOLS = {
       }
 
       const noOutput = response === '(no response)' || response === '(agent reached max tool rounds without a final answer)';
+
+      // Protocol fallback: weak models routinely END WITH TEXT ("BA handoff: …")
+      // instead of calling the handoff tool, which leaves the ledger empty, blocks
+      // downstream preconditions, and freezes plan auto-advance. If this worker's
+      // role has exactly one outgoing flow edge whose preconditions are satisfied
+      // and no handoff on record, record it from the response on the worker's behalf.
+      let autoHandoff = null;
+      let flowHint = null;
+      if (!noOutput && colonyContext?.colonyId && protocol.hasProtocol(colonyContext.recipeId)) {
+        try {
+          const roleKey = colonyContext.roleByAgentId?.get?.(resolvedId);
+          const flow = protocol.getFlow(colonyContext.recipeId) || [];
+          // Flow-order nudge: if the operator delegated to a role that is NOT the
+          // next expected one, say so explicitly. Without this the operator can
+          // delegate in plan order (dev first), no edge ever becomes eligible,
+          // and the run ends with zero handoffs on the ledger.
+          {
+            const ledgerNow = protocol.listHandoffs(colonyContext.colonyId);
+            const satisfiedEdge = (e) => ledgerNow.some(h =>
+              h.from_agent === e.from && h.to_agent === e.to &&
+              h.protocol_status === 'ok' && h.status !== 'rejected');
+            const nextEdge = flow.find(e => !satisfiedEdge(e));
+            if (nextEdge && roleKey && roleKey !== nextEdge.from) {
+              flowHint = `Out of flow order: the next expected handoff is ${nextEdge.from}→${nextEdge.to} (${nextEdge.payload}), so you should be delegating to ${nextEdge.from} now. Work done out of order cannot be handed off and will not count toward completion.`;
+            }
+          }
+          const outgoing = flow.filter(e => e.from === roleKey);
+          if (roleKey && outgoing.length === 1) {
+            const edge = outgoing[0];
+            const ledger = protocol.listHandoffs(colonyContext.colonyId);
+            const alreadyRecorded = ledger.some(h =>
+              h.from_agent === edge.from && h.to_agent === edge.to &&
+              h.protocol_status === 'ok' && h.status !== 'rejected');
+            const check = protocol.checkPreconditions(colonyContext.colonyId, colonyContext.recipeId, edge.from, edge.to);
+            if (!alreadyRecorded && check.ok) {
+              const summary = String(response).slice(0, 600);
+              const record = protocol.recordHandoff(colonyContext.colonyId, {
+                fromRole: edge.from, toRole: edge.to,
+                payload: {
+                  target_agent: edge.to, from: edge.from, contract: edge.payload,
+                  summary, auto_recorded: true,
+                },
+                protocolStatus: 'ok', status: 'accepted',
+                historyRef: protocol.historyRefForAgent(resolvedId),
+              });
+              protocol.writeBlackboard(colonyContext.colonyId, target.name, 'message',
+                `Handoff → ${edge.to} (${edge.payload}) [auto-recorded from worker response]: ${summary.slice(0, 200)}`,
+                { handoff_id: record.id, auto_recorded: true });
+              // Auto-advance the plan exactly like an explicit handoff tool call.
+              let updatedPlan = null;
+              const planRow = db.prepare('SELECT plan FROM colonies WHERE id=?').get(colonyContext.colonyId);
+              if (planRow?.plan) {
+                const plan = JSON.parse(planRow.plan);
+                const step = (plan.steps || []).find(s => s.status === 'in_progress')
+                  || (plan.steps || []).find(s => s.status === 'pending');
+                if (step) {
+                  step.status = 'done';
+                  step.note = `auto-completed: handoff ${edge.from}→${edge.to} accepted`;
+                  plan.updated_at = Date.now();
+                  db.prepare('UPDATE colonies SET plan=?, updated_at=unixepoch() WHERE id=?')
+                    .run(JSON.stringify(plan), colonyContext.colonyId);
+                  if (colonyContext.delegatedSteps) colonyContext.delegatedSteps.add(String(step.id));
+                  updatedPlan = plan;
+                }
+              }
+              autoHandoff = {
+                handoff_id: record.id, from: edge.from, to: edge.to,
+                contract: edge.payload, status: 'accepted',
+                ...(updatedPlan ? { plan: updatedPlan } : {}),
+              };
+            }
+          }
+        } catch {}
+      }
+
       return {
         agent_name: target.name,
         agent_id: resolvedId,
         response,
+        ...(autoHandoff ? { auto_handoff: autoHandoff, note: `The worker did not call the handoff tool, so its ${autoHandoff.from}→${autoHandoff.to} handoff was auto-recorded from its response. The flow has advanced — delegate to the next role.` } : {}),
+        ...(flowHint && !autoHandoff ? { flow_hint: flowHint } : {}),
         ...(noOutput ? { warning: 'Worker produced no output. Retry with a simpler, more explicit task description, or verify the worker has the correct tools. Do NOT mark the step done until you have real output.' } : {}),
       };
     },
@@ -709,6 +891,482 @@ const TOOLS = {
     async handler({ content }, { hivePath }) {
       writeShared(content, hivePath);
       return { success: true };
+    },
+  },
+
+  get_webhook_event: {
+    group: 'agent_tools',
+    definition: {
+      type: 'function',
+      function: {
+        name: 'get_webhook_event',
+        description: 'Fetch the FULL raw payload of a webhook event by its id. The initial ' +
+          'context you were given is a distilled subset of the event; call this only when you ' +
+          'need fields that were not included in that context. Pass the _event_id from your input.',
+        parameters: {
+          type: 'object',
+          properties: {
+            event_id: { type: 'string', description: 'The _event_id from the provided context envelope' },
+            include_headers: { type: 'boolean', description: 'Also return the request headers (default false)' },
+          },
+          required: ['event_id'],
+        },
+      },
+    },
+    async handler({ event_id, include_headers = false }) {
+      if (!event_id) return { error: 'event_id is required' };
+      const row = db.prepare('SELECT payload, headers, event_type FROM webhook_events WHERE id = ?').get(event_id);
+      if (!row) return { error: `No webhook event with id ${event_id}` };
+      const out = { event_type: row.event_type };
+      try { out.payload = JSON.parse(row.payload); } catch { out.payload = row.payload; }
+      if (include_headers) {
+        try { out.headers = JSON.parse(row.headers); } catch { out.headers = row.headers; }
+      }
+      return out;
+    },
+  },
+
+  // ── Colony Communication Protocol tools (group: 'protocol') ─────────────────
+  // The structured layer that lets seeded colony agents collaborate: a shared
+  // blackboard, checkpointing, tool-based handoffs with command objects, ACP
+  // messaging, and the "not-understood" act. All gate on colonyContext.colonyId.
+
+  project_context: {
+    group: 'protocol',
+    definition: {
+      type: 'function',
+      function: {
+        name: 'project_context',
+        description: 'Read the colony work-item source context: linked GitHub issue/project card, repo path, and local PRD/README/SPEC excerpts. Call this before role work so requirements are grounded in the repo and board item, not just the operator summary.',
+        parameters: { type: 'object', properties: {}, required: [] },
+      },
+    },
+    async handler(_, { colonyContext }) {
+      if (!colonyContext?.colonyId) return { error: 'project_context is only available inside a Colony run' };
+      const row = db.prepare('SELECT goal, repo_path, board_card FROM colonies WHERE id=?').get(colonyContext.colonyId);
+      if (!row) return { error: `Colony "${colonyContext.colonyId}" not found` };
+      let board_card = null;
+      try { board_card = row.board_card ? JSON.parse(row.board_card) : null; } catch {}
+      return {
+        repo_path: row.repo_path || null,
+        board_card,
+        goal: row.goal,
+        source_files: readProjectContextFiles(row.repo_path),
+        guidance: 'Use this source context in your handoff payload. Cite the GitHub issue/project card and any PRD/README/SPEC file you relied on. If no files are returned, say that explicitly.',
+      };
+    },
+  },
+
+  blackboard_read: {
+    group: 'protocol',
+    definition: {
+      type: 'function',
+      function: {
+        name: 'blackboard_read',
+        description: 'Read the colony Shared Context Layer (the "Blackboard") — an append-only log of state, blockers, checkpoints, and progress from every agent. ALWAYS read this before starting work so you pick up where others left off. Optionally filter by entry_type or agent.',
+        parameters: {
+          type: 'object',
+          properties: {
+            entry_type: { type: 'string', enum: ['state', 'blocker', 'checkpoint', 'progress', 'assistance', 'message'], description: 'Only return entries of this type.' },
+            agent: { type: 'string', description: 'Only return entries written by this agent label.' },
+            limit: { type: 'number', description: 'Max entries (default 100).' },
+          },
+          required: [],
+        },
+      },
+    },
+    async handler({ entry_type, agent, limit }, { colonyContext }) {
+      if (!colonyContext?.colonyId) return { error: 'blackboard_read is only available inside a Colony run' };
+      let entries = protocol.readBlackboard(colonyContext.colonyId, { entryType: entry_type, agent, limit });
+      // Workers habitually filter by their OWN role and see nothing, then redo
+      // upstream work from scratch. If a filter matched nothing but the board
+      // has entries, return the unfiltered board with a note instead of an
+      // empty result.
+      if (entries.length === 0 && (agent || entry_type)) {
+        const all = protocol.readBlackboard(colonyContext.colonyId, { limit });
+        if (all.length > 0) {
+          return {
+            count: all.length,
+            entries: all,
+            note: `No entries matched your filter (${agent ? `agent="${agent}"` : ''}${agent && entry_type ? ', ' : ''}${entry_type ? `entry_type="${entry_type}"` : ''}) — showing ALL ${all.length} blackboard entries so you have the full shared context.`,
+          };
+        }
+      }
+      return { count: entries.length, entries };
+    },
+  },
+
+  blackboard_write: {
+    group: 'protocol',
+    definition: {
+      type: 'function',
+      function: {
+        name: 'blackboard_write',
+        description: 'Append an entry to the colony Blackboard so other agents can see your state. APPENDS — it never overwrites prior notes. Use entry_type "blocker" to flag something that stops progress, "state" for completed work or shared facts.',
+        parameters: {
+          type: 'object',
+          properties: {
+            content: { type: 'string', description: 'What to record for the rest of the team.' },
+            entry_type: { type: 'string', enum: ['state', 'blocker', 'progress'], description: 'Kind of entry (default state).' },
+          },
+          required: ['content'],
+        },
+      },
+    },
+    async handler({ content, entry_type = 'state' }, { colonyContext, callerAgentId }) {
+      if (!colonyContext?.colonyId) return { error: 'blackboard_write is only available inside a Colony run' };
+      if (!content || !String(content).trim()) return { error: 'content is required' };
+      const author = agentLabel(colonyContext, callerAgentId);
+      const entry = protocol.writeBlackboard(colonyContext.colonyId, author, entry_type, content);
+      return { success: true, entry_id: entry.id, agent: author, entry_type: entry.entry_type };
+    },
+  },
+
+  checkpoint: {
+    group: 'protocol',
+    definition: {
+      type: 'function',
+      function: {
+        name: 'checkpoint',
+        description: 'Persist a progress checkpoint to the Blackboard so that if you fail or are interrupted, another agent can resume from a fresh context. Record what is done and what remains.',
+        parameters: {
+          type: 'object',
+          properties: {
+            progress: { type: 'string', description: 'Summary of work completed so far.' },
+            next_step: { type: 'string', description: 'The next action a fresh agent should take.' },
+          },
+          required: ['progress'],
+        },
+      },
+    },
+    async handler({ progress, next_step }, { colonyContext, callerAgentId }) {
+      if (!colonyContext?.colonyId) return { error: 'checkpoint is only available inside a Colony run' };
+      const author = agentLabel(colonyContext, callerAgentId);
+      const content = next_step ? `${progress}\n\nNEXT: ${next_step}` : String(progress || '');
+      const entry = protocol.writeBlackboard(colonyContext.colonyId, author, 'checkpoint', content, { next_step: next_step || null });
+      return { success: true, checkpoint_id: entry.id, agent: author };
+    },
+  },
+
+  handoff: {
+    group: 'protocol',
+    definition: {
+      type: 'function',
+      function: {
+        name: 'handoff',
+        description: 'Hand off control to the next specialist using a structured command object. Verifies the handoff is allowed by the role-specific flow and that all preconditions are met BEFORE proceeding. If the target or ordering is invalid it returns a protocol violation instead of proceeding. Accepted handoffs auto-advance the colony plan.',
+        parameters: {
+          type: 'object',
+          properties: {
+            to_role: { type: 'string', description: 'Role key of the target agent, e.g. "project_manager", "software_developer", "qa_engineer".' },
+            summary: { type: 'string', description: 'Concise summary of the work you completed.' },
+            payload: { type: 'object', description: 'The contract payload for this edge (e.g. validated business rules, component specs, PR link). Match your output_schema.' },
+            artifacts: { type: 'array', items: { type: 'string' }, description: 'Optional file paths, PR links, or URLs.' },
+            from_role: { type: 'string', description: 'Your own role key. Usually inferred automatically; only set if asked.' },
+          },
+          required: ['to_role', 'summary'],
+        },
+      },
+    },
+    async handler({ to_role, summary, payload = {}, artifacts = [], from_role }, { colonyContext, callerAgentId }) {
+      if (!colonyContext?.colonyId) return { error: 'handoff is only available inside a Colony run' };
+      const recipeId = colonyContext.recipeId;
+      if (!protocol.hasProtocol(recipeId)) {
+        return { error: `No communication protocol flow is defined for this colony (recipe "${recipeId}").` };
+      }
+      const fromRole = resolveRoleKey(colonyContext, callerAgentId, from_role);
+      if (!fromRole) {
+        return protocol.protocolViolation('Could not determine your role key. Pass from_role explicitly (e.g. "business_analyst").');
+      }
+
+      // The operator/orchestrator is NOT part of the handoff flow — handoff is a
+      // worker tool. Redirect instead of recording a rejected handoff + violation.
+      const flowRoles = new Set((protocol.getFlow(recipeId) || []).flatMap(e => [e.from, e.to]));
+      if (!flowRoles.has(fromRole)) {
+        return {
+          error: `handoff is a worker tool — "${fromRole}" is not a role in the ${recipeId} flow. ` +
+            `To advance work, call ask_agent for the target worker (use its agent_id); each worker calls handoff itself when its work is complete.`,
+        };
+      }
+
+      // Rule of engagement: verify target + preconditions before acting.
+      const check = protocol.checkPreconditions(colonyContext.colonyId, recipeId, fromRole, to_role);
+      if (!check.ok) {
+        // Record the rejected attempt for auditability and surface a clear protocol error.
+        protocol.recordHandoff(colonyContext.colonyId, {
+          fromRole, toRole: to_role, payload: { summary, ...payload },
+          protocolStatus: check.protocol_status || 'precondition_failed', status: 'rejected',
+        });
+        protocol.writeBlackboard(colonyContext.colonyId, agentLabel(colonyContext, callerAgentId, fromRole), 'blocker',
+          `Handoff ${fromRole}→${to_role} rejected: ${check.reason}`);
+        return protocol.protocolViolation(check.reason, { from: fromRole, to: to_role, missing: check.missing });
+      }
+
+      const edge = check.edge;
+      const requiresHuman = !!edge.requires_human;
+      const historyRef = protocol.historyRefForAgent(callerAgentId);
+      if (colonyContext?.agentHistories?.has(callerAgentId)) {
+        try { protocol.persistAgentHistory(colonyContext.colonyId, callerAgentId, colonyContext.agentHistories.get(callerAgentId)); } catch {}
+      }
+      const commandObject = {
+        target_agent: to_role,
+        from: fromRole,
+        contract: edge.payload,
+        summary,
+        payload,
+        artifacts,
+        history_ref: historyRef,
+      };
+      const record = protocol.recordHandoff(colonyContext.colonyId, {
+        fromRole, toRole: to_role, payload: commandObject,
+        protocolStatus: 'ok',
+        requiresHuman,
+        status: requiresHuman ? 'awaiting_human' : 'pending',
+        historyRef,
+      });
+
+      const author = agentLabel(colonyContext, callerAgentId, fromRole);
+      protocol.writeBlackboard(colonyContext.colonyId, author, 'message',
+        `Handoff → ${to_role} (${edge.payload}): ${summary}`,
+        { handoff_id: record.id, requires_human: requiresHuman });
+
+      if (requiresHuman) {
+        return {
+          success: true,
+          handoff_id: record.id,
+          status: 'awaiting_human',
+          requires_human: true,
+          command: commandObject,
+          message: `This is a critical handoff (${edge.payload}) and is HELD for human approval. Do not assume the next role has started. A reviewer must approve via the colony Handoffs panel before ${to_role} proceeds.`,
+        };
+      }
+
+      // Auto-advance the colony plan: an accepted handoff is hard evidence that a
+      // stage of work completed. Operators (especially small local models) routinely
+      // forget update_plan_step, leaving the plan checklist frozen at "pending" for
+      // the whole run — so the protocol drives plan progress deterministically.
+      let updatedPlan = null;
+      try {
+        const planRow = db.prepare('SELECT plan FROM colonies WHERE id=?').get(colonyContext.colonyId);
+        if (planRow?.plan) {
+          const plan = JSON.parse(planRow.plan);
+          const step = (plan.steps || []).find(s => s.status === 'in_progress')
+            || (plan.steps || []).find(s => s.status === 'pending');
+          if (step) {
+            step.status = 'done';
+            step.note = `auto-completed: handoff ${fromRole}→${to_role} accepted`;
+            plan.updated_at = Date.now();
+            db.prepare('UPDATE colonies SET plan=?, updated_at=unixepoch() WHERE id=?')
+              .run(JSON.stringify(plan), colonyContext.colonyId);
+            if (colonyContext.delegatedSteps) colonyContext.delegatedSteps.add(String(step.id));
+            updatedPlan = plan;
+          }
+        }
+      } catch {}
+
+      return {
+        success: true,
+        handoff_id: record.id,
+        status: 'accepted',
+        command: commandObject,
+        ...(updatedPlan ? { plan: updatedPlan } : {}),
+      };
+    },
+  },
+
+  get_handoff_context: {
+    group: 'protocol',
+    definition: {
+      type: 'function',
+      function: {
+        name: 'get_handoff_context',
+        description: 'Fetch the full upstream conversation history for a handoff by id. Use only when the handoff summary/payload is not enough; normal operation should rely on the command object to save tokens.',
+        parameters: {
+          type: 'object',
+          properties: {
+            handoff_id: { type: 'string', description: 'The handoff_id from a handoff command object or ledger entry.' },
+          },
+          required: ['handoff_id'],
+        },
+      },
+    },
+    async handler({ handoff_id }, { colonyContext }) {
+      if (!colonyContext?.colonyId) return { error: 'get_handoff_context is only available inside a Colony run' };
+      if (!handoff_id) return { error: 'handoff_id is required' };
+      const context = protocol.getHandoffContext(handoff_id);
+      if (context?.handoff && context.handoff.colony_id !== colonyContext.colonyId) {
+        return { error: `Handoff "${handoff_id}" does not belong to this colony.` };
+      }
+      return context;
+    },
+  },
+
+  request_assistance: {
+    group: 'protocol',
+    definition: {
+      type: 'function',
+      function: {
+        name: 'request_assistance',
+        description: 'ACP: ask the team for help when blocked, without breaking the handoff flow. Posts an assistance request to the Blackboard for the orchestrator or another role to pick up.',
+        parameters: {
+          type: 'object',
+          properties: {
+            topic: { type: 'string', description: 'Short subject of what you need help with.' },
+            detail: { type: 'string', description: 'Specifics of the blocker or question.' },
+            to_role: { type: 'string', description: 'Optional role key best suited to help.' },
+          },
+          required: ['topic'],
+        },
+      },
+    },
+    async handler({ topic, detail, to_role }, { colonyContext, callerAgentId }) {
+      if (!colonyContext?.colonyId) return { error: 'request_assistance is only available inside a Colony run' };
+      const from = resolveRoleKey(colonyContext, callerAgentId) || 'agent';
+      const author = agentLabel(colonyContext, callerAgentId);
+      protocol.writeBlackboard(colonyContext.colonyId, author, 'assistance',
+        `ASSISTANCE [${topic}]${to_role ? ` → ${to_role}` : ''}: ${detail || ''}`, { topic, to_role: to_role || null });
+      return protocol.acpEnvelope('assistance', { from, to: to_role || null, performative: 'request', content: { topic, detail } });
+    },
+  },
+
+  report_progress: {
+    group: 'protocol',
+    definition: {
+      type: 'function',
+      function: {
+        name: 'report_progress',
+        description: 'ACP: report progress on your current task to the Blackboard so the orchestrator can track status asynchronously.',
+        parameters: {
+          type: 'object',
+          properties: {
+            status: { type: 'string', description: 'Short status, e.g. "in_progress", "blocked", "done".' },
+            detail: { type: 'string', description: 'What changed / what you are doing.' },
+          },
+          required: ['status'],
+        },
+      },
+    },
+    async handler({ status, detail }, { colonyContext, callerAgentId }) {
+      if (!colonyContext?.colonyId) return { error: 'report_progress is only available inside a Colony run' };
+      const from = resolveRoleKey(colonyContext, callerAgentId) || 'agent';
+      const author = agentLabel(colonyContext, callerAgentId);
+      protocol.writeBlackboard(colonyContext.colonyId, author, 'progress', `[${status}] ${detail || ''}`, { status });
+      return protocol.acpEnvelope('progress', { from, performative: 'inform', content: { status, detail } });
+    },
+  },
+
+  report_protocol_violation: {
+    group: 'protocol',
+    definition: {
+      type: 'function',
+      function: {
+        name: 'report_protocol_violation',
+        description: 'The "Not-Understood" act. If you receive a task or message you do not recognise or cannot handle with your role and tools, call this to gracefully report a protocol violation INSTEAD of hallucinating a response.',
+        parameters: {
+          type: 'object',
+          properties: {
+            reason: { type: 'string', description: 'Why you cannot handle this (unknown task, missing precondition, out of scope for your role).' },
+          },
+          required: ['reason'],
+        },
+      },
+    },
+    async handler({ reason }, { colonyContext, callerAgentId }) {
+      if (!colonyContext?.colonyId) return { error: 'report_protocol_violation is only available inside a Colony run' };
+      const from = resolveRoleKey(colonyContext, callerAgentId) || 'agent';
+      const author = agentLabel(colonyContext, callerAgentId);
+      protocol.writeBlackboard(colonyContext.colonyId, author, 'message', `PROTOCOL VIOLATION: ${reason}`, { violation: true });
+      return protocol.protocolViolation(reason, { from });
+    },
+  },
+
+  report_workaround: {
+    group: 'colony_tools',
+    definition: {
+      type: 'function',
+      function: {
+        name: 'report_workaround',
+        description: 'Record an issue that forced the colony to work around missing app capability, poor tooling, model weakness, access limits, or unclear workflow. Use this during the run so the final report can tell the user how to improve Hive for future colonies.',
+        parameters: {
+          type: 'object',
+          properties: {
+            issue: { type: 'string', description: 'The problem encountered.' },
+            workaround: { type: 'string', description: 'What the operator/team did instead.' },
+            recommendation: { type: 'string', description: 'Concrete app/product change that would make future agents perform better.' },
+            impact: { type: 'string', description: 'How this affected quality, speed, confidence, or completeness.' },
+          },
+          required: ['issue', 'workaround', 'recommendation'],
+        },
+      },
+    },
+    async handler({ issue, workaround, recommendation, impact }, { colonyContext }) {
+      if (!colonyContext?.colonyId) return { error: 'report_workaround is only available inside a Colony run' };
+      const note = {
+        issue: String(issue || '').trim(),
+        workaround: String(workaround || '').trim(),
+        recommendation: String(recommendation || '').trim(),
+        impact: impact ? String(impact).trim() : '',
+      };
+      if (!note.issue || !note.workaround || !note.recommendation) {
+        return { error: 'issue, workaround, and recommendation are required' };
+      }
+      protocol.writeBlackboard(
+        colonyContext.colonyId,
+        'Operator',
+        'message',
+        `WORKAROUND: ${note.issue}\nUsed: ${note.workaround}\nImprove Hive: ${note.recommendation}${note.impact ? `\nImpact: ${note.impact}` : ''}`,
+        { workaround_report: true, ...note },
+      );
+      return { success: true, workaround: note };
+    },
+  },
+
+  report_acceptance: {
+    group: 'protocol',
+    definition: {
+      type: 'function',
+      function: {
+        name: 'report_acceptance',
+        description: 'Record a per-criterion verdict against the work item\'s acceptance criteria. QA MUST call this after executing its checks, before handing off. Each verdict needs the criterion text, pass/fail/not_verified, and the command output or observation used as evidence.',
+        parameters: {
+          type: 'object',
+          properties: {
+            results: {
+              type: 'array',
+              description: 'One entry per acceptance criterion.',
+              items: {
+                type: 'object',
+                properties: {
+                  criterion: { type: 'string', description: 'The acceptance criterion text (verbatim or close).' },
+                  status: { type: 'string', enum: ['pass', 'fail', 'not_verified'], description: 'Verdict from executed checks.' },
+                  evidence: { type: 'string', description: 'Command output or observation proving the verdict.' },
+                },
+                required: ['criterion', 'status'],
+              },
+            },
+          },
+          required: ['results'],
+        },
+      },
+    },
+    async handler({ results }, { colonyContext, callerAgentId }) {
+      if (!colonyContext?.colonyId) return { error: 'report_acceptance is only available inside a Colony run' };
+      if (!Array.isArray(results) || results.length === 0) return { error: 'results must be a non-empty array' };
+      const normalized = results.map(r => ({
+        criterion: String(r?.criterion || '').trim(),
+        status: ['pass', 'fail', 'not_verified'].includes(r?.status) ? r.status : 'not_verified',
+        evidence: r?.evidence ? String(r.evidence).slice(0, 600) : '',
+      })).filter(r => r.criterion);
+      if (normalized.length === 0) return { error: 'every result needs a criterion' };
+      const author = agentLabel(colonyContext, callerAgentId, 'qa_engineer');
+      protocol.writeBlackboard(
+        colonyContext.colonyId,
+        author,
+        'state',
+        `Acceptance criteria verdicts:\n${normalized.map(r => `- [${r.status.toUpperCase()}] ${r.criterion}`).join('\n')}`,
+        { acceptance_results: normalized },
+      );
+      return { success: true, recorded: normalized.length, results: normalized };
     },
   },
 
@@ -872,6 +1530,13 @@ const TOOLS = {
       if (step.status === 'done' && status === 'in_progress') {
         return { error: `Step "${id}" is already done and cannot be re-opened. Move on to the next pending step.` };
       }
+      // Protocol recipes: accepted handoffs auto-advance the plan and are the
+      // evidence of real work, so the strict in_progress/ordering/delegation
+      // guards below only generate error ping-pong that burns the operator's
+      // tool rounds (observed: ~15 of 20 rounds lost to guard errors). Apply
+      // the transition directly and tell the operator the plan is auto-managed.
+      const lenientProtocol = protocol.hasProtocol(colonyContext.recipeId);
+      if (!lenientProtocol) {
       // Prevent skipping: can't mark a step in_progress if any earlier step is incomplete.
       if (status === 'in_progress') {
         const stuck = plan.steps.slice(0, stepIndex).find(s => s.status === 'in_progress');
@@ -910,12 +1575,43 @@ const TOOLS = {
           };
         }
       }
+      } // end !lenientProtocol guards
+      if (lenientProtocol && colonyContext.delegatedSteps && status === 'done') {
+        colonyContext.delegatedSteps.add(String(id));
+      }
       step.status = status;
       if (note) step.note = String(note).slice(0, 500);
       plan.updated_at = Date.now();
       db.prepare('UPDATE colonies SET plan=?, updated_at=unixepoch() WHERE id=?')
         .run(JSON.stringify(plan), colonyContext.colonyId);
-      return { success: true, step, plan };
+      
+      // GitHub write-back: close issue if done
+      if (status === 'done' && step.github_issue_number) {
+        const colonyRow = db.prepare('SELECT github_writeback, repo_path FROM colonies WHERE id=?').get(colonyContext.colonyId);
+        if (colonyRow?.github_writeback && colonyRow?.repo_path) {
+          const detected = detectGitHubRepo(colonyRow.repo_path);
+          if (detected) {
+            updateGitHubIssue({
+              owner: detected.owner,
+              repo: detected.repo,
+              number: step.github_issue_number,
+              state: 'closed',
+              comment: `✅ Task completed by Hive Colony.\n\n${step.note ? `**Note:** ${step.note}` : ''}`
+            }).catch(err => {
+              console.error('Failed to close GitHub issue:', err);
+              protocol.writeBlackboard(colonyContext.colonyId, 'system', 'blocker',
+                `Failed to update GitHub issue #${step.github_issue_number}: ${err.message}. Please check your token.`,
+                { error: err.message }
+              );
+            });
+          }
+        }
+      }
+
+      return {
+        success: true, step, plan,
+        ...(lenientProtocol ? { note: 'Plan steps also auto-complete when handoffs are accepted — manual updates are only needed for blocked steps or extra work.' } : {}),
+      };
     },
   },
 
@@ -954,8 +1650,49 @@ const TOOLS = {
           };
         }
       }
-      db.prepare('UPDATE colonies SET summary=?, updated_at=unixepoch() WHERE id=?').run(trimmed, colonyContext.colonyId);
-      return { success: true, goal_achieved: true, summary: trimmed };
+
+      // Protocol gate: a protocol-driven colony cannot complete while a critical
+      // handoff awaits human approval, or if the handoff flow was never used.
+      const recipeId = colonyContext.recipeId;
+      let deliverable = null;
+      if (protocol.hasProtocol(recipeId)) {
+        const completion = protocol.flowCompletion(colonyContext.colonyId, recipeId);
+        if (!completion.ok) {
+          return {
+            error: `Cannot mark goal achieved: ${completion.reason}`,
+            ...(completion.pending_human ? { pending_human: completion.pending_human } : {}),
+          };
+        }
+        // Premature-victory guard: the dev-team flow must run END TO END before
+        // the goal can be declared. Without this, an operator that delegated to
+        // one role could self-complete the plan and finish with a "partial flow"
+        // deliverable and no real work product.
+        if (!completion.terminal_reached && Array.isArray(completion.missing_edges) && completion.missing_edges.length > 0) {
+          return {
+            error: `Cannot mark goal achieved: the handoff flow is incomplete. Missing handoffs: ` +
+              `${completion.missing_edges.map(e => `${e.from}→${e.to} (${e.payload})`).join('; ')}. ` +
+              `Delegate to each remaining role in order with ask_agent — every role must complete its work and hand off before the run can finish.`,
+            missing_edges: completion.missing_edges,
+          };
+        }
+        deliverable = protocol.buildDeliverable(colonyContext.colonyId, recipeId, trimmed);
+      }
+      const workaroundRows = protocol.readBlackboard(colonyContext.colonyId, { limit: 500 })
+        .filter(entry => entry.meta?.workaround_report)
+        .map(entry => ({
+          issue: entry.meta.issue || entry.content,
+          workaround: entry.meta.workaround || '',
+          recommendation: entry.meta.recommendation || '',
+          impact: entry.meta.impact || '',
+        }));
+      if (workaroundRows.length > 0) {
+        deliverable = deliverable || { summary: trimmed, flow_complete: false, handoffs: [], artifacts: [], links: [] };
+        deliverable.workarounds = workaroundRows;
+      }
+
+      db.prepare('UPDATE colonies SET summary=?, deliverable=?, updated_at=unixepoch() WHERE id=?')
+        .run(trimmed, deliverable ? JSON.stringify(deliverable) : null, colonyContext.colonyId);
+      return { success: true, goal_achieved: true, summary: trimmed, ...(deliverable ? { deliverable } : {}) };
     },
   },
 
@@ -1402,8 +2139,8 @@ const TOOLS = {
     },
     async handler({ path: filePath, content }, { callerAgentId }) {
       const sandbox  = require('./sandbox');
-      const dir      = sandbox.sandboxDir(callerAgentId);
-      const resolved = path.resolve(path.join(dir, filePath));
+      const dir      = sandbox.workspaceDir(callerAgentId);
+      const resolved = path.resolve(path.join(dir, stripWorkspacePrefix(filePath)));
       if (!resolved.startsWith(dir)) return { error: 'Path must be inside the sandbox workspace' };
       fs.mkdirSync(path.dirname(resolved), { recursive: true });
       fs.writeFileSync(resolved, content, 'utf8');
@@ -1429,8 +2166,8 @@ const TOOLS = {
     },
     async handler({ path: filePath }, { callerAgentId }) {
       const sandbox  = require('./sandbox');
-      const dir      = sandbox.sandboxDir(callerAgentId);
-      const resolved = path.resolve(path.join(dir, filePath));
+      const dir      = sandbox.workspaceDir(callerAgentId);
+      const resolved = path.resolve(path.join(dir, stripWorkspacePrefix(filePath)));
       if (!resolved.startsWith(dir)) return { error: 'Path must be inside the sandbox workspace' };
       if (!fs.existsSync(resolved))  return { error: `File not found: ${filePath}` };
       const content = fs.readFileSync(resolved, 'utf8');
@@ -1456,8 +2193,8 @@ const TOOLS = {
     },
     async handler({ path: filePath }, { callerAgentId }) {
       const sandbox  = require('./sandbox');
-      const dir      = sandbox.sandboxDir(callerAgentId);
-      const resolved = path.resolve(path.join(dir, filePath));
+      const dir      = sandbox.workspaceDir(callerAgentId);
+      const resolved = path.resolve(path.join(dir, stripWorkspacePrefix(filePath)));
       if (!resolved.startsWith(dir)) return { error: 'Path must be inside the sandbox workspace' };
       if (!fs.existsSync(resolved))  return { error: `Not found: ${filePath}` };
       fs.rmSync(resolved, { recursive: true, force: true });
@@ -1484,9 +2221,9 @@ const TOOLS = {
     },
     async handler({ from, to }, { callerAgentId }) {
       const sandbox   = require('./sandbox');
-      const dir       = sandbox.sandboxDir(callerAgentId);
-      const srcRes    = path.resolve(path.join(dir, from));
-      const dstRes    = path.resolve(path.join(dir, to));
+      const dir       = sandbox.workspaceDir(callerAgentId);
+      const srcRes    = path.resolve(path.join(dir, stripWorkspacePrefix(from)));
+      const dstRes    = path.resolve(path.join(dir, stripWorkspacePrefix(to)));
       if (!srcRes.startsWith(dir) || !dstRes.startsWith(dir)) return { error: 'Paths must be inside the sandbox workspace' };
       if (!fs.existsSync(srcRes)) return { error: `Not found: ${from}` };
       fs.mkdirSync(path.dirname(dstRes), { recursive: true });
@@ -1620,7 +2357,10 @@ function getToolDefinitions(enabledGroups = []) {
   if (!enabledGroups.length) return [];
 
   const builtIn = Object.values(TOOLS)
-    .filter(t => enabledGroups.includes(t.group))
+    .filter(t => {
+      const groups = Array.isArray(t.groups) ? t.groups : [t.group];
+      return groups.some(group => enabledGroups.includes(group));
+    })
     .map(t => t.definition);
 
   const mcpServerIds = enabledGroups
@@ -1653,4 +2393,21 @@ async function executeTool(name, args, callerAgentId, ollamaUrl, depth = 0, work
   }
 }
 
-module.exports = { getToolDefinitions, executeTool, runAgentOnce, readMemory, readShared };
+// Map of built-in tool group → list of { name, description } for every function
+// in that group. Used by the Skills & Tools UI to show what each group exposes.
+function builtInToolCatalog() {
+  const catalog = {};
+  for (const tool of Object.values(TOOLS)) {
+    const groups = Array.isArray(tool.groups) ? tool.groups : [tool.group];
+    for (const group of groups) {
+      if (!group) continue;
+      (catalog[group] ||= []).push({
+        name: tool.definition?.function?.name || '',
+        description: tool.definition?.function?.description || '',
+      });
+    }
+  }
+  return catalog;
+}
+
+module.exports = { getToolDefinitions, executeTool, runAgentOnce, readMemory, readShared, isPermissionError, builtInToolCatalog };

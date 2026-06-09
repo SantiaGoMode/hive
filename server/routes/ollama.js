@@ -1,15 +1,10 @@
 const express = require('express');
 const router = express.Router();
-const db = require('../db');
-
-function getOllamaUrl() {
-  const row = db.prepare("SELECT value FROM app_settings WHERE key = 'ollama_url'").get();
-  return row ? row.value : 'http://localhost:11434';
-}
+const { ollamaApiUrl } = require('../lib/ollamaUrl');
 
 router.get('/models', async (req, res) => {
   try {
-    const r = await fetch(`${getOllamaUrl()}/api/tags`);
+    const r = await fetch(ollamaApiUrl('tags'));
     const data = await r.json();
     res.json(data.models || []);
   } catch (e) {
@@ -26,7 +21,7 @@ router.post('/pull', async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
 
   try {
-    const r = await fetch(`${getOllamaUrl()}/api/pull`, {
+    const r = await fetch(ollamaApiUrl('pull'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, stream: true }),
@@ -55,7 +50,7 @@ router.post('/pull', async (req, res) => {
 
 router.delete('/models/:name', async (req, res) => {
   try {
-    const r = await fetch(`${getOllamaUrl()}/api/delete`, {
+    const r = await fetch(ollamaApiUrl('delete'), {
       method: 'DELETE',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: req.params.name }),
@@ -69,7 +64,7 @@ router.delete('/models/:name', async (req, res) => {
 
 router.get('/models/:name/info', async (req, res) => {
   try {
-    const r = await fetch(`${getOllamaUrl()}/api/show`, {
+    const r = await fetch(ollamaApiUrl('show'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: req.params.name }),

@@ -3,6 +3,8 @@ const router = express.Router();
 const db = require('../db');
 const { readAgent } = require('../lib/agentParser');
 const { runAgentOnce } = require('../lib/agentTools');
+const { runPipelineById } = require('../lib/pipelineRunner');
+const { getOllamaUrl } = require('../lib/ollamaUrl');
 
 function newId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -82,33 +84,14 @@ router.delete('/runs/all', (req, res) => {
 // Steps with parallel:true are grouped — consecutive parallel steps run via Promise.all.
 // After a parallel group, {prev} = all outputs joined with '\n\n---\n\n'.
 
-// Group consecutive parallel steps together.
-// Returns: [{parallel: bool, indices: [0,1,...]}]
-function groupSteps(steps) {
-  const groups = [];
-  let i = 0;
-  while (i < steps.length) {
-    if (steps[i].parallel) {
-      const indices = [];
-      while (i < steps.length && steps[i].parallel) { indices.push(i); i++; }
-      groups.push({ parallel: true, indices });
-    } else {
-      groups.push({ parallel: false, indices: [i] });
-      i++;
-    }
-  }
-  return groups;
-}
-
 router.post('/:id/run', async (req, res) => {
-  const row = db.prepare('SELECT * FROM pipelines WHERE id = ?').get(req.params.id);
-  if (!row) return res.status(404).json({ error: 'Pipeline not found' });
-
-  const steps = JSON.parse(row.steps);
-  if (!steps.length) return res.status(400).json({ error: 'Pipeline has no steps' });
-
   const { input } = req.body;
   if (!input?.trim()) return res.status(400).json({ error: 'input is required' });
+
+  const row = db.prepare('SELECT * FROM pipelines WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Pipeline not found' });
+  const steps = JSON.parse(row.steps || '[]');
+  if (!steps.length) return res.status(400).json({ error: 'Pipeline has no steps' });
 
   // Set up SSE
   res.setHeader('Content-Type', 'text/event-stream');
@@ -123,143 +106,17 @@ router.post('/:id/run', async (req, res) => {
   // Prime the connection so the proxy knows it's a live stream
   res.write(': connected\n\n');
 
-  const urlRow = db.prepare("SELECT value FROM app_settings WHERE key='ollama_url'").get();
-  const ollamaUrl = urlRow?.value || 'http://localhost:11434';
-  const hivePath = require('path').join(require('os').homedir(), '.hive');
-
-  // Create a run record immediately
-  const runId = newId();
-  db.prepare(
-    'INSERT INTO pipeline_runs (id, pipeline_id, pipeline_name, input, trace, status) VALUES (?, ?, ?, ?, ?, ?)',
-  ).run(runId, row.id, row.name, input.trim(), '[]', 'running');
-
-  const pipelineStart = Date.now();
-  let prevOutput = input.trim();
-  const trace = [];
-  const stepGroups = groupSteps(steps);
-
-  for (let g = 0; g < stepGroups.length; g++) {
-    const group = stepGroups[g];
-    const groupPrev = prevOutput; // all steps in a parallel group see the same prev
-
-    // Validate all agents in the group before starting any
-    for (const idx of group.indices) {
-      const step = steps[idx];
-      const agent = readAgent(step.agent_id);
-      const label = step.label || `Step ${idx + 1}`;
-      if (!agent) {
-        const entry = { step: idx, label, agent_name: step.agent_id, status: 'error', error: 'Agent not found', duration_ms: 0, group: g };
-        trace.push(entry);
-        db.prepare('UPDATE pipeline_runs SET trace=?, status=? WHERE id=?').run(JSON.stringify(trace), 'error', runId);
-        emit({ type: 'step_error', ...entry });
-        res.end(); return;
-      }
-      if (!agent.model) {
-        const entry = { step: idx, label, agent_name: agent.name, status: 'error', error: 'No model configured', duration_ms: 0, group: g };
-        trace.push(entry);
-        db.prepare('UPDATE pipeline_runs SET trace=?, status=? WHERE id=?').run(JSON.stringify(trace), 'error', runId);
-        emit({ type: 'step_error', ...entry });
-        res.end(); return;
-      }
-    }
-
-    if (!group.parallel) {
-      // Sequential step
-      const idx = group.indices[0];
-      const step = steps[idx];
-      const agent = readAgent(step.agent_id);
-      const label = step.label || `Step ${idx + 1}`;
-      const prompt = (step.prompt || '{prev}')
-        .replace(/\{input\}/g, input.trim())
-        .replace(/\{prev\}/g, groupPrev);
-
-      emit({ type: 'step_start', step: idx, label, agent_name: agent.name, group: g });
-
-      const stepStart = Date.now();
-      let output, error;
-      const stepToolsOverride = Array.isArray(step.tools) && step.tools.length > 0 ? step.tools : null;
-      // Heartbeat keeps the SSE connection alive through reverse-proxy idle timeouts
-      const heartbeat = setInterval(() => {
-        if (!res.writableEnded) res.write(': heartbeat\n\n');
-      }, 10000);
-      try {
-        output = await runAgentOnce(agent, [{ role: 'user', content: prompt }], ollamaUrl, 0, null, hivePath, stepToolsOverride);
-      } catch (e) { error = e.message; }
-      finally { clearInterval(heartbeat); }
-      const duration_ms = Date.now() - stepStart;
-
-      if (error) {
-        const entry = { step: idx, label, agent_name: agent.name, status: 'error', error, duration_ms, group: g };
-        trace.push(entry);
-        db.prepare('UPDATE pipeline_runs SET trace=?, status=? WHERE id=?').run(JSON.stringify(trace), 'error', runId);
-        emit({ type: 'step_error', ...entry });
-        res.end(); return;
-      }
-      trace.push({ step: idx, label, agent_name: agent.name, status: 'done', output, duration_ms, group: g });
-      db.prepare('UPDATE pipeline_runs SET trace=? WHERE id=?').run(JSON.stringify(trace), runId);
-      emit({ type: 'step_done', step: idx, label, agent_name: agent.name, output, duration_ms, group: g });
-      prevOutput = output;
-
-    } else {
-      // Parallel group — emit step_start for all, then run concurrently
-      for (const idx of group.indices) {
-        const step = steps[idx];
-        const agent = readAgent(step.agent_id);
-        const label = step.label || `Step ${idx + 1}`;
-        emit({ type: 'step_start', step: idx, label, agent_name: agent.name, group: g });
-      }
-
-      const parallelHeartbeat = setInterval(() => {
-        if (!res.writableEnded) res.write(': heartbeat\n\n');
-      }, 10000);
-      const results = await Promise.all(
-        group.indices.map(async (idx) => {
-          const step = steps[idx];
-          const agent = readAgent(step.agent_id);
-          const label = step.label || `Step ${idx + 1}`;
-          const prompt = (step.prompt || '{prev}')
-            .replace(/\{input\}/g, input.trim())
-            .replace(/\{prev\}/g, groupPrev);
-
-          const stepStart = Date.now();
-          const parallelToolsOverride = Array.isArray(step.tools) && step.tools.length > 0 ? step.tools : null;
-          try {
-            const output = await runAgentOnce(agent, [{ role: 'user', content: prompt }], ollamaUrl, 0, null, hivePath, parallelToolsOverride);
-            const duration_ms = Date.now() - stepStart;
-            const entry = { step: idx, label, agent_name: agent.name, status: 'done', output, duration_ms, group: g };
-            emit({ type: 'step_done', ...entry });
-            return entry;
-          } catch (e) {
-            const duration_ms = Date.now() - stepStart;
-            const entry = { step: idx, label, agent_name: agent.name, status: 'error', error: e.message, duration_ms, group: g };
-            emit({ type: 'step_error', ...entry });
-            return entry;
-          }
-        }),
-      );
-
-      clearInterval(parallelHeartbeat);
-
-      // Collect all successful outputs; on any error stop pipeline
-      const failed = results.find(r => r.status === 'error');
-      trace.push(...results);
-      db.prepare('UPDATE pipeline_runs SET trace=? WHERE id=?').run(JSON.stringify(trace), runId);
-      if (failed) {
-        db.prepare('UPDATE pipeline_runs SET status=? WHERE id=?').run('error', runId);
-        res.end(); return;
-      }
-      // prevOutput for next group = all outputs joined
-      prevOutput = results.map(r => r.output).join('\n\n---\n\n');
-    }
+  const heartbeat = setInterval(() => {
+    if (!res.writableEnded) res.write(': heartbeat\n\n');
+  }, 10000);
+  try {
+    await runPipelineById(req.params.id, input, { emit });
+  } catch (e) {
+    emit({ type: 'error', error: e.message });
+  } finally {
+    clearInterval(heartbeat);
+    res.end();
   }
-
-  const total_ms = Date.now() - pipelineStart;
-  db.prepare(
-    'UPDATE pipeline_runs SET trace=?, final_output=?, total_ms=?, status=? WHERE id=?',
-  ).run(JSON.stringify(trace), prevOutput, total_ms, 'done', runId);
-
-  emit({ type: 'done', final_output: prevOutput, total_ms });
-  res.end();
 });
 
 // ── Retry a single step (SSE) ─────────────────────────────────────────────────
@@ -290,8 +147,7 @@ router.post('/:id/run-step', async (req, res) => {
 
   const emit = (obj) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(obj)}\n\n`); };
 
-  const urlRow = db.prepare("SELECT value FROM app_settings WHERE key='ollama_url'").get();
-  const ollamaUrl = urlRow?.value || 'http://localhost:11434';
+  const ollamaUrl = getOllamaUrl();
   const hivePath  = require('path').join(require('os').homedir(), '.hive');
 
   const prompt = (step.prompt || '{prev}')

@@ -108,10 +108,10 @@ function stopFakeOllama() {
 
 // Build the NDJSON stream body a real Ollama chat response produces.
 function ollamaToolCall(toolName, toolArgs) {
-  return { body: { message: { content: '', tool_calls: [{ function: { name: toolName, arguments: toolArgs } }] } } };
+  return { stream: [{ message: { content: '', tool_calls: [{ function: { name: toolName, arguments: toolArgs } }] }, done: true }] };
 }
 function ollamaText(content) {
-  return { body: { message: { content, tool_calls: [] } } };
+  return { stream: [{ message: { content, tool_calls: [] }, done: true }] };
 }
 
 // ── DB setup ──────────────────────────────────────────────────────────────────
@@ -176,7 +176,7 @@ describe('guard — hallucinated agent ID', () => {
       return ollamaText('GOAL ACHIEVED: done.');
     };
 
-    const id = createColony('Hallucinated ID test', 'fake-model');
+    const id = createColony('Hallucinated ID test', 'fake-model', 'custom_auto');
     createdColonies.push(id);
     await runColony(id, () => {}, null);
 
@@ -214,7 +214,7 @@ describe('guard — hallucinated agent ID', () => {
       return ollamaText('GOAL ACHIEVED: done.');
     };
 
-    const id = createColony('Name resolution test', 'fake-model');
+    const id = createColony('Name resolution test', 'fake-model', 'custom_auto');
     createdColonies.push(id);
     await runColony(id, () => {}, null);
 
@@ -242,7 +242,7 @@ describe('guard — set_plan called twice', () => {
       return ollamaText('GOAL ACHIEVED: done.');
     };
 
-    const id = createColony('Double set_plan test', 'fake-model');
+    const id = createColony('Double set_plan test', 'fake-model', 'custom_auto');
     createdColonies.push(id);
     await runColony(id, () => {}, null);
 
@@ -281,7 +281,7 @@ describe('guard — marking done without delegation', () => {
       return ollamaText('GOAL ACHIEVED: done.');
     };
 
-    const id = createColony('Skip delegation test', 'fake-model');
+    const id = createColony('Skip delegation test', 'fake-model', 'custom_auto');
     createdColonies.push(id);
     await runColony(id, () => {}, null);
 
@@ -318,7 +318,7 @@ describe('guard — marking done without delegation', () => {
       return ollamaText('GOAL ACHIEVED: done.');
     };
 
-    const id = createColony('Pending to done shortcut test', 'fake-model');
+    const id = createColony('Pending to done shortcut test', 'fake-model', 'custom_auto');
     createdColonies.push(id);
     await runColony(id, () => {}, null);
 
@@ -357,7 +357,7 @@ describe('guard — step ordering', () => {
       return ollamaText('GOAL ACHIEVED: done.');
     };
 
-    const id = createColony('Step skip test', 'fake-model');
+    const id = createColony('Step skip test', 'fake-model', 'custom_auto');
     createdColonies.push(id);
     await runColony(id, () => {}, null);
 
@@ -396,7 +396,7 @@ describe('guard — step ordering', () => {
       return ollamaText('GOAL ACHIEVED: done.');
     };
 
-    const id = createColony('Backtrack prevention test', 'fake-model');
+    const id = createColony('Backtrack prevention test', 'fake-model', 'custom_auto');
     createdColonies.push(id);
     await runColony(id, () => {}, null);
 
@@ -426,7 +426,7 @@ describe('guard — step ordering', () => {
       return ollamaText('GOAL ACHIEVED: done.');
     };
 
-    const id = createColony('Idempotent update test', 'fake-model');
+    const id = createColony('Idempotent update test', 'fake-model', 'custom_auto');
     createdColonies.push(id);
     await runColony(id, () => {}, null);
 
@@ -479,7 +479,7 @@ describe('guard — worker tool loop detection', () => {
       return ollamaText('GOAL ACHIEVED: done.');
     };
 
-    const id = createColony('Worker loop detection test', 'fake-model');
+    const id = createColony('Worker loop detection test', 'fake-model', 'custom_auto');
     createdColonies.push(id);
     await runColony(id, () => {}, null);
 
@@ -512,7 +512,7 @@ describe('guard — add_plan_step', () => {
       return ollamaText('GOAL ACHIEVED: done.');
     };
 
-    const id = createColony('add_plan_step test', 'fake-model');
+    const id = createColony('add_plan_step test', 'fake-model', 'custom_auto');
     createdColonies.push(id);
     await runColony(id, () => {}, null);
 
@@ -532,7 +532,7 @@ describe('guard — add_plan_step', () => {
       return ollamaText('GOAL ACHIEVED: done.');
     };
 
-    const id = createColony('add_plan_step no-plan test', 'fake-model');
+    const id = createColony('add_plan_step no-plan test', 'fake-model', 'custom_auto');
     createdColonies.push(id);
     await runColony(id, () => {}, null);
 
@@ -565,7 +565,7 @@ describe('guard — researcher web_search auto-injection', () => {
       return ollamaText('GOAL ACHIEVED: done.');
     };
 
-    const id = createColony('Researcher web_search injection test', 'fake-model');
+    const id = createColony('Researcher web_search injection test', 'fake-model', 'custom_auto');
     createdColonies.push(id);
     await runColony(id, () => {}, null);
 
@@ -599,7 +599,7 @@ describe('guard — researcher web_search auto-injection', () => {
       return ollamaText('GOAL ACHIEVED: done.');
     };
 
-    const id = createColony('Implementer no web_search test', 'fake-model');
+    const id = createColony('Implementer no web_search test', 'fake-model', 'custom_auto');
     createdColonies.push(id);
     await runColony(id, () => {}, null);
 
@@ -630,7 +630,7 @@ describe('guard — duplicate agent names', () => {
       return ollamaText('GOAL ACHIEVED: done.');
     };
 
-    const id = createColony('Duplicate name test', 'fake-model');
+    const id = createColony('Duplicate name test', 'fake-model', 'custom_auto');
     createdColonies.push(id);
     await runColony(id, () => {}, null);
 
@@ -660,7 +660,7 @@ describe('runColony — log persistence', () => {
   it('persists log entries to the DB immediately (survives a refresh)', async () => {
     fakeOllama.handler = async () => ollamaText('GOAL ACHIEVED: Done.');
 
-    const id = createColony('Test goal — persistence', 'fake-model');
+    const id = createColony('Test goal — persistence', 'fake-model', 'custom_auto');
     createdColonies.push(id);
 
     await runColony(id, () => {}, null);
@@ -675,7 +675,7 @@ describe('runColony — log persistence', () => {
   it('persists the agent_ready entry even when the run is aborted right after', async () => {
     fakeOllama.handler = async () => null; // hang
 
-    const id = createColony('Test goal — early abort', 'fake-model');
+    const id = createColony('Test goal — early abort', 'fake-model', 'custom_auto');
     createdColonies.push(id);
 
     const ac = new AbortController();
@@ -696,7 +696,7 @@ describe('runColony — error handling', () => {
   it('updates status to error when Ollama returns an HTTP error', async () => {
     fakeOllama.handler = async () => ({ status: 500, body: { error: 'boom' } });
 
-    const id = createColony('Test goal — ollama 500', 'fake-model');
+    const id = createColony('Test goal — ollama 500', 'fake-model', 'custom_auto');
     createdColonies.push(id);
     await runColony(id, () => {}, null);
 
@@ -709,7 +709,7 @@ describe('runColony — error handling', () => {
     const badUrl = 'http://127.0.0.1:1';
     db.prepare("UPDATE app_settings SET value=? WHERE key='ollama_url'").run(badUrl);
 
-    const id = createColony('Test goal — ollama unreachable', 'fake-model');
+    const id = createColony('Test goal — ollama unreachable', 'fake-model', 'custom_auto');
     createdColonies.push(id);
 
     try {
@@ -733,7 +733,7 @@ describe('runColony — worker agent tracking', () => {
       return ollamaText('GOAL ACHIEVED: worker created.');
     };
 
-    const id = createColony('Test goal — worker tracking', 'fake-model');
+    const id = createColony('Test goal — worker tracking', 'fake-model', 'custom_auto');
     createdColonies.push(id);
     await runColony(id, () => {}, null);
 
@@ -748,7 +748,7 @@ describe('runColony — signal / stop', () => {
   it('aborts an in-flight Ollama fetch within ~1 second when signal is aborted', async () => {
     fakeOllama.handler = async () => null; // hang
 
-    const id = createColony('Test goal — abort mid-fetch', 'fake-model');
+    const id = createColony('Test goal — abort mid-fetch', 'fake-model', 'custom_auto');
     createdColonies.push(id);
 
     const ac = new AbortController();
@@ -759,6 +759,25 @@ describe('runColony — signal / stop', () => {
 
     assert.ok(Date.now() - start < 3000);
     assert.equal(getColony(id).status, 'stopped');
+  });
+
+  it('stopColonyRun aborts a run launched with no external signal (trigger path)', async () => {
+    const { stopColonyRun, isColonyRunning } = require('../lib/colonyRunner');
+    fakeOllama.handler = async () => null; // hang
+
+    const id = createColony('Test goal — stopColonyRun', 'fake-model', 'custom_auto');
+    createdColonies.push(id);
+
+    const runPromise = runColony(id, () => {}, null); // no signal, like colonyTriggers
+    await new Promise(r => setTimeout(r, 150));
+
+    assert.equal(isColonyRunning(id), true);
+    assert.equal(stopColonyRun(id), true);
+    await runPromise;
+
+    assert.equal(getColony(id).status, 'stopped');
+    assert.equal(isColonyRunning(id), false);
+    assert.equal(stopColonyRun(id), false, 'finished run should no longer be stoppable');
   });
 });
 
@@ -775,7 +794,7 @@ describe('runColony — worker cap', () => {
       return ollamaText('GOAL ACHIEVED: enough.');
     };
 
-    const id = createColony('Test goal — worker cap', 'fake-model');
+    const id = createColony('Test goal — worker cap', 'fake-model', 'custom_auto');
     createdColonies.push(id);
     await runColony(id, () => {}, null);
 
@@ -802,7 +821,7 @@ describe('runColony — token streaming', () => {
       ],
     });
 
-    const id = createColony('Test goal — token streaming', 'fake-model');
+    const id = createColony('Test goal — token streaming', 'fake-model', 'custom_auto');
     createdColonies.push(id);
 
     const events = [];
@@ -820,7 +839,7 @@ describe('runColony — preflight', () => {
     fakeOllama.tagsHandler = async () => ({ body: { models: [{ name: 'some-other-model' }] } });
     fakeOllama.handler = async () => ollamaText('irrelevant');
 
-    const id = createColony('Preflight missing model test', 'fake-model');
+    const id = createColony('Preflight missing model test', 'fake-model', 'custom_auto');
     createdColonies.push(id);
     await runColony(id, () => {}, null);
     fakeOllama.tagsHandler = null;
@@ -834,7 +853,7 @@ describe('runColony — preflight', () => {
     fakeOllama.showHandler = async () => ({ body: { capabilities: ['completion'] } });
     fakeOllama.handler = async () => ollamaText('irrelevant');
 
-    const id = createColony('Preflight no-tools test', 'fake-model');
+    const id = createColony('Preflight no-tools test', 'fake-model', 'custom_auto');
     createdColonies.push(id);
     await runColony(id, () => {}, null);
     fakeOllama.showHandler = null;
@@ -842,6 +861,72 @@ describe('runColony — preflight', () => {
     const colony = getColony(id);
     assert.equal(colony.status, 'error');
     assert.match(colony.log.find(e => e.kind === 'error').message, /does not support tool calling/i);
+  });
+});
+
+describe('runColony — recipes', () => {
+  it('runs Research Mission as a seeded crew with model-driven planning', async () => {
+    let operatorCalls = 0;
+    const crewIds = {};
+    fakeOllama.handler = async (_req, parsed) => {
+      const system = parsed.messages?.[0]?.content || '';
+      if (system.includes('Research Mission Operator')) {
+        operatorCalls++;
+        if (!crewIds.researcher) {
+          crewIds.researcher = system.match(/Researcher\) [^"]*-> agent_id: "([^"]+)"/)?.[1];
+          crewIds.critic = system.match(/Source Critic\) [^"]*-> agent_id: "([^"]+)"/)?.[1];
+          crewIds.synthesizer = system.match(/Synthesizer\) [^"]*-> agent_id: "([^"]+)"/)?.[1];
+        }
+        if (operatorCalls === 1) {
+          return ollamaToolCall('set_plan', {
+            steps: [
+              { id: '1', description: 'Gather source-backed research', assigned_to: crewIds.researcher },
+              { id: '2', description: 'Review evidence quality and caveats', assigned_to: crewIds.critic },
+              { id: '3', description: 'Synthesize the final research brief', assigned_to: crewIds.synthesizer },
+            ],
+          });
+        }
+        if (operatorCalls === 2) return ollamaToolCall('update_plan_step', { id: '1', status: 'in_progress' });
+        if (operatorCalls === 3) return ollamaToolCall('ask_agent', { agent_id: crewIds.researcher, message: 'Gather source-backed research.' });
+        if (operatorCalls === 4) return ollamaToolCall('update_plan_step', { id: '1', status: 'done' });
+        if (operatorCalls === 5) return ollamaToolCall('update_plan_step', { id: '2', status: 'in_progress' });
+        if (operatorCalls === 6) return ollamaToolCall('ask_agent', { agent_id: crewIds.critic, message: 'Review the research handoff.', context: 'Research handoff: findings and sources.' });
+        if (operatorCalls === 7) return ollamaToolCall('update_plan_step', { id: '2', status: 'done' });
+        if (operatorCalls === 8) return ollamaToolCall('update_plan_step', { id: '3', status: 'in_progress' });
+        if (operatorCalls === 9) return ollamaToolCall('ask_agent', { agent_id: crewIds.synthesizer, message: 'Synthesize the final brief.', context: 'Research handoff plus critic handoff.' });
+        if (operatorCalls === 10) return ollamaToolCall('update_plan_step', { id: '3', status: 'done' });
+        return ollamaToolCall('mark_goal_achieved', { summary: 'Research mission complete.' });
+      }
+      if (system.includes('You are Researcher')) return ollamaText('Research handoff: findings and sources.');
+      if (system.includes('You are Source Critic')) return ollamaText('Critic handoff: evidence is medium strength.');
+      if (system.includes('You are Synthesizer')) return ollamaText('Final brief: concise synthesized deliverable.');
+      return ollamaText('unexpected request');
+    };
+
+    const id = createColony('Recipe roster test', 'fake-model', 'research_brief');
+    createdColonies.push(id);
+
+    await runColony(id, () => {}, null);
+
+    const colony = getColony(id);
+    const errorEntry = colony.log.find(e => e.kind === 'error');
+    if (colony.status !== 'done') {
+      assert.fail(`error=${errorEntry?.message || '(none)'} log=${JSON.stringify(colony.log.slice(-8))}`);
+    }
+    assert.equal(colony.recipe_id, 'research_brief');
+    assert.ok(colony.log.some(e => e.kind === 'recipe' && e.recipe_id === 'research_brief'));
+
+    const roles = colony.agents.map(a => a.persona_role);
+    assert.ok(roles.includes('Researcher'));
+    assert.ok(roles.includes('Source Critic'));
+    assert.ok(roles.includes('Synthesizer'));
+    assert.ok(roles.includes('Research Mission Operator'));
+
+    assert.ok(operatorCalls > 0, 'recipe operator should call Ollama to decide the mission plan');
+    assert.equal(colony.summary, 'Research mission complete.');
+    assert.ok(colony.plan?.steps?.every(s => s.status === 'done'));
+    assert.equal(colony.log.filter(e => e.kind === 'tool_call' && e.tool === 'ask_agent').length, 3);
+    assert.equal(colony.log.filter(e => e.kind === 'tool_call' && e.tool === 'create_agent').length, 0);
   });
 });
 
@@ -860,7 +945,7 @@ describe('runColony — plan tools and goal gating', () => {
       return ollamaToolCall('mark_goal_achieved', { summary: 'All steps verified and complete.' });
     };
 
-    const id = createColony('Plan tools test', 'fake-model');
+    const id = createColony('Plan tools test', 'fake-model', 'custom_auto');
     createdColonies.push(id);
 
     const events = [];
@@ -881,7 +966,7 @@ describe('runColony — plan tools and goal gating', () => {
       return ollamaToolCall('mark_goal_achieved', { summary: 'Pretending to be done.' });
     };
 
-    const id = createColony('Plan gating test', 'fake-model');
+    const id = createColony('Plan gating test', 'fake-model', 'custom_auto');
     createdColonies.push(id);
     await runColony(id, () => {}, null);
 
@@ -898,7 +983,7 @@ describe('runColony — exit diagnostic', () => {
   it('marks colony as error with a stall diagnostic when no completion happens within round cap', async () => {
     fakeOllama.handler = async () => ollamaText('thinking about it…');
 
-    const id = createColony('Stall diagnostic test', 'fake-model');
+    const id = createColony('Stall diagnostic test', 'fake-model', 'custom_auto');
     createdColonies.push(id);
     await runColony(id, () => {}, null);
 

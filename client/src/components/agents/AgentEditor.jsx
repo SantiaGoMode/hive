@@ -6,6 +6,7 @@ import { Input, Textarea, Select } from '../ui/Input';
 import { toast } from '../../stores/toastStore';
 import { useAgentStore } from '../../stores/agentStore';
 import { api } from '../../lib/api';
+import { modelBadge, modelOptionLabel, providerLabel } from '../../lib/modelLabels';
 
 const AVATAR_COLORS = [
   '#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444',
@@ -69,7 +70,7 @@ const TOOLS = [
   {
     id: 'agent_tools',
     label: 'Agent Management & Collaboration',
-    desc: 'Create, edit, and delegate to agents. Manage pipelines and schedules. Share information via the shared blackboard.',
+    desc: 'Create, edit, and delegate to agents. Manage pipelines and schedules, read the shared blackboard, and fetch full raw webhook events with get_webhook_event.',
     builtin: true,
   },
   { id: 'memory', label: 'Persistent Memory', desc: 'Remember things across conversations. The agent can save notes, user preferences, and context to a MEMORY.md file in its workspace.' },
@@ -83,7 +84,7 @@ const BASE_TABS = ['Identity', 'Model', 'System Prompt', 'Tools', 'Memory', 'Adv
 export function AgentEditor({ open, onClose, agent }) {
   const { createAgent, updateAgent } = useAgentStore();
   const [tab, setTab] = useState(0);
-  const [models, setModels] = useState([]);
+  const [models, setModels] = useState({});
   const [saving, setSaving] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
   const DEFAULTS = {
@@ -204,7 +205,7 @@ export function AgentEditor({ open, onClose, agent }) {
   };
 
   useEffect(() => {
-    api.getModels().then(setModels).catch(() => setModels([]));
+    api.getAllModels().then(setModels).catch(() => setModels({}));
     api.getMcpServers().then(setMcpServers).catch(() => setMcpServers([]));
   }, [open]);
 
@@ -250,6 +251,7 @@ export function AgentEditor({ open, onClose, agent }) {
   };
 
   const yamlPreview = JSON.stringify({ name: form.name, model: form.model, temperature: form.temperature, system_prompt: form.system_prompt, tools: form.tools }, null, 2);
+  const selectedModelBadge = form.model ? modelBadge(form.model) : null;
 
   return (
     <Modal open={open} onClose={onClose} title={agent ? `Edit: ${agent.name}` : 'New Agent'} size="xl">
@@ -314,11 +316,40 @@ export function AgentEditor({ open, onClose, agent }) {
 
         {tab === 1 && (
           <div className="flex flex-col gap-4">
-            <Select label="Ollama Model" value={form.model} onChange={e => set('model', e.target.value)}>
+            <Select label="Model" value={form.model} onChange={e => set('model', e.target.value)}>
               <option value="">— Select a model —</option>
-              {models.map(m => <option key={m.name} value={m.name}>{m.name}</option>)}
+              {['gateway', 'ollama', 'anthropic', 'openai', 'gemini'].map(prov => {
+                const list = models[prov] || [];
+                if (list.length === 0) return null;
+                return (
+                  <optgroup key={prov} label={prov === 'ollama' ? 'Ollama (local)' : providerLabel(prov)}>
+                    {list.map(m => <option key={m.id} value={m.id}>{modelOptionLabel(m)}</option>)}
+                  </optgroup>
+                );
+              })}
             </Select>
-            <p className="text-xs text-gray-500 -mt-2">Enter the Ollama model name, e.g. <code className="bg-gray-800 px-1 rounded">qwen3.5</code> or <code className="bg-gray-800 px-1 rounded">llama3.1:8b</code></p>
+            {selectedModelBadge && (
+              <div className="flex items-center gap-2 -mt-2">
+                <span className="text-xs text-gray-500">Selected</span>
+                <span
+                  title={selectedModelBadge.title}
+                  className="max-w-full truncate text-xs bg-gray-800 border border-gray-700 text-gray-300 rounded px-2 py-1"
+                >
+                  {selectedModelBadge.text}
+                </span>
+              </div>
+            )}
+            <p className="text-xs text-gray-500 -mt-2">
+              Pick a model, or type a custom id below. Cloud models are prefixed
+              (<code className="bg-gray-800 px-1 rounded">anthropic/…</code>, <code className="bg-gray-800 px-1 rounded">openai/…</code>, <code className="bg-gray-800 px-1 rounded">gemini/…</code>);
+              Ollama models use the bare name (<code className="bg-gray-800 px-1 rounded">llama3.1:8b</code>). Add cloud API keys in Settings → Model Providers.
+            </p>
+            <Input
+              label="Custom model id (optional)"
+              value={form.model}
+              onChange={e => set('model', e.target.value)}
+              placeholder="e.g. anthropic/claude-sonnet-4-6 or llama3.1:8b"
+            />
             <div>
               <label className="text-sm font-medium text-gray-300 block mb-1">Temperature: {form.temperature}</label>
               <input type="range" min="0" max="2" step="0.05" value={form.temperature}
@@ -346,6 +377,20 @@ export function AgentEditor({ open, onClose, agent }) {
                 onChange={e => set('context_length', parseInt(e.target.value))}
                 className="w-full accent-blue-500" />
               <div className="flex justify-between text-xs text-gray-500 mt-1"><span>2k</span><span>128k</span></div>
+            </div>
+            <div>
+              <label className="text-sm font-medium text-gray-300 block mb-1">
+                LLM Gateway budget (USD)
+                <span className="text-gray-500 font-normal ml-2 text-xs">optional — caps this agent's spend via a dedicated gateway key</span>
+              </label>
+              <input
+                type="number" min="0" step="0.5"
+                value={form.gateway_budget_usd ?? ''}
+                onChange={e => set('gateway_budget_usd', e.target.value === '' ? null : parseFloat(e.target.value))}
+                placeholder="No limit"
+                className="w-40 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-gray-200"
+              />
+              <p className="text-xs text-gray-600 mt-1">Requires the LLM gateway (Settings → Model Providers). When set, calls run on a per-agent key with this hard cap; changing it re-mints the key.</p>
             </div>
           </div>
         )}
@@ -387,6 +432,12 @@ export function AgentEditor({ open, onClose, agent }) {
                 </div>
               </div>
             ))}
+
+            {form.tools.includes('agent_tools') && (
+              <div className="p-3 rounded-lg border border-blue-500/20 bg-blue-500/5 text-xs text-blue-200/80">
+                Webhook-triggered agents can use the projected input envelope's <code className="bg-blue-950/60 px-1 rounded">_event_id</code> with <code className="bg-blue-950/60 px-1 rounded">get_webhook_event</code> to fetch the full raw payload only when they need more fields.
+              </div>
+            )}
 
             {/* Sandbox status — shown when sandbox tool is enabled and agent exists */}
             {form.tools.includes('sandbox') && agent?.id && (

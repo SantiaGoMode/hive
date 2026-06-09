@@ -5,132 +5,33 @@ const { saveSession, newSessionId } = require('./sessionWriter');
 const { getToolDefinitions, executeTool, readMemory, readShared } = require('./agentTools');
 const mcpManager = require('./mcpClient');
 const activity = require('./activityTracker');
+const providers = require('./providers');
+const { getOllamaUrl } = require('./ollamaUrl');
 
 const MAX_TOOL_ROUNDS = 10;
 
-function getOllamaUrl() {
-  const row = db.prepare("SELECT value FROM app_settings WHERE key = 'ollama_url'").get();
-  return row ? row.value : 'http://localhost:11434';
-}
-
-// Strip <think>...</think> blocks that reasoning models (e.g. qwen3.5) emit.
-// Called on the accumulated text after each round; not applied mid-stream so we
-// don't accidentally split a partial tag across two chunks.
-function stripThinkingBlocks(text) {
-  return text.replace(/<think>[\s\S]*?<\/think>/g, '').trimStart();
-}
-
-// Stream one Ollama request and return { text, toolCalls }
-// Sends {type:'chunk'} events to ws as text arrives.
-async function streamOllamaRound(ws, messages, model, tools, signal, options = {}) {
-  const body = {
-    model,
-    messages,
-    stream: true,
-    // Disable thinking when no tools are present — it burns tokens with no benefit
-    // for simple chat. When tools are available, allow thinking so the model can
-    // reason about which tool to call and what arguments to pass.
-    think: tools.length > 0,
-  };
-  if (tools.length > 0) body.tools = tools;
-
-  // Inference parameters (Ollama options object)
-  const opts = {};
-  if (options.temperature != null) opts.temperature = options.temperature;
-  if (options.num_predict != null) opts.num_predict  = options.num_predict;
-  if (options.num_ctx     != null) opts.num_ctx      = options.num_ctx;
-  if (Object.keys(opts).length > 0) body.options = opts;
-
-  const res = await fetch(`${getOllamaUrl()}/api/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal,
-  });
-
-  if (!res.ok) throw new Error(`Ollama HTTP ${res.status}`);
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = '';
+// Stream one model round through the provider layer (Ollama or a cloud provider,
+// routed by the model id prefix). Sends {type:'chunk'} events to ws as visible
+// text arrives, and returns { text, toolCalls, doneReason, stats } for the loop.
+// Reasoning ("thinking") deltas are streamed with kind:'thinking' so the UI can
+// surface them separately; they are not part of the saved visible text.
+async function streamRound(ws, messages, model, tools, signal, options = {}) {
   let text = '';
-  let toolCalls = [];
+  const toolCalls = [];
   let doneReason = 'stop';
   let stats = null;
-  // Buffer for detecting/stripping mid-stream <think> blocks
-  let pendingChunk = '';
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-    const lines = buf.split('\n');
-    buf = lines.pop();
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      try {
-        const chunk = JSON.parse(line);
-        // Tool calls arrive in a mid-stream chunk (not the done chunk) in Ollama
-        if (chunk.message?.tool_calls?.length && !chunk.done) {
-          toolCalls = chunk.message.tool_calls;
-        }
-
-        if (chunk.message?.content) {
-          pendingChunk += chunk.message.content;
-
-          // Flush safe portion: hold back any incomplete opening <think> tag
-          // so we can strip it once the closing tag arrives.
-          const hasOpenTag  = pendingChunk.includes('<think>');
-          const hasCloseTag = pendingChunk.includes('</think>');
-
-          if (hasOpenTag && hasCloseTag) {
-            // Complete block — strip it and flush clean text
-            const cleaned = stripThinkingBlocks(pendingChunk);
-            if (cleaned) {
-              text += cleaned;
-              if (ws.readyState === ws.OPEN) {
-                ws.send(JSON.stringify({ type: 'chunk', content: cleaned }));
-              }
-            }
-            pendingChunk = '';
-          } else if (hasOpenTag && !hasCloseTag) {
-            // Partial block — hold everything until the close tag arrives
-          } else {
-            // No thinking block — flush immediately
-            text += pendingChunk;
-            if (ws.readyState === ws.OPEN) {
-              ws.send(JSON.stringify({ type: 'chunk', content: pendingChunk }));
-            }
-            pendingChunk = '';
-          }
-        }
-        if (chunk.done) {
-          doneReason = chunk.done_reason || 'stop';
-          // Capture generation stats from Ollama's done chunk
-          if (chunk.eval_count && chunk.eval_duration) {
-            const tps = chunk.eval_count / (chunk.eval_duration / 1e9);
-            stats = {
-              tps: Math.round(tps),
-              output_tokens: chunk.eval_count,
-              input_tokens: chunk.prompt_eval_count || null,
-            };
-          }
-          // Flush anything remaining (handles unclosed <think> edge case)
-          if (pendingChunk) {
-            const cleaned = stripThinkingBlocks(pendingChunk);
-            if (cleaned) {
-              text += cleaned;
-              if (ws.readyState === ws.OPEN) {
-                ws.send(JSON.stringify({ type: 'chunk', content: cleaned }));
-              }
-            }
-            pendingChunk = '';
-          }
-          if (chunk.message?.tool_calls?.length) {
-            toolCalls = chunk.message.tool_calls;
-          }
-        }
-      } catch {}
+  for await (const ev of providers.streamChat(model, { messages, tools, options, signal })) {
+    if (ev.type === 'content') {
+      text += ev.delta;
+      if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: 'chunk', content: ev.delta }));
+    } else if (ev.type === 'thinking') {
+      if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: 'chunk', content: ev.delta, kind: 'thinking' }));
+    } else if (ev.type === 'tool_call') {
+      toolCalls.push(ev.call);
+    } else if (ev.type === 'done') {
+      doneReason = ev.reason || 'stop';
+      stats = ev.stats;
     }
   }
 
@@ -152,6 +53,8 @@ async function runChatLoop(ws, agentId, clientMessages, model, sessionId) {
     // Always ensure num_ctx is large enough to fit the requested output plus
     // a generous input budget (4k tokens for system prompt + conversation history).
     num_ctx: Math.max(numCtx, numPredict + 4096),
+    // Spend attribution for gateway calls (logged per request).
+    metadata: { agent_id: agentId, agent_name: agent?.name || agentId, session: sessionId || '', source: 'chat' },
   };
 
   // Build tool list based on which tool groups the agent has enabled
@@ -250,7 +153,7 @@ async function runChatLoop(ws, agentId, clientMessages, model, sessionId) {
   activity.setActive(agentId);
   try {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      const { text, toolCalls, doneReason, stats } = await streamOllamaRound(
+      const { text, toolCalls, doneReason, stats } = await streamRound(
         ws, messages, model, tools, ctrl.signal, inferenceOptions,
       );
 
@@ -307,7 +210,7 @@ async function runChatLoop(ws, agentId, clientMessages, model, sessionId) {
           ws.send(JSON.stringify({ type: 'tool_result', name: toolName, result }));
         }
 
-        messages.push({ role: 'tool', content: JSON.stringify(result) });
+        messages.push({ role: 'tool', content: JSON.stringify(result), tool_call_id: tc.id, name: toolName });
       }
     }
   } catch (err) {

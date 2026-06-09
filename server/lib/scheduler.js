@@ -2,6 +2,7 @@ const cron = require('node-cron');
 const db = require('../db');
 const { readAgent } = require('./agentParser');
 const { runAgentOnce } = require('./agentTools');
+const { getOllamaUrl } = require('./ollamaUrl');
 const path = require('path');
 const os = require('os');
 
@@ -9,9 +10,8 @@ const os = require('os');
 const tasks = new Map();
 
 function getSettings() {
-  const urlRow = db.prepare("SELECT value FROM app_settings WHERE key='ollama_url'").get();
   return {
-    ollamaUrl:    urlRow?.value || 'http://localhost:11434',
+    ollamaUrl: getOllamaUrl(),
     hivePath: path.join(os.homedir(), '.hive'),
   };
 }

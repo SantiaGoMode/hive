@@ -29,15 +29,20 @@ export const api = {
   deleteSession: (agentId, sessId) => req('DELETE', `/sessions/${agentId}/${sessId}`),
   searchSessions: (q, agentId) => req('GET', `/sessions/search?q=${encodeURIComponent(q)}${agentId ? `&agent_id=${agentId}` : ''}`),
 
-  // Ollama
+  // Ollama (model management — pull/delete/info)
   getModels: () => req('GET', '/ollama/models'),
   getModelInfo: (name) => req('GET', `/ollama/models/${encodeURIComponent(name)}/info`),
   deleteModel: (name) => req('DELETE', `/ollama/models/${encodeURIComponent(name)}`),
   pullModel: (name) => `${BASE}/ollama/pull`, // returns SSE url; caller uses fetch + streams
 
+  // Unified models across all providers (grouped: { ollama, anthropic, openai, gemini })
+  getAllModels: () => req('GET', '/models'),
+  testProvider: (provider) => req('GET', `/models/test/${encodeURIComponent(provider)}`),
+
   // Config
   getConfig: () => req('GET', '/config'),
   updateConfig: (data) => req('PUT', '/config', data),
+  clearStoredSecrets: () => req('DELETE', '/config/secrets'),
   clearSharedBlackboard: () => req('DELETE', '/config/shared-blackboard'),
 
   // Pipelines
@@ -79,26 +84,83 @@ export const api = {
   clearScheduleHistory: (id) => req('DELETE', `/schedules/${id}/history`),
   clearAllScheduleHistory: () => req('DELETE', '/schedules/history/all'),
 
-  // Colony
+  // Colony teams — a Colony is a named, persistent team; runs live under it.
+  getColonyTeams: () => req('GET', '/colony/teams'),
+  createColonyTeam: (data) => req('POST', '/colony/teams', data),
+  getColonyTeam: (id) => req('GET', `/colony/teams/${id}`),
+  updateColonyTeam: (id, data) => req('PUT', `/colony/teams/${id}`, data),
+  deleteColonyTeam: (id) => req('DELETE', `/colony/teams/${id}`),
+  getColonyTeamBoard: (id) => req('GET', `/colony/teams/${id}/board`),
+
+  // Colony runs
   getColonies: () => req('GET', '/colony'),
+  getColonyRecipes: () => req('GET', '/colony/recipes'),
+  getColonyRepo: () => req('GET', '/colony/repo'),
+  setColonyRepo: (repo_path) => req('PUT', '/colony/repo', { repo_path }),
+  getColonyProjectBoard: () => req('GET', '/colony/project-board'),
   getColony: (id) => req('GET', `/colony/${id}`),
+  getColonyArtifact: (id, path) => req('GET', `/colony/${id}/artifact?path=${encodeURIComponent(path)}`),
   stopColony: (id) => req('POST', `/colony/${id}/stop`),
   deleteColony: (id) => req('DELETE', `/colony/${id}`),
+  // Communication protocol surfaces
+  getColonyAgents: (id) => req('GET', `/colony/${id}/agents`),
+  getColonyBlackboard: (id) => req('GET', `/colony/${id}/blackboard`),
+  postColonyBlackboard: (id, body) => req('POST', `/colony/${id}/blackboard`, body),
+  getColonyHandoffs: (id) => req('GET', `/colony/${id}/handoffs`),
+  approveColonyHandoff: (id, handoffId, decision, note) =>
+    req('POST', `/colony/${id}/handoffs/${handoffId}/approve`, { decision, note }),
+  getRecipeFlow: (recipeId) => req('GET', `/colony/recipes/${recipeId}/flow`),
   // Colony launch returns an SSE stream — caller uses fetch directly
-  launchColony: (goal, model) =>
+  launchColony: (goal, model, recipeId, opts = {}) =>
     fetch(`${BASE}/colony`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ goal, model }),
+      body: JSON.stringify({
+        goal, model, recipe_id: recipeId,
+        team_id: opts.teamId,
+        repo_path: opts.repoPath, board_card: opts.boardCard,
+        cloud_enabled: opts.cloudEnabled, model_plan: opts.modelPlan,
+        trigger_config: opts.triggerConfig,
+        github_writeback: opts.githubWriteback,
+      }),
     }),
+  updateColonyTriggers: (id, triggerConfig) => req('PUT', `/colony/${id}/triggers`, { trigger_config: triggerConfig }),
+  postColonyBoardComment: (id, body) => req('POST', `/colony/${id}/board/comment`, body ? { body } : {}),
+  proposeColonyModels: (recipeId, cloudEnabled) => req('POST', '/colony/propose-models', { recipe_id: recipeId, cloud_enabled: cloudEnabled }),
+  sendColonyDirection: (id, content, targetRole = null) => req('POST', `/colony/${id}/directions`, { content, target_role: targetRole }),
+  acceptBootstrapTasks: (id, tasks) => req('POST', `/colony/${id}/bootstrap/accept`, tasks ? { tasks } : {}),
   // Resumable tail of an existing colony. Replays log entries from the DB
   // since=<seq> and then attaches to the live bus if the run is ongoing.
   streamColony: (id, since = 0, signal) =>
     fetch(`${BASE}/colony/${id}/stream?since=${since}`, { method: 'GET', signal }),
 
+  // Staff
+  getStaffProfiles: () => req('GET', '/staff/profiles'),
+  getStaffProfile: (id) => req('GET', `/staff/profiles/${id}`),
+  createStaffProfile: (data) => req('POST', '/staff/profiles', data),
+  updateStaffProfile: (id, data) => req('PUT', `/staff/profiles/${id}`, data),
+  deleteStaffProfile: (id) => req('DELETE', `/staff/profiles/${id}`),
+  syncStaffSuggestions: () => req('POST', '/staff/suggestions/sync'),
+  applyStaffSuggestion: (id, proposed_value) => req('POST', `/staff/suggestions/${id}/apply`, proposed_value !== undefined ? { proposed_value } : {}),
+  dismissStaffSuggestion: (id) => req('POST', `/staff/suggestions/${id}/dismiss`),
+  getStaffChat: (limit = 100) => req('GET', `/staff/chat?limit=${encodeURIComponent(limit)}`),
+  postStaffChat: (content) => req('POST', '/staff/chat', { content }),
+  clearStaffChat: () => req('DELETE', '/staff/chat'),
+  tickStaffChat: () => req('POST', '/staff/chat/tick'),
+
+  // Skills catalog + tool options
+  getSkills: () => req('GET', '/skills'),
+  createSkill: (data) => req('POST', '/skills', data),
+  updateSkill: (id, data) => req('PUT', `/skills/${id}`, data),
+  deleteSkill: (id) => req('DELETE', `/skills/${id}`),
+  getToolOptions: () => req('GET', '/skills/tool-options'),
+
   // System / Ollama process monitor
   getSystemStatus: () => req('GET', '/system/status'),
   stopModel: (model) => req('POST', '/system/model/stop', { model }),
+  startNgrok: () => req('POST', '/system/ngrok/start'),
+  stopNgrok: () => req('POST', '/system/ngrok/stop'),
+  getNgrokStatus: () => req('GET', '/system/ngrok/status'),
 
   // Sandbox
   getSandboxStatus: (agentId) => req('GET', `/sandbox/${agentId}`),
@@ -115,6 +177,16 @@ export const api = {
   deleteMcpServer: (id) => req('DELETE', `/mcp/${id}`),
   testMcpServer: (data) => req('POST', '/mcp/test', data),
   reconnectMcpServer: (id) => req('POST', `/mcp/${id}/reconnect`),
+
+  // Webhooks
+  getWebhooks: () => req('GET', '/webhooks'),
+  createWebhook: (data) => req('POST', '/webhooks', data),
+  updateWebhook: (id, data) => req('PUT', `/webhooks/${id}`, data),
+  deleteWebhook: (id) => req('DELETE', `/webhooks/${id}`),
+  getWebhookEvents: (id, type) => req('GET', `/webhooks/${id}/events${type ? `?type=${encodeURIComponent(type)}` : ''}`),
+  getWebhookActionRuns: (id) => req('GET', `/webhooks/${id}/action-runs`),
+  getProjectedEvent: (id, eventId) => req('GET', `/webhooks/${id}/events/${eventId}/projected`),
+  clearWebhookEvents: (id) => req('DELETE', `/webhooks/${id}/events`),
 };
 
 export const WS_URL = `ws://${location.host}/ws/chat`;

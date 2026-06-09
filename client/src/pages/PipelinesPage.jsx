@@ -4,6 +4,30 @@ import { Plus, Play, Square, Trash2, Edit2, ChevronRight, CheckCircle, XCircle, 
 // ── Pipeline Templates ────────────────────────────────────────────────────────
 const PIPELINE_TEMPLATES = [
   {
+    name: 'Research Brief',
+    description: 'Gather evidence, critique sources, then synthesize a concise brief',
+    steps: [
+      {
+        label: 'Research',
+        agent_id: '',
+        tools: ['web_search', 'memory'],
+        prompt: 'Research this topic or question using current, source-backed evidence:\n\n{input}\n\nReturn 5-8 concise findings with source URLs when available. Separate facts from interpretation, call out uncertainty, and end with "Research handoff" containing the strongest findings and source list or verification gaps.',
+      },
+      {
+        label: 'Source Critique',
+        agent_id: '',
+        tools: ['memory'],
+        prompt: 'Critique this research handoff for weak claims, missing context, conflicting evidence, source quality, and stale or thin support:\n\n{prev}\n\nRate the evidence as strong, medium, or weak. End with "Critic handoff" containing claims safe to use and claims that need caveats.',
+      },
+      {
+        label: 'Synthesize Brief',
+        agent_id: '',
+        tools: ['memory'],
+        prompt: 'Create a polished research brief from the research and critique notes:\n\n{prev}\n\nInclude an executive summary, key findings, evidence notes, caveats, open questions, and source URLs or verification gaps. End with "Final brief" followed by the complete deliverable.',
+      },
+    ],
+  },
+  {
     name: 'Research → Blog Post',
     description: 'Research a topic then write a polished blog post',
     steps: [
@@ -41,6 +65,18 @@ const PIPELINE_TEMPLATES = [
     steps: [
       { label: 'Draft', agent_id: '', prompt: 'Write a first draft for the following:\n\n{input}\n\nFocus on getting the content right, don\'t worry too much about polish.' },
       { label: 'Polish', agent_id: '', prompt: 'Improve and polish this draft. Fix grammar, improve flow, sharpen the language, and make it more compelling:\n\n{prev}' },
+    ],
+  },
+  {
+    name: 'Webhook → Triage',
+    description: 'Triage an incoming webhook event from its distilled context, fetching raw data only if needed',
+    steps: [
+      {
+        label: 'Triage Event',
+        agent_id: '',
+        tools: ['agent_tools'],
+        prompt: 'You are processing an incoming webhook event. The input below is a DISTILLED context envelope — only the fields configured as relevant for this webhook, not the full payload.\n\nThe envelope has this shape:\n- `context`: the extracted fields you should work from first\n- `_event_id`: the id of the stored raw event\n- `_event_type`: the event type\n- `_projected`: true if the context was distilled, false if it is the full raw payload\n\nIf (and only if) `context` is missing a field you genuinely need, call the `get_webhook_event` tool with the `_event_id` to fetch the FULL raw payload (pass `include_headers: true` if you also need request headers). Do not fetch the raw payload otherwise — keep your context lean.\n\nTriage this event: summarize what happened, classify its importance, and state the recommended next action.\n\nEvent envelope:\n{input}',
+      },
     ],
   },
 ];
@@ -453,8 +489,8 @@ function getPrevOutputForRetry(stepEntry, allSteps, input) {
     : prevGroupSteps.map(s => s.output).join('\n\n---\n\n');
 }
 
-function RunModal({ open, onClose, pipeline }) {
-  const [input, setInput] = useState('');
+export function RunModal({ open, onClose, pipeline, initialInput = '' }) {
+  const [input, setInput] = useState(initialInput);
   const [running, setRunning] = useState(false);
   const [steps, setSteps] = useState([]);       // live trace entries
   const [finalOutput, setFinalOutput] = useState(null);
@@ -464,8 +500,8 @@ function RunModal({ open, onClose, pipeline }) {
   const [retrying, setRetrying] = useState(new Set());
 
   useEffect(() => {
-    if (open) { setInput(''); setSteps([]); setFinalOutput(null); setTotalMs(null); setRetrying(new Set()); }
-  }, [open]);
+    if (open) { setInput(initialInput); setSteps([]); setFinalOutput(null); setTotalMs(null); setRetrying(new Set()); }
+  }, [open, initialInput]);
 
   const handleStop = () => { abortRef.current?.abort(); };
 

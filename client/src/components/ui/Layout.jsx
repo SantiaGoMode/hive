@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { Bot, HardDrive, Settings, Zap, GitFork, Clock, Search, Users } from 'lucide-react';
+import { Bot, HardDrive, Settings, Zap, GitFork, Clock, Search, Users, Webhook, UserRound, Wrench } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { AgentSwitcher } from './AgentSwitcher';
 
@@ -9,6 +9,9 @@ const NAV = [
   { to: '/pipelines', icon: GitFork, label: 'Pipelines' },
   { to: '/schedules', icon: Clock, label: 'Schedules' },
   { to: '/colony', icon: Users, label: 'Colony' },
+  { to: '/staff', icon: UserRound, label: 'Staff' },
+  { to: '/skills', icon: Wrench, label: 'Skills & Tools' },
+  { to: '/webhooks', icon: Webhook, label: 'Webhooks' },
   { to: '/models', icon: HardDrive, label: 'Models' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ];

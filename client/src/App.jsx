@@ -9,6 +9,9 @@ import { SettingsPage } from './pages/SettingsPage';
 import { PipelinesPage } from './pages/PipelinesPage';
 import SchedulesPage from './pages/SchedulesPage';
 import ColonyPage from './pages/ColonyPage';
+import StaffPage from './pages/StaffPage';
+import SkillsPage from './pages/SkillsPage';
+import WebhooksPage from './pages/WebhooksPage';
 import { useThemeStore } from './stores/themeStore';
 
 export default function App() {
@@ -24,7 +27,12 @@ export default function App() {
           <Route path="/models" element={<ModelsPage />} />
           <Route path="/pipelines" element={<PipelinesPage />} />
           <Route path="/schedules" element={<SchedulesPage />} />
-          <Route path="/colony" element={<ColonyPage />} />
+          {/* /colony, /colony/:teamId, /colony/:teamId/run/:runId — one mounted
+              component so live SSE streams survive internal navigation. */}
+          <Route path="/colony/*" element={<ColonyPage />} />
+          <Route path="/staff" element={<StaffPage />} />
+          <Route path="/skills" element={<SkillsPage />} />
+          <Route path="/webhooks" element={<WebhooksPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
       </Layout>

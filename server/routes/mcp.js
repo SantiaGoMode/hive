@@ -7,6 +7,22 @@ function newId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 }
 
+function isMasked(value) {
+  return typeof value === 'string' && value.includes('•');
+}
+
+function mergeMaskedEnv(nextEnv, existingEnv) {
+  const next = nextEnv || {};
+  const existing = existingEnv || {};
+  const out = {};
+  for (const [key, value] of Object.entries(next)) {
+    out[key] = isMasked(value) && Object.prototype.hasOwnProperty.call(existing, key)
+      ? existing[key]
+      : value;
+  }
+  return out;
+}
+
 // List all servers with live status
 router.get('/', (req, res) => {
   res.json(mcpManager.getStatus());
@@ -39,6 +55,8 @@ router.put('/:id', async (req, res) => {
   if (!existing) return res.status(404).json({ error: 'Server not found' });
 
   const { name, transport, command, args, env, env_secret_keys, url, enabled } = req.body;
+  const existingEnv = JSON.parse(existing.env || '{}');
+  const storedEnv = env != null ? mergeMaskedEnv(env, existingEnv) : existingEnv;
   db.prepare(
     'UPDATE mcp_servers SET name=?, transport=?, command=?, args=?, env=?, env_secret_keys=?, url=?, enabled=? WHERE id=?',
   ).run(
@@ -46,7 +64,7 @@ router.put('/:id', async (req, res) => {
     transport        ?? existing.transport,
     command          ?? existing.command,
     args             != null ? JSON.stringify(args)             : existing.args,
-    env              != null ? JSON.stringify(env)              : existing.env,
+    env              != null ? JSON.stringify(storedEnv)        : existing.env,
     env_secret_keys  != null ? JSON.stringify(env_secret_keys)  : (existing.env_secret_keys || '[]'),
     url              ?? existing.url,
     enabled          != null ? (enabled ? 1 : 0) : existing.enabled,

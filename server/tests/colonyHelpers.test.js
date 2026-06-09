@@ -17,19 +17,19 @@ describe('truncateArgs', () => {
     assert.equal(result.path, '/workspace');
   });
 
-  it('truncates string values over 500 chars and appends ellipsis', () => {
-    const longStr = 'x'.repeat(600);
+  it('truncates string values over 1500 chars and appends ellipsis', () => {
+    const longStr = 'x'.repeat(1600);
     const result = truncateArgs({ content: longStr });
-    assert.equal(result.content.length, 501); // 500 + '…'
+    assert.equal(result.content.length, 1501); // 1500 + '…'
     assert.ok(result.content.endsWith('…'));
-    assert.equal(result.content.slice(0, 500), 'x'.repeat(500));
+    assert.equal(result.content.slice(0, 1500), 'x'.repeat(1500));
   });
 
-  it('does not truncate strings exactly 500 chars', () => {
-    const str500 = 'a'.repeat(500);
-    const result = truncateArgs({ content: str500 });
-    assert.equal(result.content, str500);
-    assert.equal(result.content.length, 500);
+  it('does not truncate strings exactly 1500 chars', () => {
+    const str1500 = 'a'.repeat(1500);
+    const result = truncateArgs({ content: str1500 });
+    assert.equal(result.content, str1500);
+    assert.equal(result.content.length, 1500);
   });
 
   it('leaves non-string values in objects untouched', () => {
@@ -64,37 +64,43 @@ describe('truncateResult', () => {
     assert.equal(truncateResult('hello world'), 'hello world');
   });
 
-  it('truncates a long plain string to 2000 chars + ellipsis', () => {
-    const longStr = 'z'.repeat(3000);
+  it('truncates a long plain string to 8000 chars + ellipsis', () => {
+    const longStr = 'z'.repeat(9000);
     const result = truncateResult(longStr);
     assert.equal(typeof result, 'string');
-    assert.equal(result.length, 2001); // 2000 + '…'
+    assert.equal(result.length, 8001); // 8000 + '…'
     assert.ok(result.endsWith('…'));
   });
 
-  it('truncates long string fields inside an object when total JSON > 2000 bytes', () => {
-    const longVal = 'y'.repeat(400);
-    // Make a big enough object that JSON.stringify > 2000
+  it('truncates long string fields inside an object when total JSON > 8000 bytes', () => {
+    const longVal = 'y'.repeat(1200);
+    // Make a big enough object that JSON.stringify > 8000
     const obj = {};
     for (let i = 0; i < 10; i++) obj[`field${i}`] = longVal;
-    // Each field is 400 chars; 10 fields => JSON is well over 2000 chars
     const result = truncateResult(obj);
     for (const key of Object.keys(result)) {
       if (typeof result[key] === 'string') {
-        assert.ok(result[key].length <= 301); // 300 + '…'
+        assert.ok(result[key].length <= 1001); // 1000 + '…'
       }
     }
   });
 
+  it('keeps up to 6000 chars of a worker `response` field', () => {
+    const obj = { response: 'r'.repeat(7000) };
+    for (let i = 0; i < 5; i++) obj[`field${i}`] = 'y'.repeat(1200);
+    const result = truncateResult(obj);
+    assert.equal(result.response.length, 6001); // 6000 + '…'
+  });
+
   it('leaves short fields intact when object is large overall', () => {
     const obj = {};
-    for (let i = 0; i < 10; i++) obj[`field${i}`] = 'y'.repeat(400);
+    for (let i = 0; i < 10; i++) obj[`field${i}`] = 'y'.repeat(1200);
     obj.shortField = 'ok';
     const result = truncateResult(obj);
     assert.equal(result.shortField, 'ok');
   });
 
-  it('does not truncate object under 2000 bytes even with long-ish fields', () => {
+  it('does not truncate object under 8000 bytes even with long-ish fields', () => {
     const obj = { output: 'x'.repeat(100), exitCode: 0 };
     const result = truncateResult(obj);
     assert.equal(result.output, obj.output);

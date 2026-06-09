@@ -30,6 +30,16 @@ describe('GET /api/colony', () => {
   });
 });
 
+describe('GET /api/colony/recipes', () => {
+  it('returns operator-selectable recipes', async () => {
+    const res = await request(app).get('/api/colony/recipes');
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.body));
+    assert.ok(res.body.some(recipe => recipe.id === 'research_brief'));
+    assert.ok(res.body.some(recipe => recipe.id === 'custom_auto'));
+  });
+});
+
 describe('GET /api/colony/:id', () => {
   it('returns 404 for unknown id', async () => {
     const res = await request(app).get('/api/colony/no-such-colony-xyz');
@@ -54,10 +64,32 @@ describe('GET /api/colony/:id', () => {
 });
 
 describe('POST /api/colony/:id/stop', () => {
-  it('returns 200 with stopped:false when colony is not actively running', async () => {
-    const { createColony } = require('../lib/colonyRunner');
-    const id = createColony('Stop test colony', 'llama3');
+  it('returns 404 for an unknown colony id', async () => {
+    const res = await request(app).post('/api/colony/no-such-colony-xyz/stop');
+    assert.equal(res.status, 404);
+  });
+
+  it('reconciles a stale running row (no live run) to stopped', async () => {
+    // Colonies are created with status='running'. With no live run in the
+    // runner registry, /stop must reconcile the DB row so the UI never shows
+    // a phantom run that cannot be stopped.
+    const { createColony, getColony } = require('../lib/colonyRunner');
+    const id = createColony('Stop test colony — stale running', 'llama3');
     created.push(id);
+
+    const res = await request(app).post(`/api/colony/${id}/stop`);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.success, true);
+    assert.equal(res.body.stopped, true);
+    assert.equal(getColony(id).status, 'stopped');
+  });
+
+  it('returns stopped:false for a colony that already finished', async () => {
+    const { createColony } = require('../lib/colonyRunner');
+    const db = require('../db');
+    const id = createColony('Stop test colony — done', 'llama3');
+    created.push(id);
+    db.prepare("UPDATE colonies SET status='done' WHERE id=?").run(id);
 
     const res = await request(app).post(`/api/colony/${id}/stop`);
     assert.equal(res.status, 200);
@@ -108,6 +140,14 @@ describe('POST /api/colony — validation', () => {
     const res = await request(app)
       .post('/api/colony')
       .send({ goal: '   ', model: 'llama3' });
+    assert.equal(res.status, 400);
+    assert.ok(res.body.error);
+  });
+
+  it('returns 400 when recipe_id is unknown', async () => {
+    const res = await request(app)
+      .post('/api/colony')
+      .send({ goal: 'Some goal', model: 'llama3', recipe_id: 'not-a-real-recipe' });
     assert.equal(res.status, 400);
     assert.ok(res.body.error);
   });
@@ -200,7 +240,7 @@ describe('POST /api/colony — streams a real run (res.on(close) regression)', (
     const response = await fetch(`${baseUrl}/api/colony`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ goal: 'Route regression test', model: 'fake-model' }),
+      body: JSON.stringify({ goal: 'Route regression test', model: 'fake-model', recipe_id: 'custom_auto' }),
     });
 
     assert.equal(response.status, 200, 'SSE endpoint should return 200');

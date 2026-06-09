@@ -10,6 +10,7 @@ import { AgentCardSkeleton } from '../components/ui/Skeleton';
 import { toast } from '../stores/toastStore';
 import { api } from '../lib/api';
 import { formatDate } from '../lib/utils';
+import { hasAnyModelOption } from '../lib/modelLabels';
 
 const STARTER_MODELS = [
   { name: 'llama3.2:3b', label: 'Llama 3.2 3B', desc: 'Fast · 2 GB · Great for everyday tasks' },
@@ -17,7 +18,7 @@ const STARTER_MODELS = [
   { name: 'qwen3.5:latest', label: 'Qwen 3.5', desc: 'Advanced · 6.6 GB · Tool calling + thinking' },
 ];
 
-function OnboardingScreen({ onPull, onDismiss }) {
+function OnboardingScreen({ onPull, onDismiss, onCloudSetup }) {
   const [pulling, setPulling] = useState(null);
   const [progress, setProgress] = useState({});
 
@@ -65,7 +66,7 @@ function OnboardingScreen({ onPull, onDismiss }) {
         </div>
         <h1 className="text-2xl font-bold text-gray-100">Welcome to Hive</h1>
         <p className="text-gray-400 text-sm leading-relaxed">
-          Hive runs AI agents locally using Ollama. To get started, pull a model — everything stays on your machine.
+          Hive runs AI agents locally with Ollama, and can also use cloud models when you add a provider key.
         </p>
         <p className="text-xs text-gray-600">
           Make sure Ollama is running: <code className="bg-gray-800 px-1.5 py-0.5 rounded font-mono">ollama serve</code>
@@ -100,9 +101,14 @@ function OnboardingScreen({ onPull, onDismiss }) {
         ))}
       </div>
 
-      <button onClick={onDismiss} className="text-xs text-gray-600 hover:text-gray-400 flex items-center gap-1">
-        I already have models <ChevronRight size={12} />
-      </button>
+      <div className="flex items-center gap-3">
+        <button onClick={onDismiss} className="text-xs text-gray-600 hover:text-gray-400 flex items-center gap-1">
+          I already have models <ChevronRight size={12} />
+        </button>
+        <button onClick={onCloudSetup} className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1">
+          Configure cloud providers <ChevronRight size={12} />
+        </button>
+      </div>
     </div>
   );
 }
@@ -175,7 +181,7 @@ export function Dashboard() {
 
   useEffect(() => {
     fetchAgents();
-    api.getModels().then(setModels).catch(() => setModels([]));
+    api.getAllModels().then(setModels).catch(() => setModels({}));
   }, []);
 
   const handleEdit = (agent) => { setEditingAgent(agent); setEditorOpen(true); };
@@ -229,13 +235,14 @@ export function Dashboard() {
     a.model?.toLowerCase().includes(search.toLowerCase())
   );
 
-  const showOnboarding = !onboardingDismissed && models !== null && models.length === 0 && agents.length === 0 && !loading;
+  const showOnboarding = !onboardingDismissed && models !== null && !hasAnyModelOption(models) && agents.length === 0 && !loading;
 
   if (showOnboarding) {
     return (
       <OnboardingScreen
-        onPull={() => { api.getModels().then(setModels).catch(() => {}); fetchAgents(); }}
+        onPull={() => { api.getAllModels().then(setModels).catch(() => {}); fetchAgents(); }}
         onDismiss={() => setOnboardingDismissed(true)}
+        onCloudSetup={() => navigate('/settings')}
       />
     );
   }

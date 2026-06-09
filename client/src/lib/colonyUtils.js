@@ -7,7 +7,7 @@ export function sseToEntries(event, agentNameMap, now = Date.now()) {
 
   if (event.type === 'agent_ready') {
     agentNameMap[event.agent.id] = event.agent.name;
-    entries.push({ type: 'agent_ready', agent: event.agent.name, role: event.role, ts: now });
+    entries.push({ type: 'agent_ready', agent: event.agent.name, role: event.role, agent_role: event.agent.persona_role || '', avatar_color: event.agent.avatar_color || null, model: event.agent.model || '', tools: event.agent.tools || [], ts: now });
     return entries;
   }
   if (event.type === 'round_start') {
@@ -16,6 +16,33 @@ export function sseToEntries(event, agentNameMap, now = Date.now()) {
   }
   if (event.type === 'orchestrator_message') {
     entries.push({ type: 'message', agent: 'Orchestrator', content: event.content, ts: now });
+    return entries;
+  }
+  if (event.type === 'handoff' && event.handoff) {
+    const h = event.handoff;
+    entries.push({ type: 'handoff', from: h.from, to: h.to, contract: h.contract, status: h.status, requires_human: h.requires_human, ts: now });
+    return entries;
+  }
+  if (event.type === 'protocol_violation') {
+    entries.push({ type: 'protocol_violation', agent: event.agent, reason: event.reason, ts: now });
+    return entries;
+  }
+  if (event.type === 'permission_required') {
+    entries.push({ type: 'permission_required', agent: event.agent, tool: event.tool, message: event.message, ts: now });
+    return entries;
+  }
+  if (event.type === 'thinking') {
+    entries.push({ type: 'thinking', agent: event.agent, content: event.content || '', truncated: !!event.truncated, ts: now });
+    return entries;
+  }
+  if (event.type === 'direction_queued' || event.type === 'direction_delivered') {
+    entries.push({
+      type: 'direction',
+      status: event.type === 'direction_delivered' ? 'delivered' : 'queued',
+      content: event.direction?.content || '',
+      target_role: event.direction?.target_role || null,
+      ts: now,
+    });
     return entries;
   }
   if (event.type === 'done' || event.type === 'error') {
@@ -55,12 +82,24 @@ export function dbLogToEntries(dbLog, agentColorMap) {
         map[name] = AGENT_COLORS[colorIdx.current % AGENT_COLORS.length];
         colorIdx.current++;
       }
-      return { type: 'agent_ready', agent: name, role: e.role, ts: e.ts };
+      return { type: 'agent_ready', agent: name, role: e.role, agent_role: e.agent?.persona_role || '', avatar_color: e.agent?.avatar_color || null, model: e.agent?.model || '', tools: e.agent?.tools || [], ts: e.ts };
     }
+    if (e.kind === 'preflight') return { type: 'system', message: e.message || 'Preflight check', ts: e.ts };
+    if (e.kind === 'recipe') return { type: 'system', message: e.message || (e.name ? `Recipe: ${e.name}` : 'Recipe configured'), ts: e.ts };
     if (e.kind === 'round') return { type: 'round', round: e.round, ts: e.ts };
     if (e.kind === 'message') return { type: 'message', agent: e.agent, content: e.content, ts: e.ts };
+    if (e.kind === 'thinking') return { type: 'thinking', agent: e.agent, content: e.content, truncated: !!e.truncated, ts: e.ts };
     if (e.kind === 'tool_call') return { type: 'tool_call', agent: e.agent, tool: e.tool, args: e.args, ts: e.ts };
     if (e.kind === 'tool_result') return { type: 'tool_result', agent: e.agent, tool: e.tool, result: e.result, ts: e.ts };
+    if (e.kind === 'handoff') return { type: 'handoff', from: e.from, to: e.to, contract: e.contract, status: e.status, requires_human: e.requires_human, ts: e.ts };
+    if (e.kind === 'protocol_violation') return { type: 'protocol_violation', agent: e.agent, reason: e.reason, ts: e.ts };
+    if (e.kind === 'permission_required') return { type: 'permission_required', agent: e.agent, tool: e.tool, message: e.message, ts: e.ts };
+    if (e.kind === 'direction') return { type: 'direction', status: e.status, content: e.content, target_role: e.target_role, ts: e.ts };
+    if (e.kind === 'bootstrap') return { type: 'bootstrap', status: e.status, message: e.message, source: e.source, task_count: e.task_count, ts: e.ts };
+    if (e.kind === 'checkpoint') return { type: 'checkpoint', agent: e.agent, ts: e.ts };
+    if (e.kind === 'blackboard') return { type: 'blackboard', agent: e.agent, entry_type: e.entry_type, ts: e.ts };
+    if (e.kind === 'writeback') return { type: 'system', message: e.message, ts: e.ts };
+    if (e.kind === 'sandbox_cleanup') return { type: 'system', message: e.message, ts: e.ts };
     if (e.kind === 'done') return { type: 'done', status: e.status, ts: e.ts };
     if (e.kind === 'error') return { type: 'error', content: e.message, ts: e.ts };
     return null;
