@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, Search, MessageSquare, Clock, Upload, Download, ChevronRight, Zap } from 'lucide-react';
+import { Plus, Search, MessageSquare, Clock, Upload, Download, ChevronRight, Zap, RefreshCw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAgentStore } from '../stores/agentStore';
 import { AgentCard } from '../components/agents/AgentCard';
@@ -11,12 +11,47 @@ import { toast } from '../stores/toastStore';
 import { api, getHiveAuthToken } from '../lib/api';
 import { formatDate } from '../lib/utils';
 import { hasAnyModelOption } from '../lib/modelLabels';
+import { pickStarterModel } from '../lib/starterAgent';
+import { useCreateStarterAgent } from '../components/agents/useCreateStarterAgent';
 
 const STARTER_MODELS = [
   { name: 'llama3.2:3b', label: 'Llama 3.2 3B', desc: 'Fast · 2 GB · Great for everyday tasks' },
   { name: 'mistral:7b', label: 'Mistral 7B', desc: 'Balanced · 4.1 GB · Strong reasoning' },
   { name: 'qwen3.5:latest', label: 'Qwen 3.5', desc: 'Advanced · 6.6 GB · Tool calling + thinking' },
 ];
+
+function OllamaConnectionCheck() {
+  const [status, setStatus] = useState(null);   // null = checking
+  const [checking, setChecking] = useState(false);
+
+  const runCheck = useCallback(() => (
+    api.getSystemStatus()
+      .then(s => setStatus({ ok: s.ollama_reachable !== false, url: s.ollama_url }))
+      .catch(() => setStatus({ ok: false, url: null }))
+      .finally(() => setChecking(false))
+  ), []);
+
+  useEffect(() => { runCheck(); }, [runCheck]);
+
+  const retry = () => { setChecking(true); runCheck(); };
+
+  if (status === null) return <p className="text-xs text-gray-600">Checking Ollama connection…</p>;
+  return (
+    <div className="flex items-center justify-center gap-2 text-xs">
+      <span className={`inline-block w-1.5 h-1.5 rounded-full ${status.ok ? 'bg-green-400' : 'bg-yellow-400'}`} />
+      {status.ok ? (
+        <span className="text-gray-500">Ollama connected{status.url ? <> at <code className="bg-gray-800 px-1 rounded font-mono">{status.url}</code></> : ''}</span>
+      ) : (
+        <span className="text-yellow-500">
+          Ollama unreachable — start it with <code className="bg-gray-800 px-1 rounded font-mono">ollama serve</code>
+        </span>
+      )}
+      <button onClick={retry} disabled={checking} className="flex items-center gap-1 text-gray-500 hover:text-gray-300 disabled:opacity-50" title="Re-test Ollama connection">
+        <RefreshCw size={11} className={checking ? 'animate-spin' : ''} /> Retry
+      </button>
+    </div>
+  );
+}
 
 function OnboardingScreen({ onPull, onDismiss, onCloudSetup }) {
   const [pulling, setPulling] = useState(null);
@@ -72,9 +107,7 @@ function OnboardingScreen({ onPull, onDismiss, onCloudSetup }) {
         <p className="text-gray-400 text-sm leading-relaxed">
           Hive runs AI agents locally with Ollama, and can also use cloud models when you add a provider key.
         </p>
-        <p className="text-xs text-gray-600">
-          Make sure Ollama is running: <code className="bg-gray-800 px-1.5 py-0.5 rounded font-mono">ollama serve</code>
-        </p>
+        <OllamaConnectionCheck />
       </div>
 
       <div className="w-full flex flex-col gap-3">
@@ -180,6 +213,7 @@ export function Dashboard() {
   const [sessionSearching, setSessionSearching] = useState(false);
   const [models, setModels] = useState(null); // null = not yet checked
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+  const { create: createStarter, creating: creatingStarter } = useCreateStarterAgent();
   const searchTimeoutRef = useRef(null);
   const importInputRef = useRef(null);
 
@@ -240,6 +274,8 @@ export function Dashboard() {
   );
 
   const showOnboarding = !onboardingDismissed && models !== null && !hasAnyModelOption(models) && agents.length === 0 && !loading;
+  // First-run shortcut: a usable model exists but no agents yet (issue #2)
+  const starterModel = !loading && agents.length === 0 ? pickStarterModel(models) : null;
 
   if (showOnboarding) {
     return (
@@ -319,10 +355,23 @@ export function Dashboard() {
             {agents.length === 0 ? 'No agents yet' : 'No results'}
           </h2>
           <p className="text-sm text-gray-500 mt-1 mb-6">
-            {agents.length === 0 ? 'Create your first agent in 30 seconds' : 'Try a different search'}
+            {agents.length === 0
+              ? (starterModel
+                ? 'You have a model ready — one click creates a starter agent and opens chat'
+                : 'Create your first agent in 30 seconds')
+              : 'Try a different search'}
           </p>
           {agents.length === 0 && (
-            <Button onClick={handleCreate}><Plus size={16} /> Create your first agent</Button>
+            <div className="flex items-center justify-center gap-2">
+              {starterModel && (
+                <Button onClick={() => createStarter(starterModel)} disabled={creatingStarter}>
+                  <Zap size={16} /> {creatingStarter ? 'Creating…' : 'Create starter agent'}
+                </Button>
+              )}
+              <Button variant={starterModel ? 'secondary' : 'primary'} onClick={handleCreate}>
+                <Plus size={16} /> {starterModel ? 'Customize your own' : 'Create your first agent'}
+              </Button>
+            </div>
           )}
         </div>
       ) : (
@@ -342,6 +391,7 @@ export function Dashboard() {
         open={editorOpen}
         onClose={() => setEditorOpen(false)}
         agent={editingAgent}
+        initialValues={starterModel ? { model: starterModel } : undefined}
       />
 
       <DeleteConfirm

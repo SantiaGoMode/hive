@@ -81,7 +81,7 @@ const TOOLS = [
 
 const BASE_TABS = ['Identity', 'Model', 'System Prompt', 'Tools', 'Memory', 'Advanced'];
 
-export function AgentEditor({ open, onClose, agent }) {
+export function AgentEditor({ open, onClose, agent, initialValues }) {
   const { createAgent, updateAgent } = useAgentStore();
   const [tab, setTab] = useState(0);
   const [models, setModels] = useState({});
@@ -110,7 +110,7 @@ export function AgentEditor({ open, onClose, agent }) {
 
   useEffect(() => {
     if (agent) setForm({ ...DEFAULTS, ...agent });
-    else setForm(DEFAULTS);
+    else setForm({ ...DEFAULTS, ...(initialValues || {}) });
     setTab(0);
     setShowTemplates(false);
     setMemory('');

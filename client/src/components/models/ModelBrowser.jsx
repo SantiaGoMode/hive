@@ -67,7 +67,7 @@ function PullProgress({ name, onDone }) {
   );
 }
 
-export function ModelBrowser() {
+export function ModelBrowser({ onPullComplete }) {
   const [models, setModels] = useState([]);
   const [loading, setLoading] = useState(true);
   const [pullName, setPullName] = useState('');
@@ -109,6 +109,23 @@ export function ModelBrowser() {
 
   return (
     <div className="flex flex-col gap-4">
+      {/* Ollama connection check (issue #2) */}
+      {systemStatus && systemStatus.ollama_reachable === false && (
+        <div className="p-3 bg-yellow-500/5 border border-yellow-500/30 rounded-xl flex flex-wrap items-center gap-3">
+          <div className="flex-1 min-w-48">
+            <p className="text-sm font-medium text-yellow-400">Ollama is not reachable</p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Tried <code className="bg-gray-800 px-1 rounded font-mono">{systemStatus.ollama_url}</code>.
+              Start it with <code className="bg-gray-800 px-1 rounded font-mono">ollama serve</code>, then retry.
+              Cloud models (below) still work without Ollama.
+            </p>
+          </div>
+          <Button size="sm" variant="secondary" onClick={load} disabled={loading}>
+            <RefreshCw size={13} className={loading ? 'animate-spin' : ''} /> Retry connection
+          </Button>
+        </div>
+      )}
+
       {/* Recommended local models */}
       <div className="p-4 bg-gray-900 border border-gray-800 rounded-xl flex flex-col gap-3">
         <div className="flex items-center justify-between gap-3">
@@ -180,7 +197,7 @@ export function ModelBrowser() {
         </div>
         <p className="text-xs text-gray-600 mt-2">Custom pulls are not filtered; use this for exact Ollama tags you already know your machine can run.</p>
         {pulling.map(name => (
-          <PullProgress key={name} name={name} onDone={() => { load(); setPulling(prev => prev.filter(n => n !== name)); }} />
+          <PullProgress key={name} name={name} onDone={() => { load(); setPulling(prev => prev.filter(n => n !== name)); onPullComplete?.(name); }} />
         ))}
       </div>
 

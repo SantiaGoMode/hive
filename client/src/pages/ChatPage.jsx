@@ -95,7 +95,15 @@ export function ChatPage() {
   }, [agentId, agent, initialSessionId]);
 
   if (loading) return <div className="flex items-center justify-center h-64 text-gray-500">Loading…</div>;
-  if (!agent)  return <div className="flex items-center justify-center h-64 text-gray-500">Agent not found</div>;
+  if (!agent)  return (
+    <div className="flex flex-col items-center justify-center h-64 gap-3 text-gray-500">
+      <p>Agent not found</p>
+      <div className="flex gap-4 text-sm">
+        <Link to="/" className="text-blue-400 hover:text-blue-300">Pick or create an agent</Link>
+        <Link to="/models" className="text-blue-400 hover:text-blue-300">Browse models</Link>
+      </div>
+    </div>
+  );
   const model = agent.model ? modelBadge(agent.model) : null;
 
   return (

@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Cloud, Settings as SettingsIcon } from 'lucide-react';
 import { ModelBrowser } from '../components/models/ModelBrowser';
+import { AgentEditor } from '../components/agents/AgentEditor';
+import { StarterAgentBanner } from '../components/agents/StarterAgentBanner';
+import { useAgentStore } from '../stores/agentStore';
+import { pickStarterModel } from '../lib/starterAgent';
 import { api } from '../lib/api';
 
 const CLOUD = [
@@ -75,6 +79,22 @@ function CloudModels() {
 }
 
 export function ModelsPage() {
+  const { agents, fetchAgents } = useAgentStore();
+  const [agentsLoaded, setAgentsLoaded] = useState(false);
+  const [grouped, setGrouped] = useState(null);
+  const [lastPulled, setLastPulled] = useState(null);
+  const [editorOpen, setEditorOpen] = useState(false);
+
+  useEffect(() => {
+    fetchAgents().finally(() => setAgentsLoaded(true));
+    api.getAllModels().then(setGrouped).catch(() => setGrouped({}));
+  }, []);
+
+  // First-run CTA: a usable model exists (or one was just pulled) but no agent yet.
+  const bannerModel = agentsLoaded && agents.length === 0
+    ? (lastPulled || pickStarterModel(grouped))
+    : null;
+
   return (
     <div className="flex flex-col gap-8">
       <div>
@@ -82,12 +102,27 @@ export function ModelsPage() {
         <p className="text-sm text-gray-500 mt-0.5">Local Ollama models and connected cloud providers</p>
       </div>
 
+      {bannerModel && (
+        <StarterAgentBanner
+          modelId={bannerModel}
+          title={lastPulled ? `${lastPulled} installed — create your first agent` : undefined}
+          onCustomize={() => setEditorOpen(true)}
+        />
+      )}
+
       <div className="flex flex-col gap-4">
         <h2 className="text-lg font-semibold text-gray-100">Local (Ollama)</h2>
-        <ModelBrowser />
+        <ModelBrowser onPullComplete={setLastPulled} />
       </div>
 
       <CloudModels />
+
+      <AgentEditor
+        open={editorOpen}
+        onClose={() => setEditorOpen(false)}
+        agent={null}
+        initialValues={bannerModel ? { model: bannerModel } : undefined}
+      />
     </div>
   );
 }
