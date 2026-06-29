@@ -22,6 +22,7 @@ const {
   recipeInitialMessage,
 } = require('./colonyRecipes');
 const db = require('../db');
+const { logSwallowed } = require('./logSwallowed');
 
 // Keep the last N entries in the single `colonies.log` TEXT field. Long runs
 // trim oldest entries — by seq number, so clients can still tell if they
@@ -48,6 +49,17 @@ function newId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
+// Parse a JSON DB column with a fallback default. A parse failure means the
+// persisted data is corrupt — worth logging (issue #26), but behavior is
+// unchanged: the caller still gets the same fallback as before.
+function parseField(json, field, fallback) {
+  if (!json) return fallback;
+  try { return JSON.parse(json); } catch (e) {
+    logSwallowed('colonyRunner:parseRow', e, { field });
+    return fallback;
+  }
+}
+
 // ── Git write-back helpers ────────────────────────────────────────────────────
 // Thin wrappers around git CLI. All failures throw — callers must catch and
 // emit a HITL blocker rather than crashing the colony.
@@ -61,7 +73,7 @@ function gitDefaultBranch(repoPath) {
     return gitExec(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'], repoPath).replace(/^origin\//, '');
   } catch {
     for (const b of ['main', 'master']) {
-      try { gitExec(['rev-parse', '--verify', b], repoPath); return b; } catch {}
+      try { gitExec(['rev-parse', '--verify', b], repoPath); return b; } catch {} /* probe: failure = branch doesn't exist */
     }
     return 'main';
   }
@@ -77,10 +89,10 @@ function gitCheckoutBranch(repoPath, branchName) {
     if (gitExec(['status', '--porcelain'], repoPath).length > 0) {
       gitExec(['stash', 'push', '--include-untracked', '-m', `hive: leftovers before ${branchName}`], repoPath);
     }
-  } catch {}
+  } catch (e) { logSwallowed('colonyRunner:gitStash', e); }
   const base = gitDefaultBranch(repoPath);
-  try { gitExec(['checkout', base], repoPath); } catch {}
-  try { gitExec(['pull', '--ff-only'], repoPath); } catch {}
+  try { gitExec(['checkout', base], repoPath); } catch (e) { logSwallowed('colonyRunner:gitBase', e); }
+  try { gitExec(['pull', '--ff-only'], repoPath); } catch (e) { logSwallowed('colonyRunner:gitBase', e); }
   try {
     gitExec(['checkout', '-b', branchName], repoPath);
   } catch {
@@ -97,7 +109,7 @@ async function gitCommitAndPush(repoPath, branchName, message) {
     const staged = gitExec(['diff', '--cached', '--name-only'], repoPath).split('\n').filter(Boolean);
     const envFiles = staged.filter(f => /(^|\/)\.env(\..+)?$/.test(f) && !/\.env\.example$/.test(f));
     if (envFiles.length) gitExec(['reset', '--', ...envFiles], repoPath);
-  } catch {}
+  } catch (e) { logSwallowed('colonyRunner:gitUnstageEnv', e); }
   // If nothing changed, skip the commit gracefully. git prints "nothing to
   // commit" to STDOUT, so check stdout too — checking only stderr/message
   // turned a clean tree into a hard "Failed to push" blocker.
@@ -125,7 +137,7 @@ function gitHasUncommittedChanges(repoPath) {
 // worth opening a PR for).
 function gitBranchHasNewCommits(repoPath, base = 'main') {
   for (const ref of [`origin/${base}`, base]) {
-    try { return Number(gitExec(['rev-list', '--count', `${ref}..HEAD`], repoPath)) > 0; } catch {}
+    try { return Number(gitExec(['rev-list', '--count', `${ref}..HEAD`], repoPath)) > 0; } catch {} /* probe: failure = ref missing, try next */
   }
   return false;
 }
@@ -270,7 +282,7 @@ function makeFakeWs(onEvent) {
     OPEN: 1,
     readyState: 1,
     send(raw) {
-      try { onEvent(JSON.parse(raw)); } catch {}
+      try { onEvent(JSON.parse(raw)); } catch (e) { logSwallowed('colonyRunner:fakeWsEvent', e); }
     },
   };
 }
@@ -320,7 +332,7 @@ function readBootstrapSource(repoPath) {
       if (fs.existsSync(p) && fs.statSync(p).isFile()) {
         return { path: rel, content: fs.readFileSync(p, 'utf8').slice(0, 20000) };
       }
-    } catch {}
+    } catch (e) { logSwallowed('colonyRunner:bootstrapSource', e); }
   }
   try {
     const docsDir = path.join(repoPath, 'docs');
@@ -331,7 +343,7 @@ function readBootstrapSource(repoPath) {
         return { path: rel, content: fs.readFileSync(path.join(repoPath, rel), 'utf8').slice(0, 20000) };
       }
     }
-  } catch {}
+  } catch (e) { logSwallowed('colonyRunner:bootstrapSource', e); }
   return null;
 }
 
@@ -344,7 +356,7 @@ function parseBootstrapTasks(text) {
       const parsed = JSON.parse(jsonMatch[1]);
       if (Array.isArray(parsed)) return parsed.map(normalizeBootstrapTask).filter(Boolean);
       if (Array.isArray(parsed.tasks)) return parsed.tasks.map(normalizeBootstrapTask).filter(Boolean);
-    } catch {}
+    } catch {} /* model may not emit valid JSON; falls back to line parsing below */
   }
   return raw.split('\n')
     .map(line => line.trim())
@@ -424,7 +436,7 @@ const runningColonies = new Map();
 function stopColonyRun(colonyId) {
   const ac = runningColonies.get(colonyId);
   if (!ac) return false;
-  try { ac.abort(); } catch {}
+  try { ac.abort(); } catch {} /* abort is best-effort */
   return true;
 }
 
@@ -438,7 +450,7 @@ async function runColony(colonyId, onEventArg, signal) {
   // aborts it directly. All internal checks use this controller's signal.
   const externalSignal = signal;
   const ac = new AbortController();
-  const onExternalAbort = () => { try { ac.abort(); } catch {} };
+  const onExternalAbort = () => { try { ac.abort(); } catch {} /* abort is best-effort */ };
   if (externalSignal) {
     if (externalSignal.aborted) onExternalAbort();
     else externalSignal.addEventListener('abort', onExternalAbort, { once: true });
@@ -454,9 +466,9 @@ async function runColony(colonyId, onEventArg, signal) {
   // (b) the legacy onEvent callback if supplied (used by tests and the old
   // direct-streaming path). Either can be absent.
   const onEvent = (event) => {
-    try { publish(colonyId, event); } catch {}
+    try { publish(colonyId, event); } catch (e) { logSwallowed('colonyRunner:publish', e, { colonyId }); }
     if (onEventArg) {
-      try { onEventArg(event); } catch {}
+      try { onEventArg(event); } catch (e) { logSwallowed('colonyRunner:onEvent', e, { colonyId }); }
     }
   };
 
@@ -465,7 +477,7 @@ async function runColony(colonyId, onEventArg, signal) {
     if (!logDirty) return;
     try {
       persistLog(colonyId, logEntries.slice(-LOG_MAX_ENTRIES));
-    } catch {}
+    } catch (e) { logSwallowed('colonyRunner:persistLog', e, { colonyId }); }
     logDirty = false;
   };
 
@@ -518,7 +530,7 @@ async function runColony(colonyId, onEventArg, signal) {
 
       let diffStat = '';
       try { diffStat = gitExec(['diff', '--stat', 'origin/main...HEAD'], row.repo_path).slice(0, 2000); } catch {
-        try { diffStat = gitExec(['diff', '--stat', 'main...HEAD'], row.repo_path).slice(0, 2000); } catch {}
+        try { diffStat = gitExec(['diff', '--stat', 'main...HEAD'], row.repo_path).slice(0, 2000); } catch (e) { logSwallowed('colonyRunner:diffStat', e, { colonyId }); }
       }
 
       const prBody = [
@@ -569,11 +581,11 @@ async function runColony(colonyId, onEventArg, signal) {
     try {
       const latest = db.prepare('SELECT agent_ids FROM colonies WHERE id=?').get(colonyId);
       ids = JSON.parse(latest?.agent_ids || '[]');
-    } catch {}
+    } catch (e) { logSwallowed('colonyRunner:cleanupSandbox', e, { colonyId }); }
     if (!ids.length) return;
     let removed = 0;
     for (const id of ids) {
-      try { if (sandbox.cleanupContainer(id)) removed++; } catch {}
+      try { if (sandbox.cleanupContainer(id)) removed++; } catch (e) { logSwallowed('colonyRunner:cleanupContainer', e, { agentId: id }); }
     }
     if (removed > 0) {
       addEntry({ kind: 'sandbox_cleanup', message: `Cleaned up ${removed} sandbox container${removed === 1 ? '' : 's'}.`, removed });
@@ -588,8 +600,7 @@ async function runColony(colonyId, onEventArg, signal) {
 
     // Per-role model plan + cloud setting. The operator (or user) may assign a
     // different model per role; fall back to the colony's single model.
-    let modelPlan = null;
-    if (row.model_plan) { try { modelPlan = JSON.parse(row.model_plan); } catch {} }
+    const modelPlan = parseField(row.model_plan, 'model_plan', null);
     const cloudEnabled = !!row.cloud_enabled;
     const operatorModel = (modelPlan && modelPlan.operator) || row.model;
 
@@ -640,7 +651,7 @@ async function runColony(colonyId, onEventArg, signal) {
     // operator and every worker so lessons actually carry across runs.
     let teamRow = null;
     if (row.team_id) {
-      try { teamRow = db.prepare('SELECT id, name, description, memory FROM colony_teams WHERE id=?').get(row.team_id); } catch {}
+      try { teamRow = db.prepare('SELECT id, name, description, memory FROM colony_teams WHERE id=?').get(row.team_id); } catch (e) { logSwallowed('colonyRunner:loadTeam', e, { colonyId }); }
     }
     const colonyMemory = String(teamRow?.memory || '').trim();
     const memorySection = colonyMemory
@@ -734,7 +745,7 @@ async function runColony(colonyId, onEventArg, signal) {
               }
             }
           }
-        } catch {}
+        } catch (e) { logSwallowed('colonyRunner:sandboxCapabilities', e, { colonyId }); }
       }
       for (const workerConfig of workerConfigs) {
         if (memorySection) workerConfig.system_prompt += memorySection;
@@ -756,13 +767,13 @@ async function runColony(colonyId, onEventArg, signal) {
         addAgentToColony(colonyId, worker.id);
         // Link the staff profile to its freshly seeded worker agent.
         if (workerConfig.role_key) {
-          try { staffDirectory.linkAssignedAgent(recipe.id, workerConfig.role_key, worker.id, workerConfig._staff_profile_id); } catch {}
+          try { staffDirectory.linkAssignedAgent(recipe.id, workerConfig.role_key, worker.id, workerConfig._staff_profile_id); } catch (e) { logSwallowed('colonyRunner:linkStaff', e, { agentId: worker.id }); }
         }
         // Coding roles get the colony's repo mounted as their sandbox workspace
         // so they edit the real project. The PM gets it too — it maintains
         // CHANGELOG/release notes and persists artifacts under docs/.
         if (row.repo_path && (colonyModels.CODING_ROLES.has(workerConfig.role_key) || workerConfig.role_key === 'project_manager')) {
-          try { sandbox.setAgentRepo(worker.id, row.repo_path); } catch {}
+          try { sandbox.setAgentRepo(worker.id, row.repo_path); } catch (e) { logSwallowed('colonyRunner:setAgentRepo', e, { agentId: worker.id }); }
         }
         const roleReasoning = workerConfig.role_key && Object.prototype.hasOwnProperty.call(reasoningDecision.by_role, workerConfig.role_key)
           ? reasoningDecision.by_role[workerConfig.role_key]
@@ -788,7 +799,7 @@ async function runColony(colonyId, onEventArg, signal) {
     // become the colony plan.
     if (row.repo_path && recipe.id === 'development_team' && !row.bootstrap_accepted && !row.bootstrap_tasks) {
       let board = null;
-      try { board = await fetchRepoBoard({ cwd: row.repo_path }); } catch {}
+      try { board = await fetchRepoBoard({ cwd: row.repo_path }); } catch (e) { logSwallowed('colonyRunner:fetchBoard', e, { colonyId }); }
       if (board && !board.auth_required && Array.isArray(board.cards) && board.cards.length === 0) {
         const source = readBootstrapSource(row.repo_path);
         if (!source?.content) {
@@ -933,7 +944,7 @@ async function runColony(colonyId, onEventArg, signal) {
       if (msg.type === 'permission_required') {
         onEvent({ type: 'permission_required', agent: agentLabel, tool: msg.name, message: msg.message });
         addEntry({ kind: 'permission_required', agent: agentLabel, tool: msg.name, message: msg.message });
-        try { protocol.writeBlackboard(colonyId, agentLabel, 'blocker', `Permission needed for "${msg.name}": ${msg.message}. Enable the required credential/scope, then re-run.`, { tool: msg.name, permission_required: true }); } catch {}
+        try { protocol.writeBlackboard(colonyId, agentLabel, 'blocker', `Permission needed for "${msg.name}": ${msg.message}. Enable the required credential/scope, then re-run.`, { tool: msg.name, permission_required: true }); } catch (e) { logSwallowed('colonyRunner:blackboard', e, { colonyId }); }
         return;
       }
 
@@ -1038,8 +1049,7 @@ async function runColony(colonyId, onEventArg, signal) {
     // ── Orchestrator run loop ─────────────────────────────────────────────────
     let initialContent = recipeInitialMessage(recipe);
     if (row.bootstrap_accepted && row.bootstrap_tasks) {
-      let acceptedTasks = [];
-      try { acceptedTasks = JSON.parse(row.bootstrap_tasks || '[]'); } catch {}
+      const acceptedTasks = parseField(row.bootstrap_tasks, 'bootstrap_tasks', []);
       if (acceptedTasks.length) {
         initialContent += `\n\nHuman-approved bootstrap tasks are already accepted for this empty-board repo. Use these as the delivery scope; do not invent a different backlog. If you call set_plan, preserve this task order:\n${acceptedTasks.map(t => `- ${t.id}. ${t.title}: ${t.description || ''}`).join('\n')}`;
       }
@@ -1220,7 +1230,7 @@ async function runColony(colonyId, onEventArg, signal) {
 
     // Operator memory upkeep — distill lessons from this run into the colony's
     // shared memory so the next run starts smarter.
-    try { await updateColonyMemoryAfterRun(colonyId, row, goalSummary, status, addEntry); } catch {}
+    try { await updateColonyMemoryAfterRun(colonyId, row, goalSummary, status, addEntry); } catch (e) { logSwallowed('colonyRunner:memoryUpdate', e, { colonyId }); }
 
     // Auto-post the deliverable summary to the linked board work-item so the
     // user never has to click "Post update" manually. Non-fatal on failure —
@@ -1252,9 +1262,9 @@ async function runColony(colonyId, onEventArg, signal) {
     if (e.name === 'AbortError' || e.message === 'Colony run was stopped' || signal?.aborted) {
       db.prepare("UPDATE colonies SET status='stopped', updated_at=unixepoch() WHERE id=?").run(colonyId);
       // Stopped runs still publish whatever real work landed on the branch.
-      try { await performWriteback('stopped'); } catch {}
+      try { await performWriteback('stopped'); } catch (e) { logSwallowed('colonyRunner:writeback', e, { colonyId }); }
       // Partial runs often carry the most valuable lessons (what blocked them).
-      try { await updateColonyMemoryAfterRun(colonyId, row, goalSummary, 'stopped', addEntry); } catch {}
+      try { await updateColonyMemoryAfterRun(colonyId, row, goalSummary, 'stopped', addEntry); } catch (e) { logSwallowed('colonyRunner:memoryUpdate', e, { colonyId }); }
       cleanupSandboxContainers();
       addEntry({ kind: 'done', status: 'stopped' });
       flush();
@@ -1271,11 +1281,11 @@ async function runColony(colonyId, onEventArg, signal) {
     // the external-signal listener to avoid leaks on long-lived signals.
     runningColonies.delete(colonyId);
     if (externalSignal) {
-      try { externalSignal.removeEventListener('abort', onExternalAbort); } catch {}
+      try { externalSignal.removeEventListener('abort', onExternalAbort); } catch {} /* removeEventListener is best-effort */
     }
     // Drop the per-colony bus if no subscribers remain. If tail clients are
     // still attached, they'll trigger cleanup on their own disconnect.
-    try { maybeCleanup(colonyId); } catch {}
+    try { maybeCleanup(colonyId); } catch (e) { logSwallowed('colonyRunner:busCleanup', e, { colonyId }); }
   }
 }
 
@@ -1297,7 +1307,7 @@ async function updateColonyMemoryAfterRun(colonyId, row, goalSummary, status, ad
         if (profile) staffDirectory.appendProfileMemory(profile.id, note);
       }
     }
-  } catch {}
+  } catch (e) { logSwallowed('colonyRunner:staffMemory', e, { colonyId }); }
 
   if (!row?.team_id) return;
   const colonyTeams = require('./colonyTeams');
@@ -1308,7 +1318,7 @@ async function updateColonyMemoryAfterRun(colonyId, row, goalSummary, status, ad
   const deliverable = fresh?.deliverable || null;
   const workarounds = Array.isArray(deliverable?.workarounds) ? deliverable.workarounds : [];
   let blockers = [];
-  try { blockers = protocol.readBlackboard(colonyId, { entryType: 'blocker', limit: 5 }); } catch {}
+  try { blockers = protocol.readBlackboard(colonyId, { entryType: 'blocker', limit: 5 }); } catch (e) { logSwallowed('colonyRunner:readBlackboard', e, { colonyId }); }
   if (!goalSummary && !workarounds.length && !blockers.length) return;
 
   const providers = require('./providers');
@@ -1408,10 +1418,8 @@ function listColonies() {
   return db.prepare(
     'SELECT id, team_id, goal, model, recipe_id, status, orchestrator_id, agent_ids, summary, created_at, trigger, board_card FROM colonies ORDER BY created_at DESC',
   ).all().map(r => {
-    let trigger = null;
-    let boardCard = null;
-    if (r.trigger) { try { trigger = JSON.parse(r.trigger); } catch {} }
-    if (r.board_card) { try { boardCard = JSON.parse(r.board_card); } catch {} }
+    const trigger = parseField(r.trigger, 'trigger', null);
+    const boardCard = parseField(r.board_card, 'board_card', null);
     return { ...r, agent_ids: JSON.parse(r.agent_ids || '[]'), trigger, board_card: boardCard };
   });
 }
@@ -1423,20 +1431,13 @@ function getColony(id) {
     const a = readAgent(aid);
     return a ? { id: a.id, name: a.name, persona_role: a.persona_role, avatar_color: a.avatar_color, model: a.model, tools: a.tools } : null;
   }).filter(Boolean);
-  let plan = null;
-  if (row.plan) { try { plan = JSON.parse(row.plan); } catch {} }
-  let deliverable = null;
-  if (row.deliverable) { try { deliverable = JSON.parse(row.deliverable); } catch {} }
-  let boardCard = null;
-  if (row.board_card) { try { boardCard = JSON.parse(row.board_card); } catch {} }
-  let modelPlan = null;
-  if (row.model_plan) { try { modelPlan = JSON.parse(row.model_plan); } catch {} }
-  let triggerConfig = null;
-  if (row.trigger_config) { try { triggerConfig = JSON.parse(row.trigger_config); } catch {} }
-  let trigger = null;
-  if (row.trigger) { try { trigger = JSON.parse(row.trigger); } catch {} }
-  let bootstrapTasks = null;
-  if (row.bootstrap_tasks) { try { bootstrapTasks = JSON.parse(row.bootstrap_tasks); } catch {} }
+  const plan = parseField(row.plan, 'plan', null);
+  const deliverable = parseField(row.deliverable, 'deliverable', null);
+  const boardCard = parseField(row.board_card, 'board_card', null);
+  const modelPlan = parseField(row.model_plan, 'model_plan', null);
+  const triggerConfig = parseField(row.trigger_config, 'trigger_config', null);
+  const trigger = parseField(row.trigger, 'trigger', null);
+  const bootstrapTasks = parseField(row.bootstrap_tasks, 'bootstrap_tasks', null);
   return {
     ...row,
     agent_ids: JSON.parse(row.agent_ids || '[]'),
@@ -1461,13 +1462,13 @@ function deleteColony(id) {
   const ids = JSON.parse(row.agent_ids || '[]');
   const { deleteAgent } = require('./agentParser');
   for (const agentId of ids) {
-    try { deleteAgent(agentId); } catch {}
+    try { deleteAgent(agentId); } catch (e) { logSwallowed('colonyRunner:deleteAgent', e, { agentId }); }
   }
-  try { db.prepare('DELETE FROM colony_blackboard WHERE colony_id=?').run(id); } catch {}
-  try { db.prepare('DELETE FROM colony_handoffs WHERE colony_id=?').run(id); } catch {}
-  try { db.prepare('DELETE FROM colony_trigger_events WHERE colony_id=? OR triggered_colony_id=?').run(id, id); } catch {}
-  try { db.prepare('DELETE FROM colony_directions WHERE colony_id=?').run(id); } catch {}
-  try { db.prepare('DELETE FROM colony_agent_histories WHERE colony_id=?').run(id); } catch {}
+  try { db.prepare('DELETE FROM colony_blackboard WHERE colony_id=?').run(id); } catch (e) { logSwallowed('colonyRunner:deleteRows', e, { table: 'colony_blackboard', colonyId: id }); }
+  try { db.prepare('DELETE FROM colony_handoffs WHERE colony_id=?').run(id); } catch (e) { logSwallowed('colonyRunner:deleteRows', e, { table: 'colony_handoffs', colonyId: id }); }
+  try { db.prepare('DELETE FROM colony_trigger_events WHERE colony_id=? OR triggered_colony_id=?').run(id, id); } catch (e) { logSwallowed('colonyRunner:deleteRows', e, { table: 'colony_trigger_events', colonyId: id }); }
+  try { db.prepare('DELETE FROM colony_directions WHERE colony_id=?').run(id); } catch (e) { logSwallowed('colonyRunner:deleteRows', e, { table: 'colony_directions', colonyId: id }); }
+  try { db.prepare('DELETE FROM colony_agent_histories WHERE colony_id=?').run(id); } catch (e) { logSwallowed('colonyRunner:deleteRows', e, { table: 'colony_agent_histories', colonyId: id }); }
   db.prepare('DELETE FROM colonies WHERE id=?').run(id);
 }
 

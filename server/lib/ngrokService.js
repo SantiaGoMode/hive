@@ -1,4 +1,5 @@
 const ngrok = require('@ngrok/ngrok');
+const { logSwallowed } = require('./logSwallowed');
 
 let currentListener = null;
 
@@ -27,10 +28,10 @@ async function stopTunnel() {
   if (currentListener) {
     try {
       await currentListener.close();
-    } catch (e) {}
+    } catch (e) { logSwallowed('ngrok:closeListener', e); }
     try {
       await ngrok.disconnect();
-    } catch (e) {}
+    } catch (e) { logSwallowed('ngrok:disconnect', e); }
     currentListener = null;
   }
 }

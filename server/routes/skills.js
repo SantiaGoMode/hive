@@ -4,6 +4,7 @@ const db = require('../db');
 const { v4 } = require('../lib/uuid');
 const mcpManager = require('../lib/mcpClient');
 const { builtInToolCatalog } = require('../lib/agentTools');
+const { logSwallowed } = require('../lib/logSwallowed');
 
 const TEMPLATE_TYPES = ['code', 'table', 'instructions', 'text'];
 
@@ -21,7 +22,7 @@ function normalizeTemplates(value) {
 function rowToJson(row) {
   if (!row) return null;
   let templates = [];
-  try { templates = JSON.parse(row.templates || '[]'); } catch {}
+  try { templates = JSON.parse(row.templates || '[]'); } catch (e) { logSwallowed('skillsRoutes:parseTemplates', e, { id: row.id }); }
   return {
     id: row.id,
     name: row.name,

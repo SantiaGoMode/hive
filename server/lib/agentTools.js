@@ -7,6 +7,7 @@ const providers = require('./providers');
 const protocol = require('./colonyProtocol');
 const { updateGitHubIssue, detectGitHubRepo } = require('./githubBoard');
 const { normalizeOllamaUrl } = require('./ollamaUrl');
+const { logSwallowed } = require('./logSwallowed');
 
 const MODEL_ROUND_TIMEOUT_MS = 180_000;
 
@@ -75,7 +76,7 @@ function readProjectContextFiles(repoPath) {
         content: content.slice(0, PROJECT_CONTEXT_MAX_CHARS),
         truncated: content.length > PROJECT_CONTEXT_MAX_CHARS,
       });
-    } catch {}
+    } catch (e) { logSwallowed('agentTools:readProjectContext', e, { file: rel }); }
   }
   return files;
 }
@@ -139,7 +140,7 @@ async function validateAgentModel(model, ollamaUrl) {
       );
       if (modelValid) return { ok: true, provider: 'ollama', modelId: parsed.modelId };
     }
-  } catch {}
+  } catch (e) { logSwallowed('agentTools:validateModel', e); }
 
   return {
     ok: false,
@@ -242,7 +243,7 @@ async function runAgentOnce(targetAgent, userMessages, ollamaUrl, depth, ws = nu
   // max_budget so the gateway enforces the cap. Falls back to the shared key.
   let agentGatewayKey = targetAgent.gateway_key || null;
   if (!agentGatewayKey && Number(targetAgent.gateway_budget_usd) > 0) {
-    try { agentGatewayKey = await providers.ensureAgentGatewayKey(targetAgent); } catch {}
+    try { agentGatewayKey = await providers.ensureAgentGatewayKey(targetAgent); } catch (e) { logSwallowed('agentTools:ensureGatewayKey', e, { agentId: targetAgent.id }); }
   }
 
   for (let round = 0; round < maxRounds; round++) {
@@ -258,9 +259,9 @@ async function runAgentOnce(targetAgent, userMessages, ollamaUrl, depth, ws = nu
     let timedOut = false;
     const timeout = setTimeout(() => {
       timedOut = true;
-      try { roundAc.abort(); } catch {}
+      try { roundAc.abort(); } catch {} /* abort is best-effort */
     }, MODEL_ROUND_TIMEOUT_MS);
-    const onAbort = () => { try { roundAc.abort(); } catch {} };
+    const onAbort = () => { try { roundAc.abort(); } catch {} /* abort is best-effort */ };
     if (signal) {
       if (signal.aborted) onAbort();
       else signal.addEventListener('abort', onAbort, { once: true });
@@ -309,7 +310,7 @@ async function runAgentOnce(targetAgent, userMessages, ollamaUrl, depth, ws = nu
     } finally {
       clearTimeout(timeout);
       if (signal) {
-        try { signal.removeEventListener('abort', onAbort); } catch {}
+        try { signal.removeEventListener('abort', onAbort); } catch {} /* listener may already be removed */
       }
     }
 
@@ -514,7 +515,7 @@ const TOOLS = {
               };
             }
           }
-        } catch {}
+        } catch (e) { logSwallowed('agentTools:workerCap', e, { colonyId: colonyContext.colonyId }); }
       }
       // Sanitize worker tool lists:
       // • Strip colony_tools (set_plan, update_plan_step, mark_goal_achieved) — these
@@ -571,7 +572,7 @@ const TOOLS = {
               };
             }
           }
-        } catch {}
+        } catch (e) { logSwallowed('agentTools:duplicateNameCheck', e, { colonyId: colonyContext.colonyId }); }
       }
       // Auto-inject colony context into worker system prompts so workers know
       // the overall mission and how to behave, even when the orchestrator writes
@@ -600,7 +601,7 @@ const TOOLS = {
             ].join('\n');
             rest.system_prompt = (rest.system_prompt || 'Be helpful, direct, and concise.') + workerGuidance;
           }
-        } catch {}
+        } catch (e) { logSwallowed('agentTools:workerGuidance', e, { colonyId: colonyContext.colonyId }); }
       }
       const modelWarning = rest._model_warning;
       delete rest._model_warning;
@@ -710,7 +711,7 @@ const TOOLS = {
               break;
             }
           }
-        } catch {}
+        } catch (e) { logSwallowed('agentTools:resolveAgentByName', e, { colonyId: colonyContext.colonyId }); }
       }
       if (!target) return { error: `Agent "${agent_id}" not found. Pass the agent_id returned by create_agent, not the agent name.` };
       if (!target.model) return { error: `Agent "${resolvedId}" has no model configured` };
@@ -749,7 +750,7 @@ const TOOLS = {
       if (histories) {
         histories.get(resolvedId).push({ role: 'assistant', content: response });
         if (colonyContext?.colonyId) {
-          try { protocol.persistAgentHistory(colonyContext.colonyId, resolvedId, histories.get(resolvedId)); } catch {}
+          try { protocol.persistAgentHistory(colonyContext.colonyId, resolvedId, histories.get(resolvedId)); } catch (e) { logSwallowed('agentTools:persistHistory', e, { agentId: resolvedId }); }
         }
       }
 
@@ -765,7 +766,7 @@ const TOOLS = {
             const inProgress = plan.steps.find(s => s.status === 'in_progress');
             if (inProgress) colonyContext.delegatedSteps.add(String(inProgress.id));
           }
-        } catch {}
+        } catch (e) { logSwallowed('agentTools:markDelegated', e, { colonyId: colonyContext.colonyId }); }
       }
 
       const noOutput = response === '(no response)' || response === '(agent reached max tool rounds without a final answer)';
@@ -841,7 +842,7 @@ const TOOLS = {
               };
             }
           }
-        } catch {}
+        } catch (e) { logSwallowed('agentTools:autoHandoff', e, { colonyId: colonyContext.colonyId }); }
       }
 
       return {
@@ -946,7 +947,7 @@ const TOOLS = {
       const row = db.prepare('SELECT goal, repo_path, board_card FROM colonies WHERE id=?').get(colonyContext.colonyId);
       if (!row) return { error: `Colony "${colonyContext.colonyId}" not found` };
       let board_card = null;
-      try { board_card = row.board_card ? JSON.parse(row.board_card) : null; } catch {}
+      try { board_card = row.board_card ? JSON.parse(row.board_card) : null; } catch (e) { logSwallowed('agentTools:parseBoardCard', e, { colonyId: colonyContext.colonyId }); }
       return {
         repo_path: row.repo_path || null,
         board_card,
@@ -1106,7 +1107,7 @@ const TOOLS = {
       const requiresHuman = !!edge.requires_human;
       const historyRef = protocol.historyRefForAgent(callerAgentId);
       if (colonyContext?.agentHistories?.has(callerAgentId)) {
-        try { protocol.persistAgentHistory(colonyContext.colonyId, callerAgentId, colonyContext.agentHistories.get(callerAgentId)); } catch {}
+        try { protocol.persistAgentHistory(colonyContext.colonyId, callerAgentId, colonyContext.agentHistories.get(callerAgentId)); } catch (e) { logSwallowed('agentTools:persistHistory', e, { agentId: callerAgentId }); }
       }
       const commandObject = {
         target_agent: to_role,
@@ -1162,7 +1163,7 @@ const TOOLS = {
             updatedPlan = plan;
           }
         }
-      } catch {}
+      } catch (e) { logSwallowed('agentTools:planAdvance', e, { colonyId: colonyContext.colonyId }); }
 
       return {
         success: true,
