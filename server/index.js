@@ -14,6 +14,7 @@ const mcpManager = require('./lib/mcpClient');
 const ngrokService = require('./lib/ngrokService');
 const db = require('./db');
 const { settingSecret } = require('./lib/secrets');
+const { logSwallowed } = require('./lib/logSwallowed');
 const {
   assertCanExposePublicly,
   createCorsOptions,
@@ -60,7 +61,7 @@ server.on('error', (err) => {
     const { execSync } = require('child_process');
     try {
       execSync(`lsof -ti tcp:${PORT} | xargs kill -9`);
-    } catch (_) {}
+    } catch (e) { logSwallowed('server:killPortProcess', e, { port: PORT }); }
     setTimeout(() => server.listen(PORT), 500);
   } else {
     throw err;

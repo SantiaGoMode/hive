@@ -7,6 +7,7 @@
 const db = require('../db');
 const { DEFAULT_RECIPE_ID, getColonyRecipe } = require('./colonyRecipes');
 const staffDirectory = require('./staffDirectory');
+const { logSwallowed } = require('./logSwallowed');
 
 function newId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -112,7 +113,7 @@ function deleteTeam(id) {
   const { deleteColony } = require('./colonyRunner');
   const runs = db.prepare('SELECT id FROM colonies WHERE team_id=?').all(id);
   for (const r of runs) {
-    try { deleteColony(r.id); } catch {}
+    try { deleteColony(r.id); } catch (e) { logSwallowed('colonyTeams:deleteRun', e, { colonyId: r.id }); }
   }
   db.prepare('DELETE FROM colony_teams WHERE id=?').run(id);
 }
@@ -186,7 +187,7 @@ function teamOverview(id) {
         issue: String(b.content || '').slice(0, 400), agent: b.agent || '',
       });
     }
-  } catch {}
+  } catch (e) { logSwallowed('colonyTeams:blockerInsights', e, { teamId: id }); }
   insights.sort((a, b) => b.created_at - a.created_at);
   insights.length = Math.min(insights.length, 30);
 
@@ -203,7 +204,7 @@ function teamOverview(id) {
         skills: p.skills,
         model_preference: p.model_preference || '',
       }));
-  } catch {}
+  } catch (e) { logSwallowed('colonyTeams:crew', e, { teamId: id }); }
 
   return { team, runs, artifacts, insights, crew, performance: runStatsForTeam(id) };
 }

@@ -3,6 +3,7 @@ const db = require('../db');
 const { readAgent } = require('./agentParser');
 const { runAgentOnce } = require('./agentTools');
 const { getOllamaUrl } = require('./ollamaUrl');
+const { logSwallowed } = require('./logSwallowed');
 const path = require('path');
 const os = require('os');
 
@@ -35,7 +36,7 @@ function runSchedule(schedule) {
   try {
     const parsed = JSON.parse(schedule.tools || '[]');
     if (Array.isArray(parsed) && parsed.length > 0) toolsOverride = parsed;
-  } catch {}
+  } catch (e) { logSwallowed('scheduler:parseTools', e, { scheduleId: schedule.id }); }
 
   runAgentOnce(agent, [{ role: 'user', content: schedule.prompt }], ollamaUrl, 0, null, hivePath, toolsOverride)
     .then((output) => {

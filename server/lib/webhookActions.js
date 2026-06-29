@@ -6,6 +6,7 @@ const { runAgentOnce } = require('./agentTools');
 const { runPipelineById } = require('./pipelineRunner');
 const { buildEnvelope } = require('./webhookProjection');
 const { getOllamaUrl } = require('./ollamaUrl');
+const { logSwallowed } = require('./logSwallowed');
 
 function newId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -118,7 +119,7 @@ function triggerWebhookActions(webhook, event) {
   if (actions.length === 0) return [];
 
   let contextSpec = [];
-  try { contextSpec = JSON.parse(webhook.context_spec || '[]'); } catch {}
+  try { contextSpec = JSON.parse(webhook.context_spec || '[]'); } catch (e) { logSwallowed('webhookActions:parseContextSpec', e, { webhookId: webhook.id }); }
   const envelope = buildEnvelope(contextSpec, event);
   const matched = actions.filter(action => actionMatchesEvent(action, event.event_type));
   const runIds = [];

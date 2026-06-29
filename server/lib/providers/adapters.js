@@ -4,6 +4,7 @@
 // these can be unit-tested without the SDK installed.
 
 const crypto = require('crypto');
+const { logSwallowed } = require('../logSwallowed');
 
 // Providers we recognize as a model-id prefix. Anything else (or no prefix) is
 // treated as Ollama, so existing bare model names keep working unchanged.
@@ -33,8 +34,8 @@ function normalizeArgs(raw) {
   if (raw == null) return {};
   if (typeof raw === 'object') return raw;
   if (typeof raw === 'string') {
-    try { return JSON.parse(raw); } catch {}
-    try { return JSON.parse(raw.replace(/'/g, '"')); } catch {}
+    try { return JSON.parse(raw); } catch {} /* fall through to relaxed parse */
+    try { return JSON.parse(raw.replace(/'/g, '"')); } catch (e) { logSwallowed('adapters:parseToolArgs', e); }
     return {};
   }
   return {};

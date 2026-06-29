@@ -6,7 +6,7 @@ const listeners = new Set();    // SSE response objects
 function broadcast(event) {
   const data = `data: ${JSON.stringify(event)}\n\n`;
   for (const res of listeners) {
-    try { res.write(data); } catch {}
+    try { res.write(data); } catch {} /* SSE client may have disconnected */
   }
 }
 

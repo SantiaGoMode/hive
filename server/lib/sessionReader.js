@@ -2,6 +2,7 @@ const fs   = require('fs');
 const path = require('path');
 const { readAgent, listAgents } = require('./agentParser');
 const db = require('../db');
+const { logSwallowed } = require('./logSwallowed');
 
 function getSessionsDir(agentId) {
   const agent = readAgent(agentId);
@@ -34,7 +35,7 @@ function normalizeLine(raw) {
 
     // Simple format: {role, content, ...}
     if (obj.role && typeof obj.content === 'string') return obj;
-  } catch {}
+  } catch (e) { logSwallowed('sessionReader:parseLine', e); }
   return null;
 }
 

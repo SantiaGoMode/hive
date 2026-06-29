@@ -13,6 +13,7 @@
 // (routes/colony.js) all consume it so behaviour stays consistent everywhere.
 
 const db = require('../db');
+const { logSwallowed } = require('./logSwallowed');
 
 const ACP_VERSION = 'acp/0.1';
 const CARD_SCHEMA_VERSION = 'a2a-agent-card/1.0';
@@ -345,7 +346,7 @@ function flowCompletion(colonyId, recipeId) {
   // Draft PR on GitHub, not the Handoffs panel.
   for (const h of ledger) {
     if (h.status === 'awaiting_human') {
-      try { updateHandoff(h.id, { status: 'approved', human_note: 'auto-approved (in-run human gates removed; review happens on the Draft PR)' }); h.status = 'approved'; } catch {}
+      try { updateHandoff(h.id, { status: 'approved', human_note: 'auto-approved (in-run human gates removed; review happens on the Draft PR)' }); h.status = 'approved'; } catch (e) { logSwallowed('colonyProtocol:autoApproveHandoff', e, { handoffId: h.id, colonyId }); }
     }
   }
 
@@ -406,7 +407,7 @@ function buildDeliverable(colonyId, recipeId, summary) {
         acceptance = { results: entry.meta.acceptance_results, by: entry.agent, at: entry.created_at };
       }
     }
-  } catch {}
+  } catch (e) { logSwallowed('colonyProtocol:readAcceptance', e, { colonyId }); }
 
   return {
     summary: summary || null,

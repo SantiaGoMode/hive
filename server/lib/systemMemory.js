@@ -1,5 +1,6 @@
 const os = require('os');
 const { execFileSync } = require('child_process');
+const { logSwallowed } = require('./logSwallowed');
 
 function parseVmStat(output) {
   const pageSizeMatch = output.match(/page size of\s+(\d+)\s+bytes/i);
@@ -58,7 +59,7 @@ function getSystemMemory() {
     try {
       const output = execFileSync('vm_stat', { encoding: 'utf8', timeout: 1500 });
       return memoryFromVmStat(output, os.totalmem());
-    } catch {}
+    } catch (e) { logSwallowed('systemMemory:vmStat', e); }
   }
   return nodeMemory();
 }

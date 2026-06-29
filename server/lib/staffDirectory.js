@@ -1,6 +1,7 @@
 const db = require('../db');
 const { v4 } = require('./uuid');
 const { listColonyRecipes, getColonyRecipe } = require('./colonyRecipes');
+const { logSwallowed } = require('./logSwallowed');
 
 function safeParse(value, fallback) {
   try { return value ? JSON.parse(value) : fallback; } catch { return fallback; }
@@ -124,7 +125,7 @@ function seedStaffProfiles() {
       }
       db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('staff_personalities_seeded_v1', '1')").run();
     }
-  } catch {}
+  } catch (e) { logSwallowed('staffDirectory:seedPersonalities', e); }
 }
 
 // Create a custom staff profile (beyond the recipe-seeded ones). Custom
@@ -170,7 +171,7 @@ function deleteProfile(id) {
     if (recipe.id === profile.recipe_id && Array.isArray(recipe.roles) && recipe.roles.some(r => r.key === profile.role_key)) {
       return { ok: false, error: 'This profile backs a team-preset role and cannot be deleted. Edit it instead.' };
     }
-  } catch {}
+  } catch {} /* unknown recipe → custom profile, deletable */
   db.prepare('DELETE FROM staff_profiles WHERE id=?').run(id);
   return { ok: true };
 }
@@ -257,7 +258,7 @@ function renderSkillsBlock(skillNames) {
     if (skill.description) section.push(skill.description.trim());
     if (skill.instructions?.trim()) section.push(skill.instructions.trim());
     let templates = [];
-    try { templates = JSON.parse(skill.templates || '[]'); } catch {}
+    try { templates = JSON.parse(skill.templates || '[]'); } catch (e) { logSwallowed('staffDirectory:parseTemplates', e, { skill: skill.name }); }
     for (const t of Array.isArray(templates) ? templates : []) {
       if (!t?.content?.trim()) continue;
       const title = t.title ? `**Template: ${t.title}**` : '**Template**';
@@ -307,7 +308,7 @@ function selectProfileForRole(recipeId, roleKey, requirements = '') {
     try {
       const m = profileMetrics(p);
       if (m.successful_handoffs > m.rejected_handoffs) { score += 2; why.push('strong handoff record'); }
-    } catch {}
+    } catch (e) { logSwallowed('staffDirectory:profileMetrics', e, { profileId: p.id }); }
     return { p, score, why };
   }).sort((a, b) => b.score - a.score);
 
@@ -639,7 +640,7 @@ function backfillAssignedAgents() {
       }
       db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('staff_assigned_agents_backfilled_v1', '1')").run();
     }
-  } catch {}
+  } catch (e) { logSwallowed('staffDirectory:backfillAssignedAgents', e); }
 }
 
 function profileInteractions(profile, limit = 80) {
