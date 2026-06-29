@@ -4,17 +4,27 @@
 // id prefix. Both call sites (runAgentOnce, websocket) consume streamChat() and
 // see the same normalized event shape they accumulated from Ollama NDJSON before.
 
+const crypto = require('crypto');
 const { streamText, jsonSchema } = require('ai');
 const { createOpenAI } = require('@ai-sdk/openai');
 const { createAnthropic } = require('@ai-sdk/anthropic');
 const { createGoogleGenerativeAI } = require('@ai-sdk/google');
 const { createOllama } = require('ai-sdk-ollama');
 const db = require('../../db');
-const { getOllamaUrl } = require('../ollamaUrl');
+const { getOllamaUrl, ollamaApiUrl } = require('../ollamaUrl');
 const { resolveSecret } = require('../secrets');
 const {
   parseModel, splitSystem, toModelMessages, mapUsage,
+  toOllamaMessages, toOllamaTools, ollamaStats,
 } = require('./adapters');
+
+// Shared AbortError factory — both stream paths and callers (websocket chat,
+// colony cancellation, pipelines) key off this single error name.
+function abortError() {
+  const e = new Error('The operation was aborted');
+  e.name = 'AbortError';
+  return e;
+}
 
 // app_settings key + env var fallback per cloud provider.
 const KEY_SETTING = { anthropic: 'anthropic_api_key', openai: 'openai_api_key', gemini: 'gemini_api_key' };
@@ -175,28 +185,106 @@ function toAiSdkTools(toolDefs) {
   return Object.keys(tools).length ? tools : undefined;
 }
 
+// Normalize one decoded Ollama /api/chat NDJSON object into Hive stream events.
+function* emitOllamaEvents(obj) {
+  const msg = obj && obj.message;
+  if (msg) {
+    if (msg.thinking) yield { type: 'thinking', delta: msg.thinking };
+    if (msg.content) yield { type: 'content', delta: msg.content };
+    if (Array.isArray(msg.tool_calls)) {
+      for (const tc of msg.tool_calls) {
+        // Ollama tool calls carry no id; mint one so the loop can correlate
+        // the eventual tool result (matches the AI SDK path's call.id contract).
+        yield {
+          type: 'tool_call',
+          call: { id: crypto.randomUUID(), function: { name: tc.function?.name || 'tool', arguments: tc.function?.arguments ?? {} } },
+        };
+      }
+    }
+  }
+  if (obj && obj.done) {
+    yield { type: 'done', reason: obj.done_reason || 'stop', stats: ollamaStats(obj) };
+  }
+}
+
+// Hive-owned Ollama streaming path. ai-sdk-ollama does NOT forward an abort
+// signal to its HTTP client, so an aborted run leaves the Ollama generation
+// running server-side (the root cause of the staff-chat 180s hangs, #37). We
+// call /api/chat directly with the real AbortSignal so Stop actually closes the
+// socket, and parse the NDJSON stream ourselves into the normalized events.
+async function* streamOllama(modelId, { messages, tools, options = {}, signal } = {}) {
+  if (signal?.aborted) throw abortError();
+
+  const body = { model: modelId, messages: toOllamaMessages(messages || []), stream: true };
+  const ollamaTools = toOllamaTools(tools);
+  if (ollamaTools) body.tools = ollamaTools;
+  if (options.reasoning != null && supportsOllamaReasoning(modelId)) body.think = !!options.reasoning;
+  const opts = {};
+  if (options.temperature != null) opts.temperature = options.temperature;
+  if (options.num_ctx != null) opts.num_ctx = options.num_ctx;
+  if (options.num_predict != null) opts.num_predict = options.num_predict;
+  if (Object.keys(opts).length) body.options = opts;
+
+  let res;
+  try {
+    res = await fetch(ollamaApiUrl('chat'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (e) {
+    if (signal?.aborted || e?.name === 'AbortError') throw abortError();
+    throw e;
+  }
+  if (!res.ok) {
+    let detail = '';
+    try { detail = (await res.text()).slice(0, 500); } catch {} /* error body is best-effort */
+    throw new Error(`Ollama request failed (${res.status})${detail ? `: ${detail}` : ''}`);
+  }
+
+  const decoder = new TextDecoder();
+  let buf = '';
+  try {
+    for await (const chunk of res.body) {
+      buf += decoder.decode(chunk, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line) continue;
+        let obj;
+        try { obj = JSON.parse(line); } catch { continue; } /* skip partial/garbage lines */
+        yield* emitOllamaEvents(obj);
+      }
+    }
+    const tail = buf.trim();
+    if (tail) { try { yield* emitOllamaEvents(JSON.parse(tail)); } catch {} /* trailing non-JSON */ }
+  } catch (e) {
+    if (signal?.aborted || e?.name === 'AbortError') throw abortError();
+    throw e;
+  } finally {
+    // Release the socket promptly on early exit (abort / caller break).
+    try { await res.body?.cancel?.(); } catch {} /* stream may already be closed */
+  }
+}
+
 // Stream one model round. Async generator yielding normalized events:
 //   { type:'content',  delta }
 //   { type:'thinking', delta }
 //   { type:'tool_call', call: { id, function: { name, arguments } } }
 //   { type:'done', reason, stats }
-// Mirrors what the call sites used to accumulate from Ollama NDJSON.
+// Mirrors what the call sites used to accumulate from Ollama NDJSON. Ollama runs
+// on the Hive-owned direct path (real abort); cloud/gateway use the AI SDK.
 async function* streamChat(modelString, { messages, tools, options = {}, signal } = {}) {
   const { provider, modelId } = parseModel(modelString);
-  const modelSettings = {};
-  if (provider === 'ollama' && options.reasoning != null && supportsOllamaReasoning(modelId)) {
-    modelSettings.think = !!options.reasoning;
-  }
-  const model = getModel(provider, modelId, { ...modelSettings, metadata: options.metadata, gatewayKey: options.gatewayKey });
-  const { system, rest } = splitSystem(messages || []);
-
-  const providerOptions = {};
   if (provider === 'ollama') {
-    // Preserve Ollama-specific knobs (context window etc.).
-    const ollama = {};
-    if (options.num_ctx != null) ollama.num_ctx = options.num_ctx;
-    if (Object.keys(ollama).length) providerOptions.ollama = ollama;
+    yield* streamOllama(modelId, { messages, tools, options, signal });
+    return;
   }
+
+  const model = getModel(provider, modelId, { metadata: options.metadata, gatewayKey: options.gatewayKey });
+  const { system, rest } = splitSystem(messages || []);
 
   const result = streamText({
     model,
@@ -206,21 +294,12 @@ async function* streamChat(modelString, { messages, tools, options = {}, signal 
     abortSignal: signal,
     ...(options.temperature != null ? { temperature: options.temperature } : {}),
     ...(options.num_predict != null ? { maxOutputTokens: options.num_predict } : {}),
-    ...(Object.keys(providerOptions).length ? { providerOptions } : {}),
     // Single model round; Hive runs its own tool loop (tools have no execute).
   });
 
-  // ai-sdk-ollama does NOT forward abortSignal to the underlying ollama
-  // client (its doStream calls client.chat without a signal), so an abort
-  // never cancels the in-flight HTTP request — runs become unstoppable while
-  // waiting on a slow/hung model. We can't cancel the socket through the
-  // provider, but we CAN stop consuming and return control immediately:
-  // race every stream read against the abort signal and bail with AbortError.
-  const abortError = () => {
-    const e = new Error('The operation was aborted');
-    e.name = 'AbortError';
-    return e;
-  };
+  // Cloud/gateway providers DO honor abortSignal, but we still race reads against
+  // the signal so consumption returns immediately rather than awaiting a final
+  // chunk after Stop.
   if (signal?.aborted) throw abortError();
 
   let onAbort = null;

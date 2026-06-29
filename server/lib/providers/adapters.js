@@ -157,6 +157,97 @@ function mapUsage(usage) {
   };
 }
 
+// ── Ollama /api/chat adapters (used by the Hive-owned direct streaming path) ───
+// We talk to Ollama's native chat endpoint directly so an AbortSignal actually
+// cancels the in-flight HTTP request (ai-sdk-ollama does not forward it). Hive
+// messages are already Ollama-shaped, so conversion is mostly identity; the work
+// is normalizing multimodal user content (data-URI images -> base64 `images[]`)
+// and tool-call/result fields to what /api/chat expects.
+
+// Ollama wants raw base64, not a `data:<mime>;base64,...` URI.
+function stripDataUri(url) {
+  const m = /^data:[^;,]*;base64,([\s\S]*)$/.exec(url || '');
+  return m ? m[1] : (url || '');
+}
+
+function splitUserImages(content) {
+  if (typeof content === 'string') return { text: content, images: [] };
+  if (!Array.isArray(content)) return { text: content == null ? '' : String(content), images: [] };
+  const texts = [];
+  const images = [];
+  for (const p of content) {
+    if (!p || !p.type) continue;
+    if (p.type === 'text') texts.push(p.text || '');
+    else if (p.type === 'image_url') { const u = p.image_url?.url; if (u) images.push(stripDataUri(u)); }
+    else if (p.type === 'image') { const u = p.image ?? p.dataUrl; if (u) images.push(stripDataUri(u)); }
+  }
+  return { text: texts.join('\n'), images };
+}
+
+// Hive's Ollama-shaped messages -> Ollama /api/chat `messages` array.
+function toOllamaMessages(messages) {
+  const out = [];
+  for (const m of messages || []) {
+    if (m.role === 'user') {
+      const { text, images } = splitUserImages(m.content);
+      const msg = { role: 'user', content: text };
+      if (images.length) msg.images = images;
+      out.push(msg);
+    } else if (m.role === 'assistant') {
+      const msg = { role: 'assistant', content: stringContent(m.content) };
+      const calls = Array.isArray(m.tool_calls) ? m.tool_calls : [];
+      if (calls.length) {
+        msg.tool_calls = calls.map(tc => ({
+          function: {
+            name: tc.function?.name || tc.name || 'tool',
+            arguments: normalizeArgs(tc.function?.arguments ?? tc.arguments),
+          },
+        }));
+      }
+      out.push(msg);
+    } else if (m.role === 'tool') {
+      const msg = { role: 'tool', content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? null) };
+      const name = m.name || m.toolName;
+      if (name) msg.tool_name = name;
+      out.push(msg);
+    } else {
+      out.push({ role: m.role || 'user', content: stringContent(m.content) });
+    }
+  }
+  return out;
+}
+
+// Hive tool definitions (OpenAI-style function defs) -> Ollama `tools` array.
+function toOllamaTools(toolDefs) {
+  if (!Array.isArray(toolDefs) || toolDefs.length === 0) return undefined;
+  const tools = [];
+  for (const def of toolDefs) {
+    const fn = def?.function;
+    if (!fn?.name) continue;
+    tools.push({
+      type: 'function',
+      function: {
+        name: fn.name,
+        description: fn.description || '',
+        parameters: fn.parameters || { type: 'object', properties: {} },
+      },
+    });
+  }
+  return tools.length ? tools : undefined;
+}
+
+// Ollama final-chunk metrics -> Hive stats shape. Durations are nanoseconds;
+// tps = output tokens / generation seconds (eval_duration), rounded to 1dp.
+function ollamaStats(final) {
+  if (!final) return null;
+  const outputTokens = final.eval_count ?? null;
+  const evalDuration = final.eval_duration ?? null;
+  const tps = (outputTokens != null && evalDuration)
+    ? Math.round((outputTokens / (evalDuration / 1e9)) * 10) / 10
+    : null;
+  return { input_tokens: final.prompt_eval_count ?? null, output_tokens: outputTokens, tps };
+}
+
 module.exports = {
   KNOWN_PROVIDERS,
   parseModel,
@@ -166,4 +257,7 @@ module.exports = {
   splitSystem,
   toModelMessages,
   mapUsage,
+  toOllamaMessages,
+  toOllamaTools,
+  ollamaStats,
 };
