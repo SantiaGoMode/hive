@@ -1,5 +1,5 @@
 const { execFileSync } = require('child_process');
-const db = require('../db');
+const { githubToken } = require('./config'); // canonical GitHub-token resolver (#36)
 
 const STATUS_MAP = [
   [/^(done|closed|complete|completed|shipped)$/i, 'done'],
@@ -8,37 +8,6 @@ const STATUS_MAP = [
   [/^(ready|ready for dev|ready to start|todo|to do)$/i, 'ready'],
   [/^(backlog|triage|new|open)$/i, 'backlog'],
 ];
-
-function getSetting(key) {
-  try {
-    return db.prepare('SELECT value FROM app_settings WHERE key=?').get(key)?.value || '';
-  } catch {
-    return '';
-  }
-}
-
-function githubToken() {
-  const candidates = [
-    getSetting('github_token'),
-    getSetting('github_personal_access_token'),
-    process.env.GITHUB_TOKEN,
-    process.env.GITHUB_PERSONAL_ACCESS_TOKEN,
-    process.env.GH_TOKEN,
-    githubCliToken(),
-  ];
-  return candidates.find(v => typeof v === 'string' && v.trim())?.trim() || null;
-}
-
-function githubCliToken() {
-  try {
-    return execFileSync('gh', ['auth', 'token'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-  } catch {
-    return '';
-  }
-}
 
 function parseGitHubRemote(remoteUrl) {
   const raw = String(remoteUrl || '').trim();

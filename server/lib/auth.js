@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const config = require('./config');
 
 const DEFAULT_LOCAL_ORIGINS = [
   'http://localhost:3000',
@@ -33,12 +34,12 @@ function splitList(value) {
 
 function configuredAuthToken(options = {}) {
   if (options.token !== undefined) return options.token || '';
-  return process.env.HIVE_AUTH_TOKEN || readSetting('hive_auth_token') || '';
+  return config.authToken();
 }
 
 function configuredAllowedOrigins(options = {}) {
   const extra = [
-    ...splitList(process.env.HIVE_ALLOWED_ORIGINS),
+    ...splitList(config.allowedOriginsEnv()),
     ...splitList(readSetting('hive_allowed_origins')),
     ...splitList(options.allowedOrigins),
   ];
@@ -149,8 +150,8 @@ function requireHiveAuth(options = {}) {
 }
 
 function createMutatingRateLimiter(options = {}) {
-  const limit = options.limit || Number(process.env.HIVE_MUTATION_RATE_LIMIT || 120);
-  const windowMs = options.windowMs || Number(process.env.HIVE_MUTATION_RATE_WINDOW_MS || 60_000);
+  const limit = options.limit || config.mutationRateLimit();
+  const windowMs = options.windowMs || config.mutationRateWindowMs();
   const buckets = new Map();
 
   return function mutatingRateLimiter(req, res, next) {

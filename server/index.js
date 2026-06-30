@@ -15,6 +15,7 @@ const scheduler = require('./lib/scheduler');
 const mcpManager = require('./lib/mcpClient');
 const ngrokService = require('./lib/ngrokService');
 const db = require('./db');
+const config = require('./lib/config');
 const { settingSecret } = require('./lib/secrets');
 const { logSwallowed } = require('./lib/logSwallowed');
 const {
@@ -55,7 +56,7 @@ app.use('/api/webhooks', require('./routes/webhooks'));
 
 createWebSocketServer(server);
 
-const PORT = process.env.PORT || 3001;
+const PORT = config.port();
 
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
