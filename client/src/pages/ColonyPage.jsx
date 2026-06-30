@@ -11,6 +11,7 @@ import { api } from '../lib/api';
 import { Button } from '../components/ui/Button';
 import { formatDate } from '../lib/utils';
 import { AGENT_COLORS, sseToEntries, dbLogToEntries, mergeToolEntries } from '../lib/colonyUtils';
+import { readSSEStream } from '../lib/streamParser';
 
 // Markdown renderer for agent messages — models emit **bold**, lists, and code
 // fences which previously rendered as raw text. Elements are styled explicitly
@@ -2311,17 +2312,10 @@ export default function ColonyPage() {
 
   // ── SSE consumer (shared by launch + resume paths) ──────────────────────────
   const consumeStream = useCallback(async (response, knownColonyId = null, { fromLogEntries = false } = {}) => {
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = '';
     let colonyId = knownColonyId;
     const agentNameMap = {};
 
-    const processLine = (line) => {
-      if (!line.startsWith('data: ')) return;
-      let event;
-      try { event = JSON.parse(line.slice(6)); } catch { return; }
-
+    const processEvent = (event) => {
       if (event.type === 'colony_id') {
         colonyId = event.colonyId;
         setActiveColonyId(colonyId);
@@ -2388,14 +2382,7 @@ export default function ColonyPage() {
     };
 
     try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split('\n');
-        buf = lines.pop() ?? '';
-        for (const line of lines) processLine(line.trim());
-      }
+      for await (const event of readSSEStream(response)) processEvent(event);
     } catch (e) {
       if (e.name !== 'AbortError') {
         setLiveLog(prev => [...prev, { type: 'error', content: e.message }]);
@@ -2498,17 +2485,10 @@ export default function ColonyPage() {
       setLaunching(false);
       setGoal('');
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = '';
       let colonyId = null;
       const agentNameMap = {};
 
-      const processLine = (line) => {
-        if (!line.startsWith('data: ')) return;
-        let event;
-        try { event = JSON.parse(line.slice(6)); } catch { return; }
-
+      const processEvent = (event) => {
         if (event.type === 'colony_id') {
           colonyId = event.colonyId;
           setActiveColonyId(colonyId);
@@ -2595,14 +2575,7 @@ export default function ColonyPage() {
         }
       };
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split('\n');
-        buf = lines.pop() ?? '';
-        for (const line of lines) processLine(line.trim());
-      }
+      for await (const event of readSSEStream(res)) processEvent(event);
     } catch (e) {
       setLaunchError(e.message);
       setLiveLog(prev => [...prev, { type: 'error', content: e.message }]);

@@ -10,6 +10,7 @@ import { AgentCardSkeleton } from '../components/ui/Skeleton';
 import { toast } from '../stores/toastStore';
 import { api, getHiveAuthToken } from '../lib/api';
 import { formatDate } from '../lib/utils';
+import { readSSEStream } from '../lib/streamParser';
 import { hasAnyModelOption } from '../lib/modelLabels';
 import { pickStarterModel } from '../lib/starterAgent';
 import { useCreateStarterAgent } from '../components/agents/useCreateStarterAgent';
@@ -69,23 +70,9 @@ function OnboardingScreen({ onPull, onDismiss, onCloudSetup }) {
         },
         body: JSON.stringify({ name: modelName }),
       });
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split('\n\n');
-        buf = lines.pop();
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          try {
-            const d = JSON.parse(line.slice(6));
-            if (d.completed && d.total) {
-              setProgress(p => ({ ...p, [modelName]: Math.round((d.completed / d.total) * 100) }));
-            }
-          } catch {}
+      for await (const d of readSSEStream(res)) {
+        if (d.completed && d.total) {
+          setProgress(p => ({ ...p, [modelName]: Math.round((d.completed / d.total) * 100) }));
         }
       }
       toast.success(`${modelName} pulled successfully`);
