@@ -57,3 +57,26 @@ describe('GET /api/system/metrics', () => {
     assert.equal(hit.component, 'swallowed');
   });
 });
+
+describe('other /api/system endpoints (#47)', () => {
+  it('POST /model/stop requires a model', async () => {
+    const res = await request(app).post('/api/system/model/stop').send({}).expect(400);
+    assert.match(res.body.error, /model is required/i);
+  });
+
+  it('GET /ngrok/status reports not-running by default', async () => {
+    const res = await request(app).get('/api/system/ngrok/status').expect(200);
+    assert.equal(res.body.running, false);
+  });
+
+  it('POST /ngrok/start 400s when no authtoken is configured', async () => {
+    const saved = process.env.NGROK_AUTHTOKEN;
+    delete process.env.NGROK_AUTHTOKEN;
+    try {
+      const res = await request(app).post('/api/system/ngrok/start').expect(400);
+      assert.match(res.body.error, /Auth Token is not configured/i);
+    } finally {
+      if (saved === undefined) delete process.env.NGROK_AUTHTOKEN; else process.env.NGROK_AUTHTOKEN = saved;
+    }
+  });
+});
