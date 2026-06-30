@@ -29,7 +29,7 @@
 const { describe, it, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('http');
-const { runColony, createColony, getColony, deleteColony } = require('../lib/colonyRunner');
+const { runColony, createColony, getColony } = require('../lib/colonyRunner');
 const db = require('../db');
 
 // ── Fake Ollama server ───────────────────────────────────────────────────────
@@ -196,18 +196,12 @@ describe('guard — hallucinated agent ID', () => {
     // Observed in colony-mns02ft8: orchestrator called ask_agent with
     // agent_id: "worker_1" (the name it chose) instead of the real ID.
     let call = 0;
-    let createdAgentId = null;
 
-    fakeOllama.handler = async (req, parsed) => {
+    fakeOllama.handler = async (_req, _parsed) => {
       call++;
       if (call === 1) return ollamaToolCall('set_plan', { steps: [{ id: '1', description: 'Do work' }] });
       if (call === 2) return ollamaToolCall('create_agent', { name: 'my_worker', system_prompt: 'Help', model: 'fake-model' });
       if (call === 3) {
-        // Grab the worker ID from the tool result in the messages
-        const toolMsg = parsed.messages?.findLast(m => m.role === 'tool');
-        if (toolMsg) {
-          try { createdAgentId = JSON.parse(toolMsg.content)?.agent_id; } catch {}
-        }
         // Simulate model using name instead of ID
         return ollamaToolCall('ask_agent', { agent_id: 'my_worker', message: 'Hello worker' });
       }
