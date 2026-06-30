@@ -2,11 +2,11 @@ import { useState, useEffect, useCallback } from 'react';
 import { Wand2, Trash2, Save, RefreshCw, Plug, Terminal, RotateCcw, FolderOpen, FileText, ChevronRight, ExternalLink } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
-import { Input, Textarea, Select } from '../ui/Input';
+import { Input, Textarea } from '../ui/Input';
+import { ModelSelect } from '../ui/ModelSelect';
 import { toast } from '../../stores/toastStore';
 import { useAgentStore } from '../../stores/agentStore';
 import { api } from '../../lib/api';
-import { modelBadge, modelOptionLabel, providerLabel } from '../../lib/modelLabels';
 
 const AVATAR_COLORS = [
   '#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444',
@@ -251,7 +251,6 @@ export function AgentEditor({ open, onClose, agent, initialValues }) {
   };
 
   const yamlPreview = JSON.stringify({ name: form.name, model: form.model, temperature: form.temperature, system_prompt: form.system_prompt, tools: form.tools }, null, 2);
-  const selectedModelBadge = form.model ? modelBadge(form.model) : null;
 
   return (
     <Modal open={open} onClose={onClose} title={agent ? `Edit: ${agent.name}` : 'New Agent'} size="xl">
@@ -316,39 +315,19 @@ export function AgentEditor({ open, onClose, agent, initialValues }) {
 
         {tab === 1 && (
           <div className="flex flex-col gap-4">
-            <Select label="Model" value={form.model} onChange={e => set('model', e.target.value)}>
-              <option value="">— Select a model —</option>
-              {['gateway', 'ollama', 'anthropic', 'openai', 'gemini'].map(prov => {
-                const list = models[prov] || [];
-                if (list.length === 0) return null;
-                return (
-                  <optgroup key={prov} label={prov === 'ollama' ? 'Ollama (local)' : providerLabel(prov)}>
-                    {list.map(m => <option key={m.id} value={m.id}>{modelOptionLabel(m)}</option>)}
-                  </optgroup>
-                );
-              })}
-            </Select>
-            {selectedModelBadge && (
-              <div className="flex items-center gap-2 -mt-2">
-                <span className="text-xs text-gray-500">Selected</span>
-                <span
-                  title={selectedModelBadge.title}
-                  className="max-w-full truncate text-xs bg-gray-800 border border-gray-700 text-gray-300 rounded px-2 py-1"
-                >
-                  {selectedModelBadge.text}
-                </span>
-              </div>
-            )}
-            <p className="text-xs text-gray-500 -mt-2">
-              Pick a model, or type a custom id below. Cloud models are prefixed
-              (<code className="bg-gray-800 px-1 rounded">anthropic/…</code>, <code className="bg-gray-800 px-1 rounded">openai/…</code>, <code className="bg-gray-800 px-1 rounded">gemini/…</code>);
-              Ollama models use the bare name (<code className="bg-gray-800 px-1 rounded">llama3.1:8b</code>). Add cloud API keys in Settings → Model Providers.
-            </p>
-            <Input
-              label="Custom model id (optional)"
+            <ModelSelect
               value={form.model}
-              onChange={e => set('model', e.target.value)}
-              placeholder="e.g. anthropic/claude-sonnet-4-6 or llama3.1:8b"
+              onChange={v => set('model', v)}
+              groupedModels={models}
+              showBadge
+              allowCustom
+              hint={(
+                <p className="text-xs text-gray-500 -mt-1">
+                  Pick a model, or type a custom id below. Cloud models are prefixed
+                  (<code className="bg-gray-800 px-1 rounded">anthropic/…</code>, <code className="bg-gray-800 px-1 rounded">openai/…</code>, <code className="bg-gray-800 px-1 rounded">gemini/…</code>);
+                  Ollama models use the bare name (<code className="bg-gray-800 px-1 rounded">llama3.1:8b</code>). Add cloud API keys in Settings → Model Providers.
+                </p>
+              )}
             />
             <div>
               <label className="text-sm font-medium text-gray-300 block mb-1">Temperature: {form.temperature}</label>

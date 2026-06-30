@@ -7,7 +7,8 @@ import {
 import ReactMarkdown from 'react-markdown';
 import { api } from '../lib/api';
 import { Button } from '../components/ui/Button';
-import { Input, Textarea, Select } from '../components/ui/Input';
+import { Input, Textarea } from '../components/ui/Input';
+import { ModelSelect } from '../components/ui/ModelSelect';
 import { formatDate } from '../lib/utils';
 import { modelBadge } from '../lib/modelLabels';
 import { toast } from '../stores/toastStore';
@@ -654,14 +655,13 @@ export default function StaffPage() {
                     <Input label="Display name" value={form.display_name} onChange={e => set('display_name', e.target.value)} />
                     <Input label="Role" value={form.role} onChange={e => set('role', e.target.value)} />
                     <Input label="Avatar color" value={form.avatar_color} onChange={e => set('avatar_color', e.target.value)} />
-                    <Select label="Model preference" value={form.model_preference} onChange={e => set('model_preference', e.target.value)}>
-                      <option value="">Use launch model plan</option>
-                      {Object.entries(models || {}).map(([provider, list]) => (
-                        <optgroup key={provider} label={provider}>
-                          {(list || []).map(m => <option key={m.id} value={m.id}>{m.name || m.id}</option>)}
-                        </optgroup>
-                      ))}
-                    </Select>
+                    <ModelSelect
+                      label="Model preference"
+                      value={form.model_preference}
+                      onChange={v => set('model_preference', v)}
+                      groupedModels={models}
+                      placeholder="Use launch model plan"
+                    />
                     <div className="md:col-span-2 flex flex-col gap-1">
                       <Textarea
                         label="Core system prompt"
@@ -726,14 +726,13 @@ export default function StaffPage() {
                           className="w-40"
                         />
                         <div className="flex flex-col gap-1">
-                          <Select label="Chat model" value={form.chat_model} onChange={e => set('chat_model', e.target.value)}>
-                            <option value="">Same as work model{form.model_preference ? '' : ' (launch plan)'}</option>
-                            {Object.entries(models || {}).map(([provider, list]) => (
-                              <optgroup key={provider} label={provider}>
-                                {(list || []).map(m => <option key={m.id} value={m.id}>{m.name || m.id}</option>)}
-                              </optgroup>
-                            ))}
-                          </Select>
+                          <ModelSelect
+                            label="Chat model"
+                            value={form.chat_model}
+                            onChange={v => set('chat_model', v)}
+                            groupedModels={models}
+                            placeholder={`Same as work model${form.model_preference ? '' : ' (launch plan)'}`}
+                          />
                           <p className="text-xs text-gray-600">Used only for autonomous staff chat — pick a smaller, cheaper model than the colony work model.</p>
                         </div>
                       </div>
