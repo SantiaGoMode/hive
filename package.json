@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "concurrently --names \"server,client\" --prefix-colors \"blue,green\" \"node --watch server/index.js\" \"npm run dev --prefix client\"",
     "start": "node server/index.js",
-    "test": "node --import ./server/tests/setup.js --test server/tests/**/*.test.js",
+    "test": "node --import ./server/tests/setup.js --test server/tests/*.test.js",
     "test:client": "npm test --prefix client",
     "lint:server": "eslint server",
     "lint": "npm run lint:server && npm run lint --prefix client"
