@@ -532,7 +532,7 @@ describe('proposeModelPlanLLM', () => {
 
 // ── Sprint 2: coding guidelines + permission circuit-breaker ─────────────────
 describe('coding guidelines', () => {
-  const { codingGuidelinesBlock, readRepoGuidelines } = require('../lib/codingGuidelines');
+  const { readRepoGuidelines } = require('../lib/codingGuidelines');
   const fs = require('fs');
   const os = require('os');
   const path = require('path');

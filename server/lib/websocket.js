@@ -1,5 +1,4 @@
 const { WebSocketServer } = require('ws');
-const db = require('../db');
 const { readAgent, touchAgent, stripProviderPrefix } = require('./agentParser');
 const { saveSession, newSessionId } = require('./sessionWriter');
 const { getToolDefinitions, executeTool, readMemory, readShared } = require('./agentTools');

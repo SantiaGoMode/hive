@@ -1,6 +1,6 @@
 const fs   = require('fs');
 const path = require('path');
-const { listAgents, readAgent, writeAgent, deleteAgent, stripProviderPrefix } = require('./agentParser');
+const { listAgents, readAgent, writeAgent, deleteAgent } = require('./agentParser');
 const mcpManager = require('./mcpClient');
 const db = require('../db');
 const providers = require('./providers');
@@ -2040,7 +2040,7 @@ const TOOLS = {
       const cmd = manager === 'npm'
         ? `npm install -g ${pkg} 2>&1 | tail -5`
         : `pip install --quiet ${pkg} 2>&1 | tail -10`;
-      const { stdout, stderr, exitCode } = await sandbox.exec(callerAgentId, cmd, 120_000);
+      const { stdout, exitCode } = await sandbox.exec(callerAgentId, cmd, 120_000);
       // Provide an unambiguous success/failure flag so the model doesn't mistake
       // pip's "WARNING: Running pip as root" for a failed install and retry endlessly.
       const success = exitCode === 0;

@@ -7,10 +7,6 @@ function safeParse(value, fallback) {
   try { return value ? JSON.parse(value) : fallback; } catch { return fallback; }
 }
 
-function nowSeconds() {
-  return Math.floor(Date.now() / 1000);
-}
-
 function norm(value) {
   return String(value || '').toLowerCase().replace(/[\s_-]+/g, ' ').trim();
 }

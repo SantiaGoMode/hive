@@ -1,6 +1,6 @@
 // HTTP tests for /api/system/metrics (issue #31). Mounts the system router on a
 // bare express app (no auth middleware) and exercises it with supertest.
-const { describe, it, before, after } = require('node:test');
+const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 const request = require('supertest');
