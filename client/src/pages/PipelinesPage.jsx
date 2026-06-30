@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Plus, Play, Square, Trash2, Edit2, ChevronRight, CheckCircle, XCircle, Loader, Clock, ArrowDown, Copy, Check, History, X, ChevronDown, ChevronUp, Wand2, GitMerge, Plug, Wrench, RotateCcw } from 'lucide-react';
+import { Plus, Play, Square, Trash2, Edit2, ChevronRight, CheckCircle, XCircle, Loader, Clock, ArrowDown, Copy, Check, History, X, ChevronDown, ChevronUp, Wand2, GitMerge, RotateCcw } from 'lucide-react';
 
 // ── Pipeline Templates ────────────────────────────────────────────────────────
 const PIPELINE_TEMPLATES = [
@@ -88,84 +88,12 @@ import { toast } from '../stores/toastStore';
 import { useAgentStore } from '../stores/agentStore';
 import { DeleteConfirm } from '../components/agents/DeleteConfirm';
 import { formatDate } from '../lib/utils';
+import { ToolPicker } from '../components/ToolPicker';
 
 // ── Pipeline Editor Modal ─────────────────────────────────────────────────────
 
-// ── Built-in tool groups available in steps/schedules ─────────────────────────
-const BUILTIN_TOOL_GROUPS = [
-  { id: 'agent_tools', label: 'Agent Tools', desc: 'Create, run, and manage agents, pipelines, and schedules' },
-  { id: 'memory',      label: 'Memory',      desc: 'Save and recall info across sessions' },
-  { id: 'web_search',  label: 'Web Search',  desc: 'Search the internet for current info' },
-  { id: 'sandbox',     label: 'Sandbox',     desc: 'Run code and shell commands in an isolated Docker container' },
-];
-
-// ── Compact tool selector used in StepEditor and ScheduleEditor ───────────────
-function ToolPicker({ tools = [], onChange, mcpServers = [] }) {
-  const toggle = (id) => onChange(
-    tools.includes(id) ? tools.filter(t => t !== id) : [...tools, id],
-  );
-  const hasAny = tools.length > 0;
-
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1.5">
-          <Wrench size={11} className="text-gray-500" />
-          <span className="text-xs font-medium text-gray-400">Tools</span>
-        </div>
-        <span className="text-xs text-gray-600">
-          {hasAny ? `${tools.length} override${tools.length !== 1 ? 's' : ''}` : 'agent defaults'}
-        </span>
-      </div>
-
-      {/* Built-in groups */}
-      <div className="flex flex-wrap gap-2">
-        {BUILTIN_TOOL_GROUPS.map(g => {
-          const on = tools.includes(g.id);
-          return (
-            <button
-              key={g.id}
-              type="button"
-              onClick={() => toggle(g.id)}
-              title={g.desc}
-              className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs border transition-colors ${on ? 'bg-blue-500/15 border-blue-500/40 text-blue-300' : 'bg-gray-800/60 border-gray-700 text-gray-500 hover:border-gray-500'}`}
-            >
-              {on && <CheckCircle size={10} />}
-              {g.label}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* MCP servers */}
-      {mcpServers.length > 0 && (
-        <div className="flex flex-wrap gap-2 pt-1 border-t border-gray-800">
-          {mcpServers.map(s => {
-            const mcpId = `mcp:${s.id}`;
-            const on = tools.includes(mcpId);
-            return (
-              <button
-                key={s.id}
-                type="button"
-                onClick={() => toggle(mcpId)}
-                title={s.connected ? `${s.tool_count} tools` : 'Disconnected'}
-                className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs border transition-colors ${on ? 'bg-purple-500/15 border-purple-500/40 text-purple-300' : 'bg-gray-800/60 border-gray-700 text-gray-500 hover:border-gray-500'} ${!s.connected ? 'opacity-50' : ''}`}
-              >
-                {on && <CheckCircle size={10} />}
-                <Plug size={9} />
-                {s.name}
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {hasAny && (
-        <p className="text-xs text-gray-600">These tools override the agent's configured tools for this step only.</p>
-      )}
-    </div>
-  );
-}
+// Built-in tool groups + the compact tool picker now live in the shared
+// components/ToolPicker (issue #4), used here and by SchedulesPage.
 
 function StepEditor({ step, agents, mcpServers, onChange, onRemove, index }) {
   return (
@@ -215,6 +143,7 @@ function StepEditor({ step, agents, mcpServers, onChange, onRemove, index }) {
           tools={step.tools || []}
           onChange={t => onChange({ ...step, tools: t })}
           mcpServers={mcpServers}
+          overrideHint="These tools override the agent's configured tools for this step only."
         />
       </div>
 
