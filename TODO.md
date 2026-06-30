@@ -26,7 +26,7 @@ Roadmap board by the **Phase** field.
 - [x] 🟡 [#4](../../issues/4) Shared Tool Configuration component — *PR #64*
 - [x] 🟡 [#31](../../issues/31) Structured logging + `/api/system/metrics` — *PR #66; feeds #7*
 - [ ] 🟡 [#32](../../issues/32) Versioned schema migrations
-- [ ] 🟡 [#36](../../issues/36) Consolidate env/config + `.env.example`
+- [x] 🟡 [#36](../../issues/36) Consolidate env/config + `.env.example` — *PR #71*
 - [ ] 🟡 [#46](../../issues/46) Tests for untested libs (pipelineRunner, sandbox, …)
 - [ ] 🟡 [#47](../../issues/47) HTTP route tests via supertest
 - [x] 🟡 [#48](../../issues/48) Server eslint + CI workflow — *PR #69; parent of #42*
@@ -64,9 +64,9 @@ Roadmap board by the **Phase** field.
 - **Sub-issue rollups:** #7 ← #31, #39, #41 · #3 ← #37 · #48 ← #42
 
 ## 🔀 Open PRs (awaiting merge)
-- #69 (#48 server eslint + CI). The CI workflow now runs on every push/PR — server tests + server lint + client build gate; client lint is non-blocking (pre-existing react-hooks debt, deferred cleanup).
-- All earlier P1/P2 PRs merged. **P1 — Security & Reliability fully cleared**; shared-client-utils trio (#5/#24/#4) and #31 in `main` → **#23 and #6 unblocked**.
-- Dependabot bumps consolidated + merged via #65 (root + client).
+- #71 (#36 env/config + .env.example).
+- All earlier P1/P2 PRs merged, incl. #48 (CI now runs server tests + server lint + client build on every push/PR; client lint non-blocking). **P1 cleared**; shared-client-utils trio (#5/#24/#4) + #31 + #48 in `main` → **#23 and #6 unblocked**.
+- Dependabot bumps consolidated + merged via #65.
 
 ## ✅ Recently completed (do not redo)
 - #26 `logSwallowed()` — observable swallowed errors (redaction + rate-limit); 91 call sites across 19 modules.
@@ -77,6 +77,7 @@ Roadmap board by the **Phase** field.
 - #4 Shared `<ToolPicker>` (`client/src/components/ToolPicker.jsx` + `lib/toolGroups.js`) — deduped Pipelines/Schedules pickers; completes the shared-client-utils trio.
 - #31 Structured logger + `/api/system/metrics` (`server/lib/logger.js`) — leveled logs + ring buffer (fed by all 91 `logSwallowed` sites); metrics endpoint feeds #7.
 - #48 Server eslint (`eslint.config.js`, `lint:server`) + GitHub Actions CI (`.github/workflows/ci.yml`) — tests/lint/build on push & PR.
+- #36 Central config surface (`server/lib/config.js`) + `.env.example` — env inventory, typed accessors, canonical `githubToken()` resolver.
 - scrt4 secret isolation — 0 plaintext secrets at rest (cloud keys via gateway; GitHub/Brave/ngrok via `env:` refs).
 - LiteLLM gateway (Docker) — failover aliases, retries/cooldowns, Postgres spend tracking, per-agent budgets, response caching, master-key auth.
 - scrt4 long-running launch fix (`scripts/spawn-detached.sh`, `run-dev.sh`).
