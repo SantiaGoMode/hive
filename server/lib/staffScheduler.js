@@ -1,7 +1,9 @@
 const path = require('path');
 const os = require('os');
 const staff = require('./staffDirectory');
-const { runAgentOnce } = require('./agentTools');
+// Namespace import (not destructured) so tests can stub runAgentOnce — the one
+// real model call — without invoking a model. Mirrors the `staff` import above.
+const agentTools = require('./agentTools');
 const { getOllamaUrl } = require('./ollamaUrl');
 
 let intervalHandle = null;
@@ -43,7 +45,7 @@ function cleanChatOutput(profile, raw) {
 async function generateProfileMessage(profile, triggerType = 'interval', seedContent = '') {
   if (!profile?.chat_model && !profile?.model_preference) return null;
   const { system, messages } = staff.buildStaffChatMessages(profile, triggerType, seedContent);
-  const raw = await runAgentOnce(
+  const raw = await agentTools.runAgentOnce(
     virtualAgentForProfile(profile, system),
     messages,
     getOllamaUrl(),
