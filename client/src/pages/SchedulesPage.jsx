@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../lib/api';
-import { Clock, Plus, Play, Trash2, ToggleLeft, ToggleRight, Edit2, X, CheckCircle, AlertCircle, Loader2, ChevronDown, ChevronUp, Wrench, Plug, Copy, Check, RotateCcw } from 'lucide-react';
+import { Clock, Plus, Play, Trash2, ToggleLeft, ToggleRight, Edit2, X, CheckCircle, AlertCircle, Loader2, ChevronDown, ChevronUp, Copy, Check, RotateCcw } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { ToolPicker } from '../components/ToolPicker';
 
 function CopyBtn({ text }) {
   const [copied, setCopied] = useState(false);
@@ -16,55 +17,8 @@ function CopyBtn({ text }) {
   );
 }
 
-// ── Built-in tool groups ──────────────────────────────────────────────────────
-const BUILTIN_TOOL_GROUPS = [
-  { id: 'agent_tools', label: 'Agent Tools', desc: 'Create, run, and manage agents, pipelines, and schedules' },
-  { id: 'memory',      label: 'Memory',      desc: 'Save and recall info across sessions' },
-  { id: 'web_search',  label: 'Web Search',  desc: 'Search the internet for current info' },
-  { id: 'sandbox',     label: 'Sandbox',     desc: 'Run code and shell commands in an isolated Docker container' },
-];
-
-function ToolPicker({ tools = [], onChange, mcpServers = [] }) {
-  const toggle = (id) => onChange(tools.includes(id) ? tools.filter(t => t !== id) : [...tools, id]);
-  const hasAny = tools.length > 0;
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1.5">
-          <Wrench size={11} className="text-gray-500" />
-          <span className="text-xs font-medium text-gray-400">Tools</span>
-        </div>
-        <span className="text-xs text-gray-600">{hasAny ? `${tools.length} override${tools.length !== 1 ? 's' : ''}` : 'agent defaults'}</span>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        {BUILTIN_TOOL_GROUPS.map(g => {
-          const on = tools.includes(g.id);
-          return (
-            <button key={g.id} type="button" onClick={() => toggle(g.id)} title={g.desc}
-              className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs border transition-colors ${on ? 'bg-blue-500/15 border-blue-500/40 text-blue-300' : 'bg-gray-900/60 border-gray-700 text-gray-500 hover:border-gray-500'}`}>
-              {on && <CheckCircle size={10} />}{g.label}
-            </button>
-          );
-        })}
-      </div>
-      {mcpServers.length > 0 && (
-        <div className="flex flex-wrap gap-2 pt-1 border-t border-gray-800">
-          {mcpServers.map(s => {
-            const mcpId = `mcp:${s.id}`;
-            const on = tools.includes(mcpId);
-            return (
-              <button key={s.id} type="button" onClick={() => toggle(mcpId)} title={s.connected ? `${s.tool_count} tools` : 'Disconnected'}
-                className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs border transition-colors ${on ? 'bg-purple-500/15 border-purple-500/40 text-purple-300' : 'bg-gray-900/60 border-gray-700 text-gray-500 hover:border-gray-500'} ${!s.connected ? 'opacity-50' : ''}`}>
-                {on && <CheckCircle size={10} />}<Plug size={9} />{s.name}
-              </button>
-            );
-          })}
-        </div>
-      )}
-      {hasAny && <p className="text-xs text-gray-600">Overrides the agent's configured tools for this schedule.</p>}
-    </div>
-  );
-}
+// The built-in tool groups + compact tool picker are shared via
+// components/ToolPicker (issue #4) with PipelinesPage.
 
 // ── Cron presets ──────────────────────────────────────────────────────────────
 const PRESETS = [
@@ -201,6 +155,7 @@ function ScheduleEditor({ schedule, agents, onSave, onClose }) {
               tools={form.tools}
               onChange={t => set('tools', t)}
               mcpServers={mcpServers}
+              overrideHint="Overrides the agent's configured tools for this schedule."
             />
           </div>
 
