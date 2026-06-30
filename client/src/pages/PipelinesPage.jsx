@@ -88,6 +88,7 @@ import { toast } from '../stores/toastStore';
 import { useAgentStore } from '../stores/agentStore';
 import { DeleteConfirm } from '../components/agents/DeleteConfirm';
 import { formatDate } from '../lib/utils';
+import { readSSEStream } from '../lib/streamParser';
 
 // ── Pipeline Editor Modal ─────────────────────────────────────────────────────
 
@@ -521,26 +522,11 @@ export function RunModal({ open, onClose, pipeline, initialInput = '' }) {
       const res = await api.retryPipelineStep(pipeline.id, stepIndex, prevOutput, input, ctrl.signal);
       if (!res.ok) { toast.error(`Server error ${res.status}`); return; }
 
-      const reader  = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split('\n');
-        buf = lines.pop();
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          try {
-            const evt = JSON.parse(line.slice(6));
-            if (evt.type === 'step_done') {
-              setSteps(s => s.map(e => e.step === stepIndex ? { ...e, status: 'done', output: evt.output, duration_ms: evt.duration_ms } : e));
-            } else if (evt.type === 'step_error') {
-              setSteps(s => s.map(e => e.step === stepIndex ? { ...e, status: 'error', error: evt.error, duration_ms: evt.duration_ms } : e));
-            }
-          } catch {}
+      for await (const evt of readSSEStream(res, { signal: ctrl.signal })) {
+        if (evt.type === 'step_done') {
+          setSteps(s => s.map(e => e.step === stepIndex ? { ...e, status: 'done', output: evt.output, duration_ms: evt.duration_ms } : e));
+        } else if (evt.type === 'step_error') {
+          setSteps(s => s.map(e => e.step === stepIndex ? { ...e, status: 'error', error: evt.error, duration_ms: evt.duration_ms } : e));
         }
       }
     } catch (e) {
@@ -567,31 +553,16 @@ export function RunModal({ open, onClose, pipeline, initialInput = '' }) {
       const res = await api.runPipeline(pipeline.id, input.trim(), ctrl.signal);
       if (!res.ok) { toast.error(`Server error ${res.status}`); setRunning(false); return; }
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split('\n');
-        buf = lines.pop();
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue;
-          try {
-            const evt = JSON.parse(line.slice(6));
-            if (evt.type === 'step_start') {
-              setSteps(s => [...s, { status: 'pending', label: evt.label, agent_name: evt.agent_name, step: evt.step, group: evt.group }]);
-            } else if (evt.type === 'step_done') {
-              setSteps(s => s.map(e => e.step === evt.step ? { ...e, status: 'done', output: evt.output, duration_ms: evt.duration_ms } : e));
-            } else if (evt.type === 'step_error') {
-              setSteps(s => s.map(e => e.step === evt.step ? { ...e, status: 'error', error: evt.error, duration_ms: evt.duration_ms } : e));
-            } else if (evt.type === 'done') {
-              setFinalOutput(evt.final_output);
-              setTotalMs(evt.total_ms);
-            }
-          } catch {}
+      for await (const evt of readSSEStream(res, { signal: ctrl.signal })) {
+        if (evt.type === 'step_start') {
+          setSteps(s => [...s, { status: 'pending', label: evt.label, agent_name: evt.agent_name, step: evt.step, group: evt.group }]);
+        } else if (evt.type === 'step_done') {
+          setSteps(s => s.map(e => e.step === evt.step ? { ...e, status: 'done', output: evt.output, duration_ms: evt.duration_ms } : e));
+        } else if (evt.type === 'step_error') {
+          setSteps(s => s.map(e => e.step === evt.step ? { ...e, status: 'error', error: evt.error, duration_ms: evt.duration_ms } : e));
+        } else if (evt.type === 'done') {
+          setFinalOutput(evt.final_output);
+          setTotalMs(evt.total_ms);
         }
       }
     } catch (e) {
