@@ -157,4 +157,10 @@ function stop() {
   intervalHandle = null;
 }
 
-module.exports = { start, stop, tick, generateProfileMessage, generateMentionResponses };
+// Lightweight status for /api/system/metrics: whether the interval loop is
+// started and whether a tick is currently in flight.
+function status() {
+  return { started: !!intervalHandle, ticking: running };
+}
+
+module.exports = { start, stop, tick, status, generateProfileMessage, generateMentionResponses };

@@ -1,8 +1,10 @@
+const { logger } = require('./lib/logger');
+
 process.on('unhandledRejection', (reason) => {
-  console.error('Unhandled rejection:', reason);
+  logger.error('process', 'unhandledRejection', { reason: reason?.message || String(reason) });
 });
 process.on('uncaughtException', (err) => {
-  console.error('Uncaught exception:', err);
+  logger.error('process', 'uncaughtException', { error: err?.message || String(err) });
 });
 
 const http = require('http');
@@ -57,7 +59,7 @@ const PORT = process.env.PORT || 3001;
 
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
-    console.log(`Port ${PORT} in use, killing existing process...`);
+    logger.warn('server', 'port_in_use', { port: PORT, action: 'killing existing process' });
     const { execSync } = require('child_process');
     try {
       execSync(`lsof -ti tcp:${PORT} | xargs kill -9`);
@@ -69,14 +71,14 @@ server.on('error', (err) => {
 });
 
 server.listen(PORT, async () => {
-  console.log(`Server listening on port ${PORT}`);
+  logger.info('server', 'listening', { port: PORT });
   // Attempt to auto-start ngrok
   const rowEnabled = db.prepare("SELECT value FROM app_settings WHERE key='ngrok_enabled'").get();
   if (rowEnabled && rowEnabled.value === 'true') {
     const authtoken = settingSecret('ngrok_authtoken', ['NGROK_AUTHTOKEN']);
     const rowDomain = db.prepare("SELECT value FROM app_settings WHERE key='ngrok_domain'").get();
     if (authtoken) {
-      console.log('Starting ngrok tunnel...');
+      logger.info('ngrok', 'starting');
       try {
         assertCanExposePublicly();
         const url = await ngrokService.startTunnel({
@@ -84,9 +86,9 @@ server.listen(PORT, async () => {
           domain: rowDomain?.value || null,
           port: PORT
         });
-        console.log(`Ngrok tunnel active at: ${url}`);
+        logger.info('ngrok', 'tunnel_active', { url });
       } catch (e) {
-        console.error('Failed to auto-start ngrok tunnel:', e.message);
+        logger.error('ngrok', 'autostart_failed', { error: e.message });
       }
     }
   }
@@ -94,30 +96,30 @@ server.listen(PORT, async () => {
   // Reset any colonies left in 'running' state from a previous crashed/restarted server
   const orphaned = db.prepare("UPDATE colonies SET status='stopped', updated_at=unixepoch() WHERE status='running'").run();
   if (orphaned.changes > 0) {
-    console.log(`Reset ${orphaned.changes} orphaned colony run(s) to 'stopped'`);
+    logger.info('startup', 'reset_orphaned_runs', { count: orphaned.changes });
   }
 
   scheduler.loadAll();
   try {
     require('./lib/staffDirectory').seedStaffProfiles();
     require('./lib/staffScheduler').start();
-    console.log('[startup] staff scheduler done');
+    logger.info('startup', 'staff_scheduler_done');
   } catch (e) {
-    console.error('[startup] staff scheduler failed:', e.message);
+    logger.error('startup', 'staff_scheduler_failed', { error: e.message });
   }
-  console.log('[startup] scheduler done');
+  logger.info('startup', 'scheduler_done');
   try {
     await mcpManager.loadAll();
-    console.log('[startup] mcp done');
+    logger.info('startup', 'mcp_done');
   } catch (e) {
-    console.error('[startup] mcp failed:', e.message);
+    logger.error('startup', 'mcp_failed', { error: e.message });
   }
-  console.log('[startup] warming sandbox');
+  logger.info('startup', 'warming_sandbox');
   try {
     require('./lib/sandbox').warmImage();
-    console.log('[startup] sandbox done');
+    logger.info('startup', 'sandbox_done');
   } catch (e) {
-    console.error('[startup] sandbox failed:', e.message);
+    logger.error('startup', 'sandbox_failed', { error: e.message });
   }
-  console.log('[startup] complete');
+  logger.info('startup', 'complete');
 });
