@@ -76,4 +76,4 @@ function loadAll() {
   console.log(`[scheduler] loaded ${rows.length} schedule(s)`);
 }
 
-module.exports = { loadAll, register, unregister, runSchedule };
+module.exports = { loadAll, register, unregister, runSchedule, scheduledCount: () => tasks.size };

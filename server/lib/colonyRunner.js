@@ -1476,6 +1476,7 @@ module.exports = {
   runColony,
   stopColonyRun,
   isColonyRunning,
+  activeRunCount: () => runningColonies.size,
   createColony,
   listColonies,
   getColony,

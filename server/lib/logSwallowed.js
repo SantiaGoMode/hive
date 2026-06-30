@@ -68,6 +68,9 @@ function logSwallowed(context, err, extra) {
     const detail = extra && Object.keys(extra).length ? ` ${safeContext(extra)}` : '';
     const tail = suppressed > 0 ? ` (+${suppressed} similar suppressed)` : '';
     console.warn(`[swallowed] ${context}: ${msg}${detail}${tail}`);
+    // Also surface in the metrics ring buffer (#31) without re-printing. Lazy
+    // require so logSwallowed has no load-order dependency on the logger.
+    try { require('./logger').noteSwallowed(context, msg, extra); } catch {} /* never throw */
   } catch {} /* logging must never crash the caller */
 }
 
