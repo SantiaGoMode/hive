@@ -8,6 +8,7 @@ client/dist/
 # Environment
 .env
 .env.*
+!.env.example
 
 # Database (runtime data)
 *.db
