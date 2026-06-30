@@ -23,8 +23,8 @@ Roadmap board by the **Phase** field.
 - [x] 🟠 [#44](../../issues/44) Test `websocket.js` chat loop — *PR #59 (also fixes a tool-round-exhaustion hang)*
 - [x] 🟠 [#45](../../issues/45) Test `staffScheduler.js` — *PR #60*
 - [x] 🟡 [#24](../../issues/24) Shared `<ModelSelect>` — *PR #63*
-- [ ] 🟡 [#4](../../issues/4) Shared Tool Configuration component — *blocks #23, #6*
-- [ ] 🟡 [#31](../../issues/31) Structured logging + `/api/system/metrics` — *feeds #7*
+- [x] 🟡 [#4](../../issues/4) Shared Tool Configuration component — *PR #64*
+- [x] 🟡 [#31](../../issues/31) Structured logging + `/api/system/metrics` — *PR #66; feeds #7*
 - [ ] 🟡 [#32](../../issues/32) Versioned schema migrations
 - [ ] 🟡 [#36](../../issues/36) Consolidate env/config + `.env.example`
 - [ ] 🟡 [#46](../../issues/46) Tests for untested libs (pipelineRunner, sandbox, …)
@@ -64,9 +64,9 @@ Roadmap board by the **Phase** field.
 - **Sub-issue rollups:** #7 ← #31, #39, #41 · #3 ← #37 · #48 ← #42
 
 ## 🔀 Open PRs (awaiting merge)
-- #56 (#26), #57 (#43), #58 (#37, **stacked on #57**), #59 (#44), #60 (#45), #62 (#5), #63 (#24).
-- Merge order: **#57 → #58**. #56 and #58 both touch `providers/index.js`, so the second to merge needs a small conflict resolution.
-- **P1 — Security & Reliability is fully cleared** once these land.
+- #66 (#31 structured logging + metrics).
+- All earlier P1/P2 PRs are merged. **P1 — Security & Reliability is fully cleared**, and the shared-client-utils trio (#5/#24/#4) is in `main` → **#23 and #6 unblocked**.
+- Dependabot bumps consolidated + merged via #65 (root + client).
 
 ## ✅ Recently completed (do not redo)
 - #26 `logSwallowed()` — observable swallowed errors (redaction + rate-limit); 91 call sites across 19 modules.
@@ -74,6 +74,8 @@ Roadmap board by the **Phase** field.
 - #43 / #44 / #45 — provider-dispatcher, websocket chat-loop, and staff-scheduler test foundations (the P2 test trio).
 - #5 Shared streaming-event parser (`client/src/lib/streamParser.js`) — deduped six SSE loops; unblocks #23, #6.
 - #24 Shared `<ModelSelect>` (`client/src/components/ui/ModelSelect.jsx`) — single picker source via `modelLabels`; gateway promoted; unblocks #23, #6.
+- #4 Shared `<ToolPicker>` (`client/src/components/ToolPicker.jsx` + `lib/toolGroups.js`) — deduped Pipelines/Schedules pickers; completes the shared-client-utils trio.
+- #31 Structured logger + `/api/system/metrics` (`server/lib/logger.js`) — leveled logs + ring buffer (fed by all 91 `logSwallowed` sites); metrics endpoint feeds #7.
 - scrt4 secret isolation — 0 plaintext secrets at rest (cloud keys via gateway; GitHub/Brave/ngrok via `env:` refs).
 - LiteLLM gateway (Docker) — failover aliases, retries/cooldowns, Postgres spend tracking, per-agent budgets, response caching, master-key auth.
 - scrt4 long-running launch fix (`scripts/spawn-detached.sh`, `run-dev.sh`).
