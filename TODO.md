@@ -29,7 +29,7 @@ Roadmap board by the **Phase** field.
 - [ ] 🟡 [#36](../../issues/36) Consolidate env/config + `.env.example`
 - [ ] 🟡 [#46](../../issues/46) Tests for untested libs (pipelineRunner, sandbox, …)
 - [ ] 🟡 [#47](../../issues/47) HTTP route tests via supertest
-- [ ] 🟡 [#48](../../issues/48) Server eslint + CI workflow — *parent of #42*
+- [x] 🟡 [#48](../../issues/48) Server eslint + CI workflow — *PR #69; parent of #42*
 
 ## ▶ P3 — Refactors (depend on P2 foundations)
 - [ ] 🟠 [#27](../../issues/27) Split `agentTools.js` (2,413 lines) into a tools/ registry
@@ -64,8 +64,8 @@ Roadmap board by the **Phase** field.
 - **Sub-issue rollups:** #7 ← #31, #39, #41 · #3 ← #37 · #48 ← #42
 
 ## 🔀 Open PRs (awaiting merge)
-- #66 (#31 structured logging + metrics).
-- All earlier P1/P2 PRs are merged. **P1 — Security & Reliability is fully cleared**, and the shared-client-utils trio (#5/#24/#4) is in `main` → **#23 and #6 unblocked**.
+- #69 (#48 server eslint + CI). The CI workflow now runs on every push/PR — server tests + server lint + client build gate; client lint is non-blocking (pre-existing react-hooks debt, deferred cleanup).
+- All earlier P1/P2 PRs merged. **P1 — Security & Reliability fully cleared**; shared-client-utils trio (#5/#24/#4) and #31 in `main` → **#23 and #6 unblocked**.
 - Dependabot bumps consolidated + merged via #65 (root + client).
 
 ## ✅ Recently completed (do not redo)
@@ -76,6 +76,7 @@ Roadmap board by the **Phase** field.
 - #24 Shared `<ModelSelect>` (`client/src/components/ui/ModelSelect.jsx`) — single picker source via `modelLabels`; gateway promoted; unblocks #23, #6.
 - #4 Shared `<ToolPicker>` (`client/src/components/ToolPicker.jsx` + `lib/toolGroups.js`) — deduped Pipelines/Schedules pickers; completes the shared-client-utils trio.
 - #31 Structured logger + `/api/system/metrics` (`server/lib/logger.js`) — leveled logs + ring buffer (fed by all 91 `logSwallowed` sites); metrics endpoint feeds #7.
+- #48 Server eslint (`eslint.config.js`, `lint:server`) + GitHub Actions CI (`.github/workflows/ci.yml`) — tests/lint/build on push & PR.
 - scrt4 secret isolation — 0 plaintext secrets at rest (cloud keys via gateway; GitHub/Brave/ngrok via `env:` refs).
 - LiteLLM gateway (Docker) — failover aliases, retries/cooldowns, Postgres spend tracking, per-agent budgets, response caching, master-key auth.
 - scrt4 long-running launch fix (`scripts/spawn-detached.sh`, `run-dev.sh`).
