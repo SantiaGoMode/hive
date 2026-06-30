@@ -14,15 +14,15 @@ Roadmap board by the **Phase** field.
 - [x] 🔴 [#21](../../issues/21) Audit sandbox path containment (prevent `../` escape)
 - [x] 🔴 [#3](../../issues/3) Unified Run Cancellation — *parent of #37*
 - [x] 🔴 [#2](../../issues/2) Guided First-Run Agent Setup
-- [ ] 🟠 [#26](../../issues/26) Stop swallowing errors (~145 empty `catch`) + `logSwallowed()`
-- [ ] 🟠 [#37](../../issues/37) Real abort for the Ollama path — *child of #3; do after #43*
+- [x] 🟠 [#26](../../issues/26) Stop swallowing errors (~145 empty `catch`) + `logSwallowed()` — *PR #56*
+- [x] 🟠 [#37](../../issues/37) Real abort for the Ollama path — *child of #3; PR #58 (stacked on #57)*
 
 ## ▶ P2 — Foundations (build the safety net + shared utils before refactoring)
-- [ ] 🟠 [#5](../../issues/5) Streaming Event Parser library — *blocks #23, #6*
-- [ ] 🟠 [#43](../../issues/43) Test `providers/index.js` — *blocks #37*
-- [ ] 🟠 [#44](../../issues/44) Test `websocket.js` chat loop — *blocks #30*
-- [ ] 🟠 [#45](../../issues/45) Test `staffScheduler.js` — *blocks #34, #35*
-- [ ] 🟡 [#24](../../issues/24) Shared `<ModelSelect>` — *blocks #23, #6*
+- [x] 🟠 [#5](../../issues/5) Streaming Event Parser library — *PR #62*
+- [x] 🟠 [#43](../../issues/43) Test `providers/index.js` — *PR #57*
+- [x] 🟠 [#44](../../issues/44) Test `websocket.js` chat loop — *PR #59 (also fixes a tool-round-exhaustion hang)*
+- [x] 🟠 [#45](../../issues/45) Test `staffScheduler.js` — *PR #60*
+- [x] 🟡 [#24](../../issues/24) Shared `<ModelSelect>` — *PR #63*
 - [ ] 🟡 [#4](../../issues/4) Shared Tool Configuration component — *blocks #23, #6*
 - [ ] 🟡 [#31](../../issues/31) Structured logging + `/api/system/metrics` — *feeds #7*
 - [ ] 🟡 [#32](../../issues/32) Versioned schema migrations
@@ -63,7 +63,17 @@ Roadmap board by the **Phase** field.
 - **Tests before the code they guard:** #43 → #37 · #44 → #30 · #45 → #34, #35
 - **Sub-issue rollups:** #7 ← #31, #39, #41 · #3 ← #37 · #48 ← #42
 
+## 🔀 Open PRs (awaiting merge)
+- #56 (#26), #57 (#43), #58 (#37, **stacked on #57**), #59 (#44), #60 (#45), #62 (#5), #63 (#24).
+- Merge order: **#57 → #58**. #56 and #58 both touch `providers/index.js`, so the second to merge needs a small conflict resolution.
+- **P1 — Security & Reliability is fully cleared** once these land.
+
 ## ✅ Recently completed (do not redo)
+- #26 `logSwallowed()` — observable swallowed errors (redaction + rate-limit); 91 call sites across 19 modules.
+- #37 Real Ollama abort — direct `/api/chat` streaming with the real `AbortSignal` (Stop now closes the upstream socket).
+- #43 / #44 / #45 — provider-dispatcher, websocket chat-loop, and staff-scheduler test foundations (the P2 test trio).
+- #5 Shared streaming-event parser (`client/src/lib/streamParser.js`) — deduped six SSE loops; unblocks #23, #6.
+- #24 Shared `<ModelSelect>` (`client/src/components/ui/ModelSelect.jsx`) — single picker source via `modelLabels`; gateway promoted; unblocks #23, #6.
 - scrt4 secret isolation — 0 plaintext secrets at rest (cloud keys via gateway; GitHub/Brave/ngrok via `env:` refs).
 - LiteLLM gateway (Docker) — failover aliases, retries/cooldowns, Postgres spend tracking, per-agent budgets, response caching, master-key auth.
 - scrt4 long-running launch fix (`scripts/spawn-detached.sh`, `run-dev.sh`).

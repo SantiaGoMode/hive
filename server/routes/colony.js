@@ -11,6 +11,7 @@ const { listAllModels } = require('../lib/providers/listModels');
 const { normalizeTriggerConfig } = require('../lib/colonyTriggers');
 const colonyTeams = require('../lib/colonyTeams');
 const db = require('../db');
+const { logSwallowed } = require('../lib/logSwallowed');
 
 // Resolve a colony's seeded agents back to their protocol role keys by matching
 // each agent's persona_role to the role metadata for the colony's recipe. Used
@@ -213,9 +214,9 @@ router.delete('/teams/:tid', (req, res) => {
   if (!team) return res.status(404).json({ error: 'Colony not found' });
   const running = db.prepare("SELECT id FROM colonies WHERE team_id=? AND status='running'").all(team.id);
   for (const r of running) {
-    try { stopColonyRun(r.id); } catch {}
+    try { stopColonyRun(r.id); } catch {} /* abort is best-effort */
     const ac = activeRuns.get(r.id);
-    if (ac) { try { ac.abort(); } catch {} activeRuns.delete(r.id); }
+    if (ac) { try { ac.abort(); } catch {} /* abort is best-effort */ activeRuns.delete(r.id); }
   }
   try {
     colonyTeams.deleteTeam(team.id);
@@ -423,7 +424,7 @@ router.post('/', async (req, res) => {
   let timedOut = false;
   const timeoutHandle = setTimeout(() => {
     timedOut = true;
-    try { ac.abort(); } catch {}
+    try { ac.abort(); } catch {} /* abort is best-effort */
   }, COLONY_MAX_DURATION_MS);
 
   // Subscribe this POST client to the per-colony bus. runColony publishes
@@ -467,7 +468,7 @@ router.post('/', async (req, res) => {
     const finalStatus = isAbort ? 'stopped' : 'error';
     try {
       db.prepare('UPDATE colonies SET status=?, updated_at=unixepoch() WHERE id=?').run(finalStatus, colonyId);
-    } catch {}
+    } catch (e2) { logSwallowed('colonyRoutes:persistStatus', e2, { colonyId }); }
     const message = timedOut
       ? `Colony exceeded wall-clock limit of ${Math.round(COLONY_MAX_DURATION_MS / 60000)} minutes and was aborted`
       : e.message;
@@ -495,7 +496,7 @@ router.post('/:id/stop', (req, res) => {
   const stoppedLive = stopColonyRun(colonyId);
   const ac = activeRuns.get(colonyId);
   if (ac) {
-    try { ac.abort(); } catch {}
+    try { ac.abort(); } catch {} /* abort is best-effort */
     activeRuns.delete(colonyId);
   }
 

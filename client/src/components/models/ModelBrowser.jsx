@@ -8,6 +8,7 @@ import { formatBytes, formatDate } from '../../lib/utils';
 import { toast } from '../../stores/toastStore';
 import { DeleteConfirm } from '../agents/DeleteConfirm';
 import { localModelBudgetGb, recommendedOllamaModels, stretchModelBudgetGb } from '../../lib/ollamaRecommendations';
+import { readSSEStream } from '../../lib/streamParser';
 
 function PullProgress({ name, onDone }) {
   const [progress, setProgress] = useState('');
@@ -26,24 +27,10 @@ function PullProgress({ name, onDone }) {
       body: JSON.stringify({ name }),
       signal: ctrl.signal,
     }).then(async res => {
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = '';
-      while (true) {
-        const { done: d, value } = await reader.read();
-        if (d) break;
-        buf += decoder.decode(value, { stream: true });
-        const lines = buf.split('\n\n');
-        buf = lines.pop();
-        for (const line of lines) {
-          if (!line.startsWith('data:')) continue;
-          try {
-            const data = JSON.parse(line.slice(5));
-            if (data.status) setProgress(data.status);
-            if (data.completed && data.total) setPct(Math.round(data.completed / data.total * 100));
-            if (data.status === 'success' || data.status === 'done') { setDone(true); onDone(); }
-          } catch {}
-        }
+      for await (const data of readSSEStream(res, { signal: ctrl.signal })) {
+        if (data.status) setProgress(data.status);
+        if (data.completed && data.total) setPct(Math.round(data.completed / data.total * 100));
+        if (data.status === 'success' || data.status === 'done') { setDone(true); onDone(); }
       }
     }).catch(() => {});
     return () => ctrl.abort();

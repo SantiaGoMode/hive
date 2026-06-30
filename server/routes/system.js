@@ -22,7 +22,7 @@ router.get('/status', async (req, res) => {
       models = data.models || [];
       ollamaReachable = true;
     }
-  } catch {}
+  } catch {} /* Ollama down is normal — reported as ollama_reachable:false */
 
   res.json({
     memory,

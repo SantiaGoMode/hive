@@ -15,6 +15,7 @@ const { resolveSecret } = require('../secrets');
 const {
   parseModel, splitSystem, toModelMessages, mapUsage,
 } = require('./adapters');
+const { logSwallowed } = require('../logSwallowed');
 
 // app_settings key + env var fallback per cloud provider.
 const KEY_SETTING = { anthropic: 'anthropic_api_key', openai: 'openai_api_key', gemini: 'gemini_api_key' };
@@ -86,7 +87,7 @@ async function ensureAgentGatewayKey(agent) {
     const data = await res.json();
     const key = data && data.key;
     if (key) {
-      try { db.prepare('UPDATE agents SET gateway_key=? WHERE id=?').run(key, agent.id); } catch {}
+      try { db.prepare('UPDATE agents SET gateway_key=? WHERE id=?').run(key, agent.id); } catch (e) { logSwallowed('providers:saveGatewayKey', e, { agentId: agent.id }); }
       agent.gateway_key = key;
       return key;
     }
@@ -264,11 +265,11 @@ async function* streamChat(modelString, { messages, tools, options = {}, signal 
     }
   } finally {
     if (signal && onAbort) {
-      try { signal.removeEventListener('abort', onAbort); } catch {}
+      try { signal.removeEventListener('abort', onAbort); } catch {} /* listener may already be removed */
     }
     // Detach from the abandoned stream; ignore errors from the dangling request.
     if (signal?.aborted) {
-      try { iterator.return?.(); } catch {}
+      try { iterator.return?.(); } catch {} /* aborted stream cleanup is best-effort */
     }
   }
 }

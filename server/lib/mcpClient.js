@@ -14,6 +14,7 @@ const { spawn } = require('child_process');
 const readline   = require('readline');
 const db         = require('../db');
 const { parseEnvRef, resolveSecret } = require('./secrets');
+const { logSwallowed } = require('./logSwallowed');
 
 const MCP_TIMEOUT_MS     = 45_000;   // generous for first-time npx download
 const MCP_PROTOCOL       = '2024-11-05';
@@ -76,7 +77,7 @@ class StdioMcpConnection {
             else resolve(msg.result);
           }
           // Notifications (no id) — ignore for now
-        } catch {}
+        } catch (e) { logSwallowed('mcpClient:parseLine', e, { command: this.command }); }
       });
 
       this.proc.on('error', (spawnErr) => {
@@ -123,7 +124,7 @@ class StdioMcpConnection {
 
   _notify(method, params = {}) {
     const msg = JSON.stringify({ jsonrpc: '2.0', method, params }) + '\n';
-    try { this.proc?.stdin?.write(msg); } catch {}
+    try { this.proc?.stdin?.write(msg); } catch (e) { logSwallowed('mcpClient:notify', e, { command: this.command, method }); }
   }
 
   _call(method, params = {}) {
@@ -159,7 +160,7 @@ class StdioMcpConnection {
   }
 
   disconnect() {
-    try { this.proc?.kill(); } catch {}
+    try { this.proc?.kill(); } catch {} /* teardown: process may already be dead */
     this.proc = null;
     this.connected = false;
     this._stderr = '';
@@ -387,7 +388,7 @@ class McpManager {
       conn.disconnect();
       return { success: true, tool_count: tools.length, tools: tools.map(t => t.name) };
     } catch (err) {
-      try { conn.disconnect(); } catch {}
+      try { conn.disconnect(); } catch {} /* best-effort cleanup after failed test */
       throw err;
     }
   }

@@ -1,8 +1,11 @@
 const path = require('path');
 const os = require('os');
 const staff = require('./staffDirectory');
-const { runAgentOnce } = require('./agentTools');
+// Namespace import (not destructured) so tests can stub runAgentOnce — the one
+// real model call — without invoking a model. Mirrors the `staff` import above.
+const agentTools = require('./agentTools');
 const { getOllamaUrl } = require('./ollamaUrl');
+const { logSwallowed } = require('./logSwallowed');
 
 let intervalHandle = null;
 let running = false;
@@ -43,7 +46,7 @@ function cleanChatOutput(profile, raw) {
 async function generateProfileMessage(profile, triggerType = 'interval', seedContent = '') {
   if (!profile?.chat_model && !profile?.model_preference) return null;
   const { system, messages } = staff.buildStaffChatMessages(profile, triggerType, seedContent);
-  const raw = await runAgentOnce(
+  const raw = await agentTools.runAgentOnce(
     virtualAgentForProfile(profile, system),
     messages,
     getOllamaUrl(),
@@ -129,7 +132,7 @@ async function tick() {
         // Advance the clock even on failure, so one erroring profile (e.g. a
         // transient model timeout) doesn't stay "most overdue" and monopolize
         // the single per-tick slot — which would starve every other staffer.
-        try { require('../db').prepare('UPDATE staff_profiles SET last_chat_at=unixepoch() WHERE id=?').run(profile.id); } catch {}
+        try { require('../db').prepare('UPDATE staff_profiles SET last_chat_at=unixepoch() WHERE id=?').run(profile.id); } catch (e2) { logSwallowed('staffScheduler:advanceLastChat', e2, { profileId: profile.id }); }
         staff.addChatMessage({
           authorType: 'system',
           content: `Could not generate ${profile.display_name}'s scheduled staff message: ${e.message}`,

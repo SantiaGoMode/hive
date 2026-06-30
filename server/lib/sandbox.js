@@ -294,7 +294,7 @@ function getStatus(agentId) {
 
 async function reset(agentId) {
   validateAgentId(agentId);
-  try { execSync(`docker rm -f ${containerName(agentId)}`, { stdio: 'ignore' }); } catch {}
+  try { execSync(`docker rm -f ${containerName(agentId)}`, { stdio: 'ignore' }); } catch {} /* teardown: container may not exist */
   delete _portCache[agentId];
   delete _repoMounts[agentId];
   const dir = path.join(HIVE_DIR, 'agents', safeAgentId(agentId), 'sandbox');

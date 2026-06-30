@@ -2,6 +2,7 @@ const fs   = require('fs');
 const path = require('path');
 const os   = require('os');
 const db   = require('../db');
+const { logSwallowed } = require('./logSwallowed');
 
 const DASH_DIR = process.env.HIVE_HOME || path.join(os.homedir(), '.hive');
 
@@ -127,7 +128,7 @@ function deleteAgent(id) {
   db.prepare('DELETE FROM agents WHERE id = ?').run(id);
   // Only remove workspace if it's inside our own dash directory (don't delete migrated legacy workspaces)
   if (agent?.workspace?.startsWith(DASH_DIR)) {
-    try { fs.rmSync(agent.workspace, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(agent.workspace, { recursive: true, force: true }); } catch (e) { logSwallowed('agentParser:removeWorkspace', e, { agentId: id }); }
   }
 }
 
