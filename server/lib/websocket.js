@@ -11,18 +11,27 @@ const { hasValidAuth, isAllowedOrigin, rejectSocket } = require('./auth');
 
 const MAX_TOOL_ROUNDS = 10;
 
+// Real collaborators, grouped so tests can inject fakes via runChatLoop's `deps`
+// argument without a wider refactor. Production never passes `deps`, so these
+// defaults are used unchanged.
+const DEFAULT_DEPS = {
+  readAgent, getToolDefinitions, executeTool, saveSession, newSessionId,
+  readMemory, readShared, getOllamaUrl, mcpManager, activity,
+  streamChat: (model, opts) => providers.streamChat(model, opts),
+};
+
 // Stream one model round through the provider layer (Ollama or a cloud provider,
 // routed by the model id prefix). Sends {type:'chunk'} events to ws as visible
 // text arrives, and returns { text, toolCalls, doneReason, stats } for the loop.
 // Reasoning ("thinking") deltas are streamed with kind:'thinking' so the UI can
 // surface them separately; they are not part of the saved visible text.
-async function streamRound(ws, messages, model, tools, signal, options = {}) {
+async function streamRound(ws, messages, model, tools, signal, options = {}, streamChat = DEFAULT_DEPS.streamChat) {
   let text = '';
   const toolCalls = [];
   let doneReason = 'stop';
   let stats = null;
 
-  for await (const ev of providers.streamChat(model, { messages, tools, options, signal })) {
+  for await (const ev of streamChat(model, { messages, tools, options, signal })) {
     if (ev.type === 'content') {
       text += ev.delta;
       if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: 'chunk', content: ev.delta }));
@@ -62,7 +71,12 @@ function buildSaveableMessages(clientMessages, assistantText, timestamp = Date.n
   ];
 }
 
-async function runChatLoop(ws, agentId, clientMessages, model, sessionId) {
+async function runChatLoop(ws, agentId, clientMessages, model, sessionId, deps = {}) {
+  const {
+    readAgent, getToolDefinitions, executeTool, saveSession, newSessionId,
+    readMemory, readShared, getOllamaUrl, mcpManager, activity, streamChat,
+  } = { ...DEFAULT_DEPS, ...deps };
+
   const agent = readAgent(agentId);
   const ollamaUrl = getOllamaUrl();
 
@@ -176,9 +190,10 @@ async function runChatLoop(ws, agentId, clientMessages, model, sessionId) {
 
   activity.setActive(agentId);
   try {
+    let completed = false;
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       const { text, toolCalls, doneReason, stats } = await streamRound(
-        ws, messages, model, tools, ctrl.signal, inferenceOptions,
+        ws, messages, model, tools, ctrl.signal, inferenceOptions, streamChat,
       );
 
       const assistantMsg = { role: 'assistant', content: text };
@@ -220,6 +235,7 @@ async function runChatLoop(ws, agentId, clientMessages, model, sessionId) {
             ...(savedSession ? { sessionId: activeSessionId } : {}),
           }));
         }
+        completed = true;
         break;
       }
 
@@ -243,6 +259,15 @@ async function runChatLoop(ws, agentId, clientMessages, model, sessionId) {
 
         messages.push({ role: 'tool', content: JSON.stringify(result), tool_call_id: tc.id, name: toolName });
       }
+    }
+
+    // Exhausted MAX_TOOL_ROUNDS without a final (tool-free) answer. Without this
+    // the client would hang forever waiting on a `done` that never comes.
+    if (!completed && ws.readyState === ws.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: `Stopped after ${MAX_TOOL_ROUNDS} tool-call rounds without a final answer.`,
+      }));
     }
   } catch (err) {
     if (err.name === 'AbortError') {
@@ -307,4 +332,4 @@ function createWebSocketServer(server, authOptions = {}) {
   return wss;
 }
 
-module.exports = { createWebSocketServer, buildSaveableMessages };
+module.exports = { createWebSocketServer, buildSaveableMessages, runChatLoop, streamRound, MAX_TOOL_ROUNDS };
