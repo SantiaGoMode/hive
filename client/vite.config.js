@@ -18,9 +18,42 @@ window.__vite_plugin_react_preamble_installed__ = true;`
   }
 };
 
+function manualChunks(id) {
+  if (!id.includes('node_modules')) return undefined;
+
+  if (id.includes('/node_modules/react/') || id.includes('/node_modules/react-dom/') || id.includes('/node_modules/react-router-dom/')) {
+    return 'vendor-react';
+  }
+
+  if (id.includes('/node_modules/@radix-ui/')) {
+    return 'vendor-radix';
+  }
+
+  if (id.includes('/node_modules/react-markdown/') || id.includes('/node_modules/js-yaml/')) {
+    return 'vendor-content';
+  }
+
+  if (id.includes('/node_modules/lucide-react/')) {
+    return 'vendor-icons';
+  }
+
+  if (id.includes('/node_modules/zustand/') || id.includes('/node_modules/clsx/') || id.includes('/node_modules/tailwind-merge/')) {
+    return 'vendor-utils';
+  }
+
+  return 'vendor';
+}
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [reactRefreshPreamble, react()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks,
+      },
+    },
+  },
   server: {
     port: 5173,
     proxy: {

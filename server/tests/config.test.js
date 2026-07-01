@@ -13,9 +13,11 @@ let saved;
 
 function clearGithubSettings() {
   db.prepare("DELETE FROM app_settings WHERE key IN ('github_token','github_personal_access_token','hive_auth_token')").run();
+  config.invalidateSettingsCache();
 }
 function setSetting(key, value) {
   db.prepare('INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, value);
+  config.invalidateSettingsCache(key);
 }
 
 beforeEach(() => {

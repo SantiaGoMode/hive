@@ -16,6 +16,8 @@ const assert = require('node:assert/strict');
 const http = require('http');
 const db = require('../db');
 const providers = require('../lib/providers');
+const { invalidateSettingsCache } = require('../lib/config');
+const configRouter = require('../routes/config');
 
 const {
   gatewayConfig, keyFor, hasKey, getModel, ensureAgentGatewayKey, streamChat,
@@ -40,9 +42,11 @@ let savedEnv;
 function setSetting(key, value) {
   db.prepare('INSERT INTO app_settings (key, value) VALUES (?, ?) '
     + 'ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, value);
+  invalidateSettingsCache(key);
 }
 function clearSetting(key) {
   db.prepare('DELETE FROM app_settings WHERE key=?').run(key);
+  invalidateSettingsCache(key);
 }
 
 function resetState() {
@@ -92,6 +96,21 @@ describe('gatewayConfig', () => {
     process.env.TEST_SECRET_REF = 'sk-from-ref';
     assert.equal(gatewayConfig().key, 'sk-from-ref');
   });
+
+  it('refreshes when gateway settings are invalidated', () => {
+    setSetting('llm_gateway_url', 'http://first-gw:4000/v1');
+    assert.equal(gatewayConfig().url, 'http://first-gw:4000/v1');
+
+    setSetting('llm_gateway_url', 'http://second-gw:4000/v1');
+    assert.equal(gatewayConfig().url, 'http://second-gw:4000/v1');
+  });
+
+  it('refreshes after config writes gateway settings', () => {
+    assert.deepEqual(gatewayConfig(), { enabled: false, url: '', key: '' });
+    configRouter._test.writeConfig({ llm_gateway_url: 'http://route-gw:4000/v1' });
+
+    assert.equal(gatewayConfig().url, 'http://route-gw:4000/v1');
+  });
 });
 
 // ── keyFor / hasKey ──────────────────────────────────────────────────────────
@@ -116,6 +135,17 @@ describe('keyFor', () => {
     setSetting('gemini_api_key', 'env:TEST_SECRET_REF');
     process.env.TEST_SECRET_REF = 'sk-gemini-ref';
     assert.equal(keyFor('gemini'), 'sk-gemini-ref');
+  });
+
+  it('memoizes DB setting reads until invalidated', () => {
+    setSetting('openai_api_key', 'sk-first-openai');
+    assert.equal(keyFor('openai'), 'sk-first-openai');
+
+    db.prepare('UPDATE app_settings SET value=? WHERE key=?').run('sk-second-openai', 'openai_api_key');
+    assert.equal(keyFor('openai'), 'sk-first-openai');
+
+    invalidateSettingsCache('openai_api_key');
+    assert.equal(keyFor('openai'), 'sk-second-openai');
   });
 });
 

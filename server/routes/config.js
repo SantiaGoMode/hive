@@ -4,6 +4,7 @@ const path = require('path');
 const os = require('os');
 const router = express.Router();
 const db = require('../db');
+const { invalidateSettingsCache } = require('../lib/config');
 const { hasEnvSecret, parseEnvRef } = require('../lib/secrets');
 
 const DASH_DIR = path.join(os.homedir(), '.hive');
@@ -46,6 +47,22 @@ function readConfig() {
 function clearStoredSecrets() {
   const stmt = db.prepare('DELETE FROM app_settings WHERE key = ?');
   for (const key of SECRET_KEYS) stmt.run(key);
+  invalidateSettingsCache();
+  return readConfig();
+}
+
+function writeConfig(body = {}) {
+  const allowed = ['ollama_url', 'theme', 'accent_color', 'font_size', 'ngrok_authtoken', 'ngrok_domain', 'ngrok_enabled', 'webhook_public_url', 'llm_gateway_url', 'hive_allowed_origins', ...SECRET_KEYS];
+  const stmt = db.prepare('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)');
+  let changed = false;
+  for (const key of allowed) {
+    if (body[key] === undefined) continue;
+    // Never persist a masked placeholder back over a real secret.
+    if (SECRET_KEYS.includes(key) && isMasked(body[key])) continue;
+    stmt.run(key, body[key]);
+    changed = true;
+  }
+  if (changed) invalidateSettingsCache();
   return readConfig();
 }
 
@@ -54,15 +71,7 @@ router.get('/', (req, res) => {
 });
 
 router.put('/', (req, res) => {
-  const allowed = ['ollama_url', 'theme', 'accent_color', 'font_size', 'ngrok_authtoken', 'ngrok_domain', 'ngrok_enabled', 'webhook_public_url', 'llm_gateway_url', 'hive_allowed_origins', ...SECRET_KEYS];
-  const stmt = db.prepare('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)');
-  for (const key of allowed) {
-    if (req.body[key] === undefined) continue;
-    // Never persist a masked placeholder back over a real secret.
-    if (SECRET_KEYS.includes(key) && isMasked(req.body[key])) continue;
-    stmt.run(key, req.body[key]);
-  }
-  res.json(readConfig());
+  res.json(writeConfig(req.body));
 });
 
 router.delete('/secrets', (req, res) => {
@@ -79,6 +88,6 @@ router.delete('/shared-blackboard', (req, res) => {
   }
 });
 
-router._test = { readConfig, clearStoredSecrets };
+router._test = { readConfig, clearStoredSecrets, writeConfig };
 
 module.exports = router;

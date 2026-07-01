@@ -34,7 +34,7 @@ Roadmap board by the **Phase** field.
 ## ▶ P3 — Refactors (depend on P2 foundations)
 - [x] 🟠 [#27](../../issues/27) Split `agentTools.js` (2,413 lines) into a tools/ registry — *PR #79*
 - [x] 🟠 [#28](../../issues/28) Split `colonyRunner.js` (1,488 lines) — *PR #82*
-- [ ] 🟠 [#22](../../issues/22) Route-level code-splitting (~716KB bundle)
+- [x] 🟠 [#22](../../issues/22) Route-level code-splitting (~716KB bundle) — *implemented on main*
 - [ ] 🟠 [#23](../../issues/23) Decompose oversized client pages — *PipelinesPage done (PR #86); StaffPage + ColonyPage pending*
 - [x] 🟡 [#29](../../issues/29) Split `routes/colony.js` (775 lines) — *PR #85*
 - [x] 🟡 [#30](../../issues/30) Dedupe chat system-prompt assembly — *PR #84*
@@ -42,8 +42,8 @@ Roadmap board by the **Phase** field.
 - [x] 🟡 [#25](../../issues/25) Client ErrorBoundary around routes — *PR #80*
 - [x] 🟡 [#34](../../issues/34) Staff scheduler backoff + dedupe error posts — *PR #81*
 - [x] 🟡 [#38](../../issues/38) Derive gateway alias list (avoid drift) — *PR #83*
-- [ ] ⚪ [#33](../../issues/33) Memoize `getSetting` / gateway-config reads
-- [ ] ⚪ [#35](../../issues/35) Unify scheduler lifecycle + heartbeat — *after #45*
+- [x] ⚪ [#33](../../issues/33) Memoize `getSetting` / gateway-config reads — *implemented on main*
+- [x] ⚪ [#35](../../issues/35) Unify scheduler lifecycle + heartbeat — *implemented on main*
 
 ## ▶ P4 — Observability & Polish (last)
 - [ ] 🟡 [#7](../../issues/7) Workflow Health Dashboard — *needs #31, #39, #41 (sub-issues)*
@@ -65,7 +65,7 @@ Roadmap board by the **Phase** field.
 
 ## 🔀 Open PRs (awaiting merge)
 - #79 (#27 split agentTools.js). Also open if unmerged: #78 (#32 migrations), #75 (security).
-- **P1 + P2 complete.** P3 started: #27 done → next candidates #28 (split colonyRunner.js), #23/#6 (client refactors), #30, #22.
+- **P1 + P2 complete.** P3 started: #27 done → next candidates #28 (split colonyRunner.js), #23/#6 (client refactors), #30.
 
 ## ✅ Recently completed (do not redo)
 - #26 `logSwallowed()` — observable swallowed errors (redaction + rate-limit); 91 call sites across 19 modules.

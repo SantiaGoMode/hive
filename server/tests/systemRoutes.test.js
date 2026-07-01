@@ -23,6 +23,8 @@ describe('GET /api/system/metrics', () => {
     assert.ok('scheduled_tasks' in b);
     assert.equal(typeof b.staff_scheduler.started, 'boolean');
     assert.equal(typeof b.staff_scheduler.ticking, 'boolean');
+    assert.equal(typeof b.scheduler_lifecycle.staffScheduler.running, 'boolean');
+    assert.equal(typeof b.scheduler_lifecycle.staffScheduler.tick_count, 'number');
     assert.equal(typeof b.ollama.reachable, 'boolean');
     assert.equal(typeof b.ollama.url, 'string');
     assert.equal(typeof b.ollama.loaded_models, 'number');

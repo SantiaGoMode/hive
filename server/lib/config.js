@@ -27,13 +27,32 @@ const { execFileSync } = require('child_process');
 const path = require('path');
 const os = require('os');
 
-function getSetting(key) {
+const settingsCache = new Map();
+const settingsInvalidationListeners = new Set();
+
+function getSetting(key, fallback = '') {
+  if (settingsCache.has(key)) return settingsCache.get(key);
   try {
     const db = require('../db'); // lazy: avoid a load-order dependency on db
-    return db.prepare('SELECT value FROM app_settings WHERE key=?').get(key)?.value || '';
+    const value = db.prepare('SELECT value FROM app_settings WHERE key=?').get(key)?.value ?? fallback;
+    settingsCache.set(key, value);
+    return value;
   } catch {
-    return '';
+    return fallback;
   }
+}
+
+function invalidateSettingsCache(key = null) {
+  if (key) settingsCache.delete(key);
+  else settingsCache.clear();
+  for (const listener of settingsInvalidationListeners) {
+    try { listener(key); } catch { /* cache invalidation listeners are best-effort */ }
+  }
+}
+
+function onSettingsCacheInvalidated(listener) {
+  settingsInvalidationListeners.add(listener);
+  return () => settingsInvalidationListeners.delete(listener);
 }
 
 const num = (value, fallback) => {
@@ -84,4 +103,7 @@ module.exports = {
   mutationRateWindowMs,
   githubToken,
   githubCliToken,
+  getSetting,
+  invalidateSettingsCache,
+  onSettingsCacheInvalidated,
 };

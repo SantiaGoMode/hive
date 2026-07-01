@@ -6,6 +6,7 @@ const staff = require('./staffDirectory');
 const agentTools = require('./agentTools');
 const { getOllamaUrl } = require('./ollamaUrl');
 const { logSwallowed } = require('./logSwallowed');
+const lifecycle = require('./schedulerLifecycle');
 
 let intervalHandle = null;
 let running = false;
@@ -247,26 +248,44 @@ async function tick() {
         }
       }
     }
+  } catch (e) {
+    lifecycle.recordError('staffScheduler', e);
+    throw e;
   } finally {
     running = false;
+    lifecycle.heartbeat('staffScheduler', { event: 'tick', created_count: created.length });
   }
   return created;
 }
 
-function start() {
+function startLoop() {
   if (intervalHandle) return;
   intervalHandle = setInterval(() => { tick().catch(() => {}); }, 60 * 1000);
 }
 
-function stop() {
+function stopLoop() {
   if (intervalHandle) clearInterval(intervalHandle);
   intervalHandle = null;
 }
 
+function start() {
+  return lifecycle.start('staffScheduler');
+}
+
+function stop() {
+  return lifecycle.stop('staffScheduler');
+}
+
 // Lightweight status for /api/system/metrics: whether the interval loop is
 // started and whether a tick is currently in flight.
-function status() {
-  return { started: !!intervalHandle, ticking: running };
+function rawStatus() {
+  return { started: !!intervalHandle, ticking: running, interval_ms: 60 * 1000 };
 }
+
+function status() {
+  return lifecycle.status('staffScheduler');
+}
+
+lifecycle.register('staffScheduler', { start: startLoop, stop: stopLoop, status: rawStatus });
 
 module.exports = { start, stop, tick, status, generateProfileMessage, generateMentionResponses, _resetFailureState, _expireBackoff };

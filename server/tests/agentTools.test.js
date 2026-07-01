@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const db = require('../db');
 const { executeTool, getToolDefinitions } = require('../lib/agentTools');
+const { invalidateSettingsCache } = require('../lib/config');
 const { createColony, deleteColony } = require('../lib/colonyRunner');
 const { buildEnvelope } = require('../lib/webhookProjection');
 
@@ -108,6 +109,7 @@ describe('create_agent model handling', () => {
     process.env.HIVE_TEST_ANTHROPIC_KEY = 'test-anthropic-from-ref';
     db.prepare('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)')
       .run('anthropic_api_key', 'env:HIVE_TEST_ANTHROPIC_KEY');
+    invalidateSettingsCache('anthropic_api_key');
     global.fetch = async () => {
       throw new Error('cloud model validation must not call Ollama tags');
     };
@@ -119,6 +121,7 @@ describe('create_agent model handling', () => {
 
     assert.equal(out.success, true, JSON.stringify(out));
     db.prepare('DELETE FROM app_settings WHERE key=?').run('anthropic_api_key');
+    invalidateSettingsCache('anthropic_api_key');
     delete process.env.HIVE_TEST_ANTHROPIC_KEY;
   });
 
@@ -127,9 +130,11 @@ describe('create_agent model handling', () => {
     process.env.OPENAI_API_KEY = 'env-openai-key';
     db.prepare('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)')
       .run('openai_api_key', 'stored-openai-key');
+    invalidateSettingsCache('openai_api_key');
 
     assert.equal(providers.keyFor('openai'), 'env-openai-key');
     db.prepare('DELETE FROM app_settings WHERE key=?').run('openai_api_key');
+    invalidateSettingsCache('openai_api_key');
   });
 });
 

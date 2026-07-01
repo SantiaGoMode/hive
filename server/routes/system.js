@@ -9,6 +9,7 @@ const { assertCanExposePublicly } = require('../lib/auth');
 const { getRecentLogs } = require('../lib/logger');
 const colonyRunner = require('../lib/colonyRunner');
 const scheduler = require('../lib/scheduler');
+const schedulerLifecycle = require('../lib/schedulerLifecycle');
 const staffScheduler = require('../lib/staffScheduler');
 const providers = require('../lib/providers');
 
@@ -67,6 +68,7 @@ router.get('/metrics', async (req, res) => {
     active_colony_runs: safe(() => colonyRunner.activeRunCount(), null),
     scheduled_tasks: safe(() => scheduler.scheduledCount(), null),
     staff_scheduler: safe(() => staffScheduler.status(), null),
+    scheduler_lifecycle: safe(() => schedulerLifecycle.statuses(), null),
     ollama: { reachable: ollamaReachable, url: getOllamaUrl(), loaded_models: loadedModels },
     gateway: { enabled: !!gw.enabled }, // config only — never expose url/key
     recent_logs: safe(() => getRecentLogs(50), []),

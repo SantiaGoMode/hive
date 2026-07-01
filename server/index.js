@@ -11,7 +11,9 @@ const http = require('http');
 const express = require('express');
 const cors = require('cors');
 const { createWebSocketServer } = require('./lib/websocket');
-const scheduler = require('./lib/scheduler');
+require('./lib/scheduler');
+require('./lib/staffScheduler');
+const schedulerLifecycle = require('./lib/schedulerLifecycle');
 const mcpManager = require('./lib/mcpClient');
 const ngrokService = require('./lib/ngrokService');
 const db = require('./db');
@@ -100,13 +102,12 @@ server.listen(PORT, async () => {
     logger.info('startup', 'reset_orphaned_runs', { count: orphaned.changes });
   }
 
-  scheduler.loadAll();
   try {
     require('./lib/staffDirectory').seedStaffProfiles();
-    require('./lib/staffScheduler').start();
-    logger.info('startup', 'staff_scheduler_done');
+    schedulerLifecycle.startAll(['scheduler', 'staffScheduler']);
+    logger.info('startup', 'scheduler_lifecycle_done', { services: schedulerLifecycle.statuses() });
   } catch (e) {
-    logger.error('startup', 'staff_scheduler_failed', { error: e.message });
+    logger.error('startup', 'scheduler_lifecycle_failed', { error: e.message });
   }
   logger.info('startup', 'scheduler_done');
   try {

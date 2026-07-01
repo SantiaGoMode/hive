@@ -4,6 +4,7 @@ const { readAgent } = require('./agentParser');
 const { runAgentOnce } = require('./agentTools');
 const { getOllamaUrl } = require('./ollamaUrl');
 const { logSwallowed } = require('./logSwallowed');
+const lifecycle = require('./schedulerLifecycle');
 const path = require('path');
 const os = require('os');
 
@@ -18,15 +19,18 @@ function getSettings() {
 }
 
 function runSchedule(schedule) {
+  lifecycle.heartbeat('scheduler', { schedule_id: schedule.id, event: 'run' });
   const agent = readAgent(schedule.agent_id);
   if (!agent) {
     db.prepare('UPDATE scheduled_runs SET last_run=unixepoch(), last_error=? WHERE id=?')
       .run('Agent not found', schedule.id);
+    lifecycle.recordError('scheduler', `Agent not found: ${schedule.agent_id}`);
     return;
   }
   if (!agent.model) {
     db.prepare('UPDATE scheduled_runs SET last_run=unixepoch(), last_error=? WHERE id=?')
       .run('Agent has no model configured', schedule.id);
+    lifecycle.recordError('scheduler', `Agent has no model configured: ${schedule.agent_id}`);
     return;
   }
 
@@ -45,6 +49,7 @@ function runSchedule(schedule) {
       ).run(output, schedule.id);
     })
     .catch((err) => {
+      lifecycle.recordError('scheduler', err);
       db.prepare(
         'UPDATE scheduled_runs SET last_run=unixepoch(), last_error=?, run_count=run_count+1 WHERE id=?',
       ).run(err.message, schedule.id);
@@ -70,10 +75,34 @@ function unregister(id) {
   }
 }
 
+function stopAll() {
+  for (const task of tasks.values()) task.stop();
+  tasks.clear();
+}
+
 function loadAll() {
   const rows = db.prepare('SELECT * FROM scheduled_runs').all();
   for (const row of rows) register(row);
+  lifecycle.heartbeat('scheduler', { event: 'load_all', schedule_count: rows.length, active_task_count: tasks.size });
   console.log(`[scheduler] loaded ${rows.length} schedule(s)`);
 }
 
-module.exports = { loadAll, register, unregister, runSchedule, scheduledCount: () => tasks.size };
+function status() {
+  return lifecycle.status('scheduler');
+}
+
+function rawStatus() {
+  return { active_task_count: tasks.size };
+}
+
+lifecycle.register('scheduler', { start: loadAll, stop: stopAll, status: rawStatus });
+
+module.exports = {
+  loadAll,
+  register,
+  unregister,
+  stopAll,
+  runSchedule,
+  status,
+  scheduledCount: () => tasks.size,
+};

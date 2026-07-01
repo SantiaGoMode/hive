@@ -45,10 +45,33 @@ beforeEach(() => {
   db.prepare('DELETE FROM staff_profiles').run();
   db.prepare('DELETE FROM agents').run();
   db.prepare("DELETE FROM app_settings WHERE key='staff_assigned_agents_backfilled_v1'").run();
+  scheduler.stop();
   // Clear in-memory failure/backoff state so tests don't leak into each other.
   scheduler._resetFailureState();
 });
 afterEach(() => { while (restores.length) restores.pop()(); });
+
+describe('lifecycle status', () => {
+  it('tracks start/stop state and tick heartbeat metadata', async () => {
+    assert.equal(scheduler.status().started, false);
+    const beforeTicks = scheduler.status().tick_count;
+
+    scheduler.start();
+    assert.equal(scheduler.status().started, true);
+    assert.equal(scheduler.status().running, true);
+
+    await scheduler.tick();
+    const afterTick = scheduler.status();
+    assert.equal(afterTick.tick_count, beforeTicks + 1);
+    assert.equal(afterTick.last_meta.event, 'tick');
+    assert.equal(afterTick.last_meta.created_count, 0);
+    assert.match(afterTick.last_tick_at, /^\d{4}-\d{2}-\d{2}T/);
+
+    scheduler.stop();
+    assert.equal(scheduler.status().started, false);
+    assert.equal(scheduler.status().running, false);
+  });
+});
 
 // ── due-selection + single-speaker cap ─────────────────────────────────────────
 

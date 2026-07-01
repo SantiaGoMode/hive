@@ -12,6 +12,7 @@ const { createOllama } = require('ai-sdk-ollama');
 const db = require('../../db');
 const { getOllamaUrl } = require('../ollamaUrl');
 const { resolveSecret } = require('../secrets');
+const { getSetting, onSettingsCacheInvalidated } = require('../config');
 const {
   parseModel, splitSystem, toModelMessages, mapUsage,
 } = require('./adapters');
@@ -22,12 +23,13 @@ const KEY_SETTING = { anthropic: 'anthropic_api_key', openai: 'openai_api_key', 
 const ENV_VAR     = { anthropic: 'ANTHROPIC_API_KEY', openai: 'OPENAI_API_KEY', gemini: 'GEMINI_API_KEY' };
 const LABEL        = { anthropic: 'Anthropic', openai: 'OpenAI', gemini: 'Google Gemini' };
 
-function getSetting(key, fallback = null) {
-  try {
-    const row = db.prepare('SELECT value FROM app_settings WHERE key = ?').get(key);
-    return row ? row.value : fallback;
-  } catch { return fallback; }
+let gatewayConfigCache = null;
+
+function invalidateGatewayConfigCache() {
+  gatewayConfigCache = null;
 }
+
+onSettingsCacheInvalidated(invalidateGatewayConfigCache);
 
 function ollamaBaseUrl() {
   return getOllamaUrl();
@@ -56,10 +58,19 @@ function hasKey(provider) {
 // holds the real provider keys. Hive then only ever holds the revocable,
 // localhost-scoped gateway key (or none). Ollama is local and unaffected.
 function gatewayConfig() {
-  const url = (process.env.LLM_GATEWAY_URL || getSetting('llm_gateway_url') || '').trim();
-  if (!url) return { enabled: false, url: '', key: '' };
-  const key = (process.env.LLM_GATEWAY_KEY || resolveSecret(getSetting('llm_gateway_key')) || '').trim();
-  return { enabled: true, url, key: key || 'sk-hive-gateway' };
+  const envUrl = process.env.LLM_GATEWAY_URL;
+  const envKey = process.env.LLM_GATEWAY_KEY;
+  if (gatewayConfigCache && gatewayConfigCache.envUrl === envUrl && gatewayConfigCache.envKey === envKey) {
+    return gatewayConfigCache.value;
+  }
+  const url = (envUrl || getSetting('llm_gateway_url') || '').trim();
+  if (!url) {
+    gatewayConfigCache = { envUrl, envKey, value: { enabled: false, url: '', key: '' } };
+    return gatewayConfigCache.value;
+  }
+  const key = (envKey || resolveSecret(getSetting('llm_gateway_key')) || '').trim();
+  gatewayConfigCache = { envUrl, envKey, value: { enabled: true, url, key: key || 'sk-hive-gateway' } };
+  return gatewayConfigCache.value;
 }
 
 // Mint (once) and return a per-agent LiteLLM virtual key carrying the agent's
@@ -300,6 +311,7 @@ module.exports = {
   streamChat,
   generateText,
   getSetting,
+  invalidateGatewayConfigCache,
   ollamaBaseUrl,
   KEY_SETTING,
   ENV_VAR,
