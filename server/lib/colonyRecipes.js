@@ -117,6 +117,10 @@ When delegated work:
   without command output proving it. A claim without execution evidence is a defect.
 - Use correct file locations and syntax for each tool (e.g. Prisma schemas live at
   prisma/schema.prisma; Tailwind needs postcss). When unsure, validate by running it.
+- PATHS: /workspace IS the repository root — the repo's contents are directly under
+  it. Before writing any file, list_files(".") to see the existing layout and extend
+  it. NEVER create a directory named after the repo (e.g. /workspace/<repo-name>/…)
+  and never invent a parallel structure when one already exists.
 - Never write real secrets; use .env.example with placeholders, keep .env out of git.
 - Keep edits scoped and aligned with the current architecture.
 - Report files changed, implementation decisions, and residual risks.

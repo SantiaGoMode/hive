@@ -122,6 +122,11 @@ function seedRecipeWorkers(ctx) {
     if (row.repo_path && (colonyModels.CODING_ROLES.has(workerConfig.role_key) || workerConfig.role_key === 'project_manager')) {
       try { sandbox.setAgentRepo(worker.id, row.repo_path, { writable: true }); } catch (e) { logSwallowed('colonyRunner:setAgentRepo', e, { agentId: worker.id }); }
     }
+    // Coding roles need egress for npm/pip installs; the sandbox default is
+    // network=none, so opt them into bridge explicitly.
+    if (colonyModels.CODING_ROLES.has(workerConfig.role_key)) {
+      try { sandbox.setAgentNetwork(worker.id, 'bridge'); } catch (e) { logSwallowed('colonyRunner:setAgentNetwork', e, { agentId: worker.id }); }
+    }
     const roleReasoning = workerConfig.role_key && Object.prototype.hasOwnProperty.call(reasoningDecision.by_role, workerConfig.role_key)
       ? reasoningDecision.by_role[workerConfig.role_key]
       : workerReasoningDefault;

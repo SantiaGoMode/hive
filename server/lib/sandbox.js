@@ -45,10 +45,22 @@ function workspaceMount(agentId) {
   return { dir: sandboxDir(agentId), readOnly: false };
 }
 
+// agentId → network mode override ('bridge'). Set by the colony runner for
+// coding workers, which need egress for npm/pip installs.
+const _networkOpts = {};
+
+function setAgentNetwork(agentId, mode) {
+  validateAgentId(agentId);
+  if (mode === 'bridge') _networkOpts[agentId] = 'bridge';
+  else delete _networkOpts[agentId];
+}
+
 // Sandbox network mode. Default is no network at all — a prompt-injected model
-// must not get free egress. Opt in to bridge networking with
-// HIVE_SANDBOX_NETWORK=bridge or the sandbox_network app setting.
-function sandboxNetwork() {
+// must not get free egress. Coding workers are opted into bridge per-agent by
+// the colony runner; HIVE_SANDBOX_NETWORK=bridge / the sandbox_network app
+// setting opts in globally.
+function sandboxNetwork(agentId = null) {
+  if (agentId && _networkOpts[agentId] === 'bridge') return 'bridge';
   const raw = String(process.env.HIVE_SANDBOX_NETWORK || config.getSetting('sandbox_network') || '').trim().toLowerCase();
   return raw === 'bridge' ? 'bridge' : 'none';
 }
@@ -265,7 +277,7 @@ async function ensureContainer(agentId) {
   // privilege escalation, no network. Port publishing only makes sense when
   // networking is enabled.
   const image   = resolveImage();
-  const network = sandboxNetwork();
+  const network = sandboxNetwork(agentId);
   const portArgs = network === 'none' ? '' : PUBLISHED_PORTS.map(p => `-p 0:${p}`).join(' ');
   execSync([
     'docker run -d',
@@ -341,6 +353,7 @@ async function reset(agentId) {
   try { execSync(`docker rm -f ${containerName(agentId)}`, { stdio: 'ignore' }); } catch {} /* teardown: container may not exist */
   delete _portCache[agentId];
   delete _repoMounts[agentId];
+  delete _networkOpts[agentId];
   const dir = path.join(HIVE_DIR, 'agents', safeAgentId(agentId), 'sandbox');
   if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
 }
@@ -351,12 +364,14 @@ function cleanupContainer(agentId) {
   if (status === 'missing') {
     delete _portCache[agentId];
     delete _repoMounts[agentId];
+    delete _networkOpts[agentId];
     return false;
   }
   try {
     execSync(`docker rm -f ${containerName(agentId)}`, { stdio: 'ignore' });
     delete _portCache[agentId];
     delete _repoMounts[agentId];
+    delete _networkOpts[agentId];
     return true;
   } catch {
     return false;
@@ -374,7 +389,7 @@ function warmImage() {
 module.exports = {
   ensureContainer, exec, execBackground,
   getStatus, reset,
-  setAgentRepo, capabilities, workspaceDir, workspaceMount, sandboxNetwork,
+  setAgentRepo, setAgentNetwork, capabilities, workspaceDir, workspaceMount, sandboxNetwork,
   sandboxDir, hostPort, loadPortMap,
   isDockerAvailable, containerName,
   resolveWorkspacePath, listWorkspaceFiles,

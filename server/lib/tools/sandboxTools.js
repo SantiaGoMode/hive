@@ -76,16 +76,21 @@ module.exports = {
     },
     async handler({ package: pkg, manager = 'pip' }, { callerAgentId }) {
       const sandbox = require('../sandbox');
+      // pipefail is load-bearing: without it the exit code is tail's (always 0)
+      // and a failed install is reported as success.
       const cmd = manager === 'npm'
-        ? `npm install -g ${pkg} 2>&1 | tail -5`
-        : `pip install --quiet ${pkg} 2>&1 | tail -10`;
+        ? `set -o pipefail; npm install -g ${pkg} 2>&1 | tail -5`
+        : `set -o pipefail; pip install --quiet ${pkg} 2>&1 | tail -10`;
       const { stdout, exitCode } = await sandbox.exec(callerAgentId, cmd, 120_000);
       // Provide an unambiguous success/failure flag so the model doesn't mistake
       // pip's "WARNING: Running pip as root" for a failed install and retry endlessly.
       const success = exitCode === 0;
+      const noNetwork = /EAI_AGAIN|ENOTFOUND|Temporary failure in name resolution|ETIMEDOUT/.test(stdout);
       const message = success
         ? `${pkg} installed successfully (exit 0). Do NOT call install_package again for this package.`
-        : `Install failed (exit ${exitCode}).`;
+        : noNetwork
+          ? `Install failed (exit ${exitCode}): the sandbox has no network access. Do NOT retry — report this as a capability blocker.`
+          : `Install failed (exit ${exitCode}).`;
       return { success, message, stdout: stdout.slice(0, 2000), exitCode };
     },
   },
