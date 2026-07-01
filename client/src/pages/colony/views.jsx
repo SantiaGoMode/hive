@@ -181,7 +181,8 @@ function TeamView(page) {
                 <span className="text-xs font-medium text-gray-400">Operator / base model</span>
                 <select value={model} onChange={e => setModel(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500">
                   {Object.entries(groupedModels).map(([prov, list]) => {
-                    const opts = (Array.isArray(list) ? list : []).filter(m => cloudEnabled || (m.provider || prov) === 'ollama');
+                    // tools === false → the model can't drive colony agents; hide it here.
+                    const opts = (Array.isArray(list) ? list : []).filter(m => (cloudEnabled || (m.provider || prov) === 'ollama') && m.tools !== false);
                     if (opts.length === 0) return null;
                     return <optgroup key={prov} label={PROVIDER_LABEL[prov] || prov}>{opts.map(m => <option key={m.id} value={m.id}>{m.name || m.id}</option>)}</optgroup>;
                   })}

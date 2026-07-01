@@ -6,6 +6,7 @@
 
 const { keyFor, ollamaBaseUrl, gatewayConfig } = require('./index');
 const { deriveGatewayAliases } = require('./gatewayAliases');
+const { annotateToolSupport } = require('./ollamaCapabilities');
 
 const TIMEOUT_MS = 6000;
 
@@ -33,7 +34,11 @@ async function fetchJson(url, headers) {
 async function listOllama() {
   try {
     const data = await fetchJson(`${ollamaBaseUrl()}/api/tags`);
-    return (data.models || []).map(m => entry('ollama', m.name, 'live'));
+    const entries = (data.models || []).map(m => entry('ollama', m.name, 'live'));
+    // Annotate tool-calling support (cached probes) so colony planning and the
+    // pickers can exclude models that can't drive agents. `tools` is true,
+    // false, or null (unknown — old Ollama without the capabilities field).
+    return await annotateToolSupport(entries, ollamaBaseUrl());
   } catch {
     return []; // Ollama simply not running; no fallback list to invent.
   }

@@ -45,7 +45,8 @@ export function preferredColonyModel(models) {
 }
 
 // Flatten the provider-grouped model list ({ollama, anthropic, ...}) into a flat
-// array, dropping cloud models when cloud is disabled.
+// array, dropping cloud models when cloud is disabled. Models annotated
+// tools:false can't drive colony agents (no tool calling) and are excluded.
 export function flattenModels(grouped, cloudEnabled) {
   const out = [];
   for (const [prov, list] of Object.entries(grouped || {})) {
@@ -53,6 +54,7 @@ export function flattenModels(grouped, cloudEnabled) {
     for (const m of list) {
       const provider = m.provider || prov;
       if (!cloudEnabled && provider !== 'ollama') continue;
+      if (m.tools === false) continue;
       out.push({ id: m.id, provider, name: m.name || m.id });
     }
   }

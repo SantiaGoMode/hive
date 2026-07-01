@@ -56,13 +56,17 @@ function isCoderModel(entry) {
 }
 
 // Flatten a grouped pool ({ollama:[],anthropic:[],...}) → array of model entries,
-// filtered to local-only when cloud is disabled.
+// filtered to local-only when cloud is disabled. Entries annotated with
+// tools:false (Ollama models without tool-calling, e.g. deepseek-coder-v2) are
+// excluded — every colony agent drives its work through tool calls, so
+// proposing one only sets up a preflight rejection at launch. tools:null
+// (unknown) passes, so an old Ollama never empties the pool.
 function flattenPool(grouped, cloudEnabled) {
   const all = [];
   for (const list of Object.values(grouped || {})) {
     if (Array.isArray(list)) all.push(...list);
   }
-  return all.filter(e => cloudEnabled || (e.provider || parseModel(e.id).provider) === 'ollama');
+  return all.filter(e => (cloudEnabled || (e.provider || parseModel(e.id).provider) === 'ollama') && e.tools !== false);
 }
 
 // Pick the best model id from a list of entries by score (optionally requiring

@@ -479,6 +479,28 @@ describe('colony model planning', () => {
     assert.equal(plan.software_developer, 'qwen2.5-coder:14b');
   });
 
+  it('never proposes a model annotated tools:false, even if it scores highest', () => {
+    const withNonTool = {
+      ollama: [
+        ...pool.ollama,
+        // Bigger + "coder" → would outscore everything locally if eligible.
+        { id: 'deepseek-coder-v2:16b', provider: 'ollama', name: 'deepseek-coder-v2:16b', tools: false },
+      ],
+      anthropic: [], openai: [], gemini: [],
+    };
+    const plan = models.proposeModelPlan(getColonyRecipe('development_team'), withNonTool, { cloudEnabled: false });
+    for (const m of Object.values(plan)) assert.notEqual(m, 'deepseek-coder-v2:16b');
+    assert.equal(plan.software_developer, 'qwen2.5-coder:14b');
+    // validatePlan repairs a hand-picked non-tool model the same way.
+    const repaired = models.validatePlan({ software_developer: 'deepseek-coder-v2:16b' },
+      getColonyRecipe('development_team'), withNonTool, { cloudEnabled: false });
+    assert.notEqual(repaired.software_developer, 'deepseek-coder-v2:16b');
+    // tools:null (unknown capability — old Ollama) stays eligible.
+    const unknownOnly = { ollama: [{ id: 'mystery:7b', provider: 'ollama', name: 'mystery:7b', tools: null }], anthropic: [], openai: [], gemini: [] };
+    const p2 = models.proposeModelPlan(getColonyRecipe('development_team'), unknownOnly, { cloudEnabled: false });
+    assert.equal(p2.operator, 'mystery:7b');
+  });
+
   it('prefers cloud flagships when cloud is enabled', () => {
     const plan = models.proposeModelPlan(getColonyRecipe('development_team'), pool, { cloudEnabled: true });
     assert.equal(plan.operator, 'anthropic/claude-opus-4-6');
