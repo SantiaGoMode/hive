@@ -8,7 +8,11 @@ const protocol = require('../colonyProtocol');
 const { normalizeOllamaUrl } = require('../ollamaUrl');
 const { logSwallowed } = require('../logSwallowed');
 
-const MODEL_ROUND_TIMEOUT_MS = 180_000;
+// Per-model-round timeout. Generous because per-role model plans make Ollama
+// swap large models (8b operator ↔ 14b coders) between turns — the first round
+// after a swap pays the full model load. 180s was observed discarding a
+// worker's completed turn on a 36GB machine.
+const MODEL_ROUND_TIMEOUT_MS = 300_000;
 
 // Resolve the canonical role key for the calling agent inside a colony run.
 // Recipe operators seed a roleByAgentId map in colonyContext; fall back to an

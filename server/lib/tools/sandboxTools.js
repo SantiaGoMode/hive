@@ -11,20 +11,31 @@ module.exports = {
       type: 'function',
       function: {
         name: 'shell',
-        description: 'Run a bash command inside your isolated sandbox container. Working directory is /workspace. Has Python 3, Node.js 20, npm, git, curl pre-installed. Output capped at 8000 chars.',
+        description: 'Run a bash command inside your isolated sandbox container. Working directory is /workspace. Has Python 3, Node.js 20, npm, git, curl pre-installed. Output capped at 8000 chars. Default timeout 60s — pass timeout_seconds (max 600) for commands that legitimately need longer (installs, builds). Commands must be non-interactive (use --yes/--no-input flags).',
         parameters: {
           type: 'object',
           properties: {
             command: { type: 'string', description: 'Bash command to run' },
+            timeout_seconds: { type: 'number', description: 'Kill the command after this many seconds (default 60, max 600). Raise for package installs and builds.' },
           },
           required: ['command'],
         },
       },
     },
-    async handler({ command }, { callerAgentId }) {
+    async handler({ command, timeout_seconds }, { callerAgentId }) {
       const sandbox = require('../sandbox');
-      const { stdout, stderr, exitCode } = await sandbox.exec(callerAgentId, command);
-      return { stdout: stdout.slice(0, 8000), stderr: stderr.slice(0, 2000), exitCode };
+      const secs = Math.min(600, Math.max(5, Number(timeout_seconds) || 60));
+      const { stdout, stderr, exitCode } = await sandbox.exec(callerAgentId, command, secs * 1000);
+      const result = { stdout: stdout.slice(0, 8000), stderr: stderr.slice(0, 2000), exitCode };
+      if (exitCode === 124) {
+        // Turn a bare timeout into a diagnosis the model can act on. The most
+        // common causes: no network (downloads hang forever in a network=none
+        // sandbox), an interactive prompt, or a genuinely long install.
+        result.timeout_hint = sandbox.sandboxNetwork(callerAgentId) === 'none'
+          ? 'TIMED OUT — this sandbox has NO network access. Downloads/installs (npm, pip, npx create-*) can NEVER succeed here and retrying will not help. Hand this work to a coding role (software_developer, qa_engineer, devops_engineer) whose sandbox has network.'
+          : `TIMED OUT after ${secs}s. If the command legitimately needs longer (installs, builds), re-run once with timeout_seconds up to 600. If it may be waiting on an interactive prompt, add non-interactive flags (--yes, --no-input). Do not retry the identical command unchanged.`;
+      }
+      return result;
     },
   },
 

@@ -305,27 +305,40 @@ async function ensureContainer(agentId) {
 async function exec(agentId, cmd, timeoutMs = EXEC_TIMEOUT, options = {}) {
   validateAgentId(agentId);
   await ensureContainer(agentId);
+  const timeoutSecs = Math.max(1, Math.round(timeoutMs / 1000));
   return new Promise((resolve) => {
     let stdout = '', stderr = '';
+    // The timeout must kill the process INSIDE the container — killing the
+    // local `docker exec` client leaves npm/pip running as a zombie in the
+    // container. coreutils `timeout` (present in debian-slim) enforces it
+    // in-container; the JS timer below is only a backstop for a wedged docker
+    // CLI. CI=1 keeps interactive tools (create-next-app etc.) from hanging
+    // on prompts nothing will ever answer.
+    const runArgs = ['timeout', '-k', '5', String(timeoutSecs), 'bash', '-c', cmd];
     // -i only when piping stdin: large payloads (e.g. run_python source) go
     // through stdin instead of the command string, which is capped by ARG_MAX.
     const args = options.input != null
-      ? ['exec', '-i', containerName(agentId), 'bash', '-c', cmd]
-      : ['exec', containerName(agentId), 'bash', '-c', cmd];
+      ? ['exec', '-i', '-e', 'CI=1', containerName(agentId), ...runArgs]
+      : ['exec', '-e', 'CI=1', containerName(agentId), ...runArgs];
     const proc  = spawn('docker', args);
     if (options.input != null) {
       proc.stdin.on('error', () => {}); /* container may exit before the write completes */
       proc.stdin.write(options.input);
       proc.stdin.end();
     }
+    const timedOutMsg = `\n[timed out after ${timeoutSecs}s]`;
     const timer = setTimeout(() => {
       proc.kill();
-      resolve({ stdout, stderr: stderr + '\n[timed out after 60s]', exitCode: 124 });
-    }, timeoutMs);
+      resolve({ stdout, stderr: stderr + timedOutMsg, exitCode: 124 });
+    }, timeoutMs + 10_000); // backstop only; in-container timeout fires first
 
     proc.stdout.on('data', d => { stdout += d; });
     proc.stderr.on('data', d => { stderr += d; });
-    proc.on('close', code => { clearTimeout(timer); resolve({ stdout, stderr, exitCode: code ?? 0 }); });
+    proc.on('close', code => {
+      clearTimeout(timer);
+      if (code === 124) return resolve({ stdout, stderr: stderr + timedOutMsg, exitCode: 124 });
+      resolve({ stdout, stderr, exitCode: code ?? 0 });
+    });
     proc.on('error', err => { clearTimeout(timer); resolve({ stdout: '', stderr: err.message, exitCode: -1 }); });
   });
 }

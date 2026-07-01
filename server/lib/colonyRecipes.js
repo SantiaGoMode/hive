@@ -121,6 +121,9 @@ When delegated work:
   it. Before writing any file, list_files(".") to see the existing layout and extend
   it. NEVER create a directory named after the repo (e.g. /workspace/<repo-name>/…)
   and never invent a parallel structure when one already exists.
+- DEPENDENCY DISCIPLINE: NEVER run "npm audit fix --force" and never downgrade a
+  package to silence an audit warning — report vulnerabilities in your handoff
+  instead. Pin versions deliberately; scope installs to what the work item needs.
 - Never write real secrets; use .env.example with placeholders, keep .env out of git.
 - Keep edits scoped and aligned with the current architecture.
 - Report files changed, implementation decisions, and residual risks.
@@ -166,6 +169,10 @@ Your job is to assess runtime, automation, CI, deployment, and operational conce
 When delegated work:
 - Review scripts, environment assumptions, ports, build/test commands, and deployment risks.
 - Identify observability, failure recovery, and configuration concerns.
+- DEPENDENCY DISCIPLINE: NEVER run "npm audit fix --force" — it up/downgrades major
+  versions and destroys the dependency tree. Do not chase audit vulnerabilities
+  unless the work item explicitly asks; note them in your handoff instead. Never
+  downgrade a package to silence a warning.
 - Keep recommendations practical for a local-first developer tool.
 - End with "DevOps handoff" containing operational checks, risks, and recommended commands.`,
       },
