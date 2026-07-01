@@ -9,7 +9,7 @@ const { getColonyRecipe, DEFAULT_RECIPE_ID } = require('../colonyRecipes');
 const { logSwallowed } = require('../logSwallowed');
 const { getColony } = require('./persistence');
 
-async function updateColonyMemoryAfterRun(colonyId, row, goalSummary, status, addEntry) {
+async function updateColonyMemoryAfterRun(colonyId, row, goalSummary, status, addEntry, verifiedOutcome = null) {
   // Staff memory: every recipe-role profile that crewed this run gets a short
   // dated note (what ran, how it ended) — so the Staff tab's Memory sections
   // accumulate real history without waiting for suggestion applies.
@@ -42,12 +42,16 @@ async function updateColonyMemoryAfterRun(colonyId, row, goalSummary, status, ad
     "You are the Colony Operator maintaining your team's shared memory — durable knowledge that future runs will read.",
     'Distill ONLY what is worth remembering across runs: repo/tooling gotchas, decisions made, recurring failure modes, follow-ups owed.',
     'Do NOT restate the mission or narrate the run. No praise, no filler.',
+    // Memory-poisoning guard: a fabricated summary once put "Draft PR #4
+    // verified by QA/DevOps" into memory and the next run repeated it as fact.
+    'The VERIFIED OUTCOME line is ground truth measured from git. Any claim about PRs, branches, commits, deployments, installed dependencies, or QA sign-off that contradicts or is not backed by it is a model fabrication — never record such a claim as fact (recording "the summary fabricated X" as a failure mode is fine).',
     'Respond with 2–5 plain bullet lines, each starting with "- ", each under 200 characters. Nothing else.',
   ].join(' ');
   const user = [
     `Mission: ${row.goal}`,
     `Run status: ${status}`,
-    goalSummary ? `Outcome summary: ${goalSummary}` : '',
+    verifiedOutcome?.message ? `VERIFIED OUTCOME (ground truth): ${verifiedOutcome.message}` : '',
+    goalSummary ? `Outcome summary (model-written, may contain unverified claims): ${goalSummary}` : '',
     workarounds.length ? `Workarounds reported:\n${workarounds.map(w => `- ${w.issue || ''} → ${w.recommendation || w.workaround || ''}`).join('\n')}` : '',
     blockers.length ? `Open blockers:\n${blockers.map(b => `- ${String(b.content || '').slice(0, 200)}`).join('\n')}` : '',
     `Existing memory (avoid duplicating notes already present):\n${String(team.memory || '(empty)').slice(-3000)}`,

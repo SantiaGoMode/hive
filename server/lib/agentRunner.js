@@ -39,6 +39,11 @@ async function runAgentOnce(targetAgent, userMessages, ollamaUrl, depth, ws = nu
   // callKey → failure count. Small models loop on the same failing call while
   // alternating with others, which slips past the consecutive-repeat check.
   const failedCalls = new Map();
+  // callKey → { json, sameCount } of the last result. Catches "successful"
+  // loops too (e.g. re-reading an empty blackboard through every filter,
+  // dozens of times) while allowing legit repeats whose results change
+  // (e.g. re-running tests after editing files).
+  const resultCache = new Map();
   // Permission circuit-breaker: tools that have already returned a permission/
   // auth error this turn. On the first hit we tell the agent what to do; a second
   // hit on the same tool short-circuits so it can't loop on an unfixable error.
@@ -178,6 +183,13 @@ async function runAgentOnce(targetAgent, userMessages, ollamaUrl, depth, ws = nu
         result = {
           error: `Duplicate call detected: "${toolName}" has been called with identical arguments ${consecutiveRepeats} times in a row. The previous call likely succeeded (check the prior result). Stop retrying this operation and move on to the next task.`,
         };
+      } else if (resultCache.get(callKey)?.sameCount >= 2) {
+        // Non-consecutive loop: this exact call has already returned the exact
+        // same result 3 times this turn. It will not change — refuse.
+        result = {
+          error: `HALTED: "${toolName}" has returned the IDENTICAL result 3 times for these exact arguments this turn. You already have this information — stop gathering and produce your answer or do your role's actual work now.`,
+          halted: true,
+        };
       } else if (failedCalls.get(callKey) >= 2) {
         // The same call already failed twice — identical inputs produce
         // identical failures; refuse instead of burning another round.
@@ -192,6 +204,14 @@ async function runAgentOnce(targetAgent, userMessages, ollamaUrl, depth, ws = nu
         result = await executeTool(toolName, args, targetAgent.id, ollamaUrl, depth + 1, targetAgent.workspace, hivePath, ws, maxRounds, signal, colonyContext);
         const failure = failureText(result);
         if (failure) failedCalls.set(callKey, (failedCalls.get(callKey) || 0) + 1);
+        // Same-result bookkeeping for the identical-result loop breaker.
+        try {
+          const json = JSON.stringify(result);
+          const prev = resultCache.get(callKey);
+          resultCache.set(callKey, prev && prev.json === json
+            ? { json, sameCount: prev.sameCount + 1 }
+            : { json, sameCount: 0 });
+        } catch { /* unserializable result — skip loop bookkeeping */ }
         if (isPermissionError(result)) {
           permissionTools.add(toolName);
           result = { error: permissionGuidance(toolName, failure), permission_required: true, tool: toolName, original_error: failure };

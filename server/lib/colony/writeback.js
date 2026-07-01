@@ -126,12 +126,13 @@ function emitVerifiedOutcome({ colonyId, row, state, colonyBranch, addEntry }) {
       parts.push(`uncommitted changes in working tree: ${facts.uncommitted_files} file(s)`);
       if (facts.branch) parts.push(`repo is on branch "${facts.branch}"`);
     }
-    addEntry({
-      kind: 'outcome',
-      message: `📋 Verified outcome (measured from git, not model claims): ${parts.join(' · ')}. If the summary above contradicts this, trust this.`,
-      facts,
-    });
-  } catch (e) { logSwallowed('colonyRunner:verifiedOutcome', e, { colonyId }); }
+    const message = `📋 Verified outcome (measured from git, not model claims): ${parts.join(' · ')}. If the summary above contradicts this, trust this.`;
+    addEntry({ kind: 'outcome', message, facts });
+    return { message, facts };
+  } catch (e) {
+    logSwallowed('colonyRunner:verifiedOutcome', e, { colonyId });
+    return null;
+  }
 }
 
 // Auto-post the deliverable summary to the linked board work-item so the user

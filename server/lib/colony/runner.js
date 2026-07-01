@@ -356,11 +356,12 @@ async function runColony(colonyId, onEventArg, signal) {
     // from git — not from what the model claims. Models routinely fabricate
     // "Draft PR opened" / "deployed" summaries; this entry is the ground truth
     // shown alongside them.
-    emitVerifiedOutcome({ colonyId, row, state, colonyBranch, addEntry });
+    const verifiedOutcome = emitVerifiedOutcome({ colonyId, row, state, colonyBranch, addEntry });
 
     // Operator memory upkeep — distill lessons from this run into the colony's
-    // shared memory so the next run starts smarter.
-    try { await updateColonyMemoryAfterRun(colonyId, row, state.goalSummary, status, addEntry); } catch (e) { logSwallowed('colonyRunner:memoryUpdate', e, { colonyId }); }
+    // shared memory so the next run starts smarter. Grounded in the verified
+    // outcome so fabricated summaries can't poison durable memory.
+    try { await updateColonyMemoryAfterRun(colonyId, row, state.goalSummary, status, addEntry, verifiedOutcome); } catch (e) { logSwallowed('colonyRunner:memoryUpdate', e, { colonyId }); }
 
     if (status === 'done' && row.board_card) {
       await postBoardComment({ colonyId, row, addEntry, onEvent });
@@ -376,9 +377,10 @@ async function runColony(colonyId, onEventArg, signal) {
       db.prepare("UPDATE colonies SET status='stopped', updated_at=unixepoch() WHERE id=?").run(colonyId);
       // Stopped runs still publish whatever real work landed on the branch.
       try { await performWriteback('stopped'); } catch (e) { logSwallowed('colonyRunner:writeback', e, { colonyId }); }
-      try { emitVerifiedOutcome({ colonyId, row: state.row, state, colonyBranch, addEntry }); } catch (e) { logSwallowed('colonyRunner:verifiedOutcome', e, { colonyId }); }
+      let stoppedOutcome = null;
+      try { stoppedOutcome = emitVerifiedOutcome({ colonyId, row: state.row, state, colonyBranch, addEntry }); } catch (e) { logSwallowed('colonyRunner:verifiedOutcome', e, { colonyId }); }
       // Partial runs often carry the most valuable lessons (what blocked them).
-      try { await updateColonyMemoryAfterRun(colonyId, state.row, state.goalSummary, 'stopped', addEntry); } catch (e) { logSwallowed('colonyRunner:memoryUpdate', e, { colonyId }); }
+      try { await updateColonyMemoryAfterRun(colonyId, state.row, state.goalSummary, 'stopped', addEntry, stoppedOutcome); } catch (e) { logSwallowed('colonyRunner:memoryUpdate', e, { colonyId }); }
       cleanupSandboxContainers();
       addEntry({ kind: 'done', status: 'stopped' });
       flush();

@@ -70,6 +70,13 @@ module.exports = {
             note: `No entries matched your filter (${agent ? `agent="${agent}"` : ''}${agent && entry_type ? ', ' : ''}${entry_type ? `entry_type="${entry_type}"` : ''}) — showing ALL ${all.length} blackboard entries so you have the full shared context.`,
           };
         }
+        // Whole board empty: small models cycle through every entry_type filter
+        // looking for content that doesn't exist, burning their entire turn.
+        return {
+          count: 0,
+          entries: [],
+          note: 'The ENTIRE blackboard is empty — you are likely the first role to act this run. Do NOT read it again with other filters; start your role\'s work now.',
+        };
       }
       return { count: entries.length, entries };
     },
