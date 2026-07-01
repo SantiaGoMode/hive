@@ -37,9 +37,24 @@ function stripWorkspacePrefix(p) {
   return String(p || '').replace(/^\/?(?:workspace\/)+/, '');
 }
 
+// Extract the failure text from a tool result. Built-in tools fail with
+// { error }; MCP tools fail with { result: "[MCP ERROR] ..." } (the manager
+// surfaces isError as a text prefix instead of throwing). Returns '' when the
+// result doesn't look like a failure.
+function failureText(result) {
+  if (!result || typeof result !== 'object') return '';
+  if (typeof result.error === 'string' && result.error) return result.error;
+  if (typeof result.result === 'string' && result.result.startsWith('[MCP ERROR]')) return result.result;
+  return '';
+}
+
 function isPermissionError(result) {
-  if (!result || typeof result !== 'object') return false;
-  const msg = typeof result.error === 'string' ? result.error : '';
+  const msg = failureText(result);
+  // Path-scoping denials (e.g. the Filesystem MCP's "outside allowed
+  // directories") are argument errors — other paths may work fine — so they
+  // must not trip the per-tool permission halt; the per-call failure breaker
+  // covers the retry loop instead.
+  if (/outside allowed director/i.test(msg)) return false;
   return PERMISSION_ERROR_RE.test(msg);
 }
 
@@ -207,7 +222,7 @@ function extractTextToolCalls(content, toolDefinitions) {
 
 module.exports = {
   MODEL_ROUND_TIMEOUT_MS, MAX_SUB_ROUNDS,
-  resolveRoleKey, stripWorkspacePrefix, isPermissionError, permissionGuidance,
+  resolveRoleKey, stripWorkspacePrefix, isPermissionError, permissionGuidance, failureText,
   PERMISSION_ERROR_RE, agentLabel, readProjectContextFiles,
   PROJECT_CONTEXT_FILES, PROJECT_CONTEXT_MAX_CHARS,
   getSharedPath, readShared, writeShared, readMemory,

@@ -5,7 +5,7 @@
 const providers = require('./providers');
 const { logSwallowed } = require('./logSwallowed');
 const {
-  readMemory, extractTextToolCalls, isPermissionError, permissionGuidance,
+  readMemory, extractTextToolCalls, isPermissionError, permissionGuidance, failureText,
   MODEL_ROUND_TIMEOUT_MS, MAX_SUB_ROUNDS,
 } = require('./tools/shared');
 const { getToolDefinitions, executeTool } = require('./tools/registry');
@@ -36,6 +36,9 @@ async function runAgentOnce(targetAgent, userMessages, ollamaUrl, depth, ws = nu
   // because it misreads a WARNING as failure). Break the loop with an error.
   let lastCallKey = null;
   let consecutiveRepeats = 0;
+  // callKey → failure count. Small models loop on the same failing call while
+  // alternating with others, which slips past the consecutive-repeat check.
+  const failedCalls = new Map();
   // Permission circuit-breaker: tools that have already returned a permission/
   // auth error this turn. On the first hit we tell the agent what to do; a second
   // hit on the same tool short-circuits so it can't loop on an unfixable error.
@@ -175,17 +178,25 @@ async function runAgentOnce(targetAgent, userMessages, ollamaUrl, depth, ws = nu
         result = {
           error: `Duplicate call detected: "${toolName}" has been called with identical arguments ${consecutiveRepeats} times in a row. The previous call likely succeeded (check the prior result). Stop retrying this operation and move on to the next task.`,
         };
+      } else if (failedCalls.get(callKey) >= 2) {
+        // The same call already failed twice — identical inputs produce
+        // identical failures; refuse instead of burning another round.
+        result = {
+          error: `HALTED: "${toolName}" already failed ${failedCalls.get(callKey)} times with these exact arguments and was not retried. Retrying will not change the outcome. Use a different approach (different tool, different path/arguments) or report the blocker.`,
+          halted: true,
+        };
       } else if (permissionTools.has(toolName)) {
         // Already failed on permissions once — do not run it again.
         result = { error: `HALTED: "${toolName}" already failed with a permissions/auth error and was not retried. The required access is still not enabled. Report what the user needs to enable and proceed without this tool.`, permission_required: true, halted: true };
       } else {
         result = await executeTool(toolName, args, targetAgent.id, ollamaUrl, depth + 1, targetAgent.workspace, hivePath, ws, maxRounds, signal, colonyContext);
+        const failure = failureText(result);
+        if (failure) failedCalls.set(callKey, (failedCalls.get(callKey) || 0) + 1);
         if (isPermissionError(result)) {
           permissionTools.add(toolName);
-          const original = result.error;
-          result = { error: permissionGuidance(toolName, original), permission_required: true, tool: toolName, original_error: original };
+          result = { error: permissionGuidance(toolName, failure), permission_required: true, tool: toolName, original_error: failure };
           if (ws && ws.readyState === ws.OPEN) {
-            ws.send(JSON.stringify({ type: 'permission_required', subAgent: agentName, name: toolName, message: original }));
+            ws.send(JSON.stringify({ type: 'permission_required', subAgent: agentName, name: toolName, message: failure }));
           }
         }
       }

@@ -220,3 +220,26 @@ describe('project_context protocol tool', () => {
     }
   });
 });
+
+// ── Tool-failure classification (circuit breakers) ───────────────────────────
+describe('failureText / isPermissionError', () => {
+  const { failureText, isPermissionError } = require('../lib/tools/shared');
+
+  it('extracts failures from built-in { error } results', () => {
+    assert.equal(failureText({ error: 'boom' }), 'boom');
+    assert.equal(failureText({ result: 'all good' }), '');
+    assert.equal(failureText(null), '');
+  });
+
+  it('extracts MCP failures surfaced as [MCP ERROR] result strings', () => {
+    const r = { result: '[MCP ERROR] Authentication failed: missing API key' };
+    assert.match(failureText(r), /Authentication failed/);
+    assert.equal(isPermissionError(r), true);
+  });
+
+  it('does not treat path-scoping denials as permission errors (argument error, not credentials)', () => {
+    const r = { result: '[MCP ERROR] Access denied - path outside allowed directories: /x/y' };
+    assert.ok(failureText(r)); // still a failure (per-call breaker counts it)
+    assert.equal(isPermissionError(r), false); // but must not halt the whole tool
+  });
+});
