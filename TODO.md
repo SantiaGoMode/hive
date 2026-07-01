@@ -37,7 +37,7 @@ Roadmap board by the **Phase** field.
 - [ ] 🟠 [#22](../../issues/22) Route-level code-splitting (~716KB bundle)
 - [ ] 🟠 [#23](../../issues/23) Decompose oversized client pages — *after #5, #24, #4*
 - [ ] 🟡 [#29](../../issues/29) Split `routes/colony.js` (775 lines)
-- [ ] 🟡 [#30](../../issues/30) Dedupe chat system-prompt assembly — *after #44*
+- [x] 🟡 [#30](../../issues/30) Dedupe chat system-prompt assembly — *PR #84*
 - [ ] 🟡 [#6](../../issues/6) Pipeline Builder Refactor — *after #4, #5, #24*
 - [x] 🟡 [#25](../../issues/25) Client ErrorBoundary around routes — *PR #80*
 - [x] 🟡 [#34](../../issues/34) Staff scheduler backoff + dedupe error posts — *PR #81*
