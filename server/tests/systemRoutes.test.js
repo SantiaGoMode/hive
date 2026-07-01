@@ -117,7 +117,7 @@ describe('GET /api/system/metrics', () => {
       assert.equal(res.body.gateway.enabled, true);
       assert.equal(res.body.gateway.reachable, true);
       assert.equal(res.body.gateway.message, 'Gateway reachable');
-      assert.ok(seen.some(url => url === 'http://gateway-ok:4000/health'));
+      assert.ok(seen.some(url => url === 'http://gateway-ok:4000/health/readiness'));
       assert.equal(res.body.gateway.url, undefined);
     } finally {
       if (saved.url === undefined) delete process.env.LLM_GATEWAY_URL; else process.env.LLM_GATEWAY_URL = saved.url;

@@ -335,7 +335,6 @@ function AppearanceSection() {
                   active ? '' : 'border-gray-700 text-gray-400 hover:border-gray-600 hover:text-gray-200'
                 }`}
               >
-                <Icon size={12} />
                 {label}
               </button>
             );

@@ -17,7 +17,10 @@ function nowIso() {
 
 function healthUrl(baseUrl) {
   const root = String(baseUrl || '').replace(/\/v1\/?$/, '').replace(/\/+$/, '');
-  return root ? `${root}/health` : '';
+  // /health/readiness answers from the proxy itself in milliseconds. Plain
+  // /health fans out live test calls to every upstream provider and routinely
+  // blows past the probe timeout when auth is valid.
+  return root ? `${root}/health/readiness` : '';
 }
 
 function publicStatus(gw, status = lastStatus) {
