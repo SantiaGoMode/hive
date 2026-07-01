@@ -168,7 +168,10 @@ describe('tick — failure backoff + error dedupe', () => {
     await scheduler.tick();
     const sys = chatRows().filter(r => r.author_type === 'system');
     assert.equal(sys.length, 2, 'a changed error posts a new note');
-    assert.match(sys[1].content, /out of memory/);
+    // Both posts can share the same unixepoch() second, so row order isn't
+    // stable (ordered by created_at, id — id is a random UUID). Assert the new
+    // error appears somewhere rather than at a fixed index.
+    assert.ok(sys.some(r => /out of memory/.test(r.content)), 'the changed error was posted');
   });
 
   it('dedupes identical errors that differ only by port/pid noise', async () => {
