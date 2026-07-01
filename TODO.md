@@ -36,12 +36,12 @@ Roadmap board by the **Phase** field.
 - [x] 🟠 [#28](../../issues/28) Split `colonyRunner.js` (1,488 lines) — *PR #82*
 - [ ] 🟠 [#22](../../issues/22) Route-level code-splitting (~716KB bundle)
 - [ ] 🟠 [#23](../../issues/23) Decompose oversized client pages — *after #5, #24, #4*
-- [ ] 🟡 [#29](../../issues/29) Split `routes/colony.js` (775 lines)
-- [ ] 🟡 [#30](../../issues/30) Dedupe chat system-prompt assembly — *after #44*
+- [x] 🟡 [#29](../../issues/29) Split `routes/colony.js` (775 lines) — *PR #85*
+- [x] 🟡 [#30](../../issues/30) Dedupe chat system-prompt assembly — *PR #84*
 - [ ] 🟡 [#6](../../issues/6) Pipeline Builder Refactor — *after #4, #5, #24*
 - [x] 🟡 [#25](../../issues/25) Client ErrorBoundary around routes — *PR #80*
-- [ ] 🟡 [#34](../../issues/34) Staff scheduler backoff + dedupe error posts — *after #45*
-- [x] 🟡 [#38](../../issues/38) Derive gateway alias list (avoid drift) — *related #24* — *PR #83*
+- [x] 🟡 [#34](../../issues/34) Staff scheduler backoff + dedupe error posts — *PR #81*
+- [x] 🟡 [#38](../../issues/38) Derive gateway alias list (avoid drift) — *PR #83*
 - [ ] ⚪ [#33](../../issues/33) Memoize `getSetting` / gateway-config reads
 - [ ] ⚪ [#35](../../issues/35) Unify scheduler lifecycle + heartbeat — *after #45*
 

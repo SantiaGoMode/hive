@@ -2,6 +2,7 @@ const { WebSocketServer } = require('ws');
 const { readAgent, touchAgent, stripProviderPrefix } = require('./agentParser');
 const { saveSession, newSessionId } = require('./sessionWriter');
 const { getToolDefinitions, executeTool, readMemory, readShared } = require('./agentTools');
+const { buildSystemPrompt } = require('./systemPrompt');
 const mcpManager = require('./mcpClient');
 const activity = require('./activityTracker');
 const providers = require('./providers');
@@ -97,33 +98,19 @@ async function runChatLoop(ws, agentId, clientMessages, model, sessionId, deps =
   // Build tool list based on which tool groups the agent has enabled
   const tools = getToolDefinitions(agent?.tools || []);
 
-  // Build system prompt
-  const agentName  = agent?.name || agentId;
-  const userPrompt = agent?.system_prompt?.trim() || '';
-
-  const identityAnchor =
-    `You are ${agentName}, an AI assistant running in Hive.\n` +
-    `Your name is ${agentName}. You are a Hive assistant.\n` +
-    `If someone says "hello" or asks who you are, introduce yourself as a Hive assistant: ` +
-    `"Hi! I'm ${agentName}, a Hive assistant. How can I help you?"\n` +
-    `Do not identify yourself as any underlying model or company.\n\n` +
-    `FORMATTING: Always use markdown to structure your responses. ` +
-    `Use bullet points or numbered lists for multiple items, bold for key terms, ` +
-    `headers for distinct sections, and code blocks for any code or commands. ` +
-    `Never write long unbroken paragraphs — break ideas into readable chunks.\n\n`;
-
-  // Inject persistent memory and shared blackboard
+  // Build system prompt. The identity + user-prompt + memory scaffold is shared
+  // with the agent tool-loop via buildSystemPrompt('chat'); the shared blackboard
+  // and tool-catalogue sections below are chat-specific and appended here.
   const memory = readMemory(agent?.workspace);
   const shared = readShared(null); // null → uses ~/.hive/shared/SHARED.md
 
-  const memoryBlock = memory
-    ? `\n\n---\n[Your memory from previous sessions]\n${memory}\n---`
-    : '';
+  const identityAndMemory = buildSystemPrompt(agent, { mode: 'chat', agentId, memory });
+
   const sharedBlock = shared
     ? `\n\n---\n[Shared blackboard — notes left by other agents]\n${shared}\n---`
     : '';
 
-  const basePrompt = identityAnchor + (userPrompt || `Be helpful, direct, and concise.`) + memoryBlock + sharedBlock;
+  const basePrompt = identityAndMemory + sharedBlock;
 
   const enabledGroups = agent?.tools || [];
   const toolDescriptions = [];
