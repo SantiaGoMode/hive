@@ -3,6 +3,7 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const { logSwallowed } = require('./lib/logSwallowed');
+const { runMigrations } = require('./lib/migrations');
 
 // Tests set HIVE_DB_PATH to a throwaway file so they can never touch the user's
 // real ~/.hive/hive.db. Without this, a crashed test run could strand state
@@ -239,77 +240,11 @@ db.exec(`
   );
 `);
 
-// ── Schema migrations (additive only) ─────────────────────────────────────────
-// Additive migrations are expected to fail with "duplicate column" once already
-// applied — that's benign. Anything else (disk I/O, malformed SQL, locked DB)
-// is a real problem and must be visible (#26). Versioned migrations are #32.
-const BENIGN_MIGRATION_RE = /duplicate column name|already exists/i;
-function tryExec(sql) {
-  try { db.exec(sql); }
-  catch (e) {
-    if (!BENIGN_MIGRATION_RE.test(String(e.message || ''))) {
-      logSwallowed('db:migration', e, { sql: String(sql).slice(0, 100) });
-    }
-  }
-}
-tryExec("ALTER TABLE mcp_servers ADD COLUMN env_secret_keys TEXT DEFAULT '[]'");
-tryExec("ALTER TABLE scheduled_runs ADD COLUMN tools TEXT DEFAULT '[]'");
-tryExec("ALTER TABLE agents ADD COLUMN persona_name TEXT DEFAULT ''");
-tryExec("ALTER TABLE agents ADD COLUMN persona_role TEXT DEFAULT ''");
-tryExec("ALTER TABLE colonies ADD COLUMN log TEXT DEFAULT '[]'");
-tryExec("ALTER TABLE colonies ADD COLUMN summary TEXT");
-tryExec("ALTER TABLE colonies ADD COLUMN plan TEXT");
-tryExec("ALTER TABLE colonies ADD COLUMN recipe_id TEXT DEFAULT 'development_team'");
-tryExec("ALTER TABLE webhooks ADD COLUMN context_spec TEXT DEFAULT '[]'");
-tryExec("ALTER TABLE webhooks ADD COLUMN actions_config TEXT DEFAULT '[]'");
-tryExec("CREATE INDEX IF NOT EXISTS idx_blackboard_colony ON colony_blackboard(colony_id, id)");
-tryExec("CREATE INDEX IF NOT EXISTS idx_handoffs_colony ON colony_handoffs(colony_id, created_at)");
-// Colony-owned worker/operator agents are ephemeral — they back a colony run and
-// should not surface in the main Agents list. Additive, defaults to 0 (visible).
-tryExec("ALTER TABLE agents ADD COLUMN ephemeral INTEGER DEFAULT 0");
-// Per-agent LLM-gateway budget (USD) + the virtual key minted for it. When a
-// budget is set, Hive mints a LiteLLM key with that max_budget and uses it as
-// the agent's gateway auth key, so the gateway enforces the cap + attributes spend.
-tryExec("ALTER TABLE agents ADD COLUMN gateway_budget_usd REAL");
-tryExec("ALTER TABLE agents ADD COLUMN gateway_key TEXT DEFAULT ''");
-// Structured deliverable assembled from a colony's handoff ledger (JSON).
-tryExec("ALTER TABLE colonies ADD COLUMN deliverable TEXT");
-// Per-colony repo + linked board work-item (replaces relying on one global repo
-// path for every colony). repo_path is a local git path; board_card is the
-// JSON of the source issue/card this colony was launched against.
-tryExec("ALTER TABLE colonies ADD COLUMN repo_path TEXT");
-tryExec("ALTER TABLE colonies ADD COLUMN board_card TEXT");
-// Cloud models opt-in (0 = local Ollama only) + the operator's per-role model
-// plan (JSON role_key → model id). When the operator/user assigns models, each
-// worker is seeded with its own model instead of one model for the whole colony.
-tryExec("ALTER TABLE colonies ADD COLUMN cloud_enabled INTEGER DEFAULT 0");
-tryExec("ALTER TABLE colonies ADD COLUMN model_plan TEXT");
-tryExec("ALTER TABLE colonies ADD COLUMN reasoning_mode TEXT DEFAULT 'auto'");
-// Per-colony webhook trigger routing. trigger_config is user-editable routing
-// state; trigger is immutable provenance for an automatically-started run.
-tryExec("ALTER TABLE colonies ADD COLUMN trigger_config TEXT");
-tryExec("ALTER TABLE colonies ADD COLUMN trigger TEXT");
-tryExec("ALTER TABLE colonies ADD COLUMN bootstrap_tasks TEXT");
-tryExec("ALTER TABLE colonies ADD COLUMN bootstrap_accepted INTEGER DEFAULT 0");
-tryExec("ALTER TABLE colony_handoffs ADD COLUMN history_ref TEXT");
-tryExec("CREATE UNIQUE INDEX IF NOT EXISTS idx_colony_trigger_events_unique ON colony_trigger_events(colony_id, event_id)");
-tryExec("CREATE INDEX IF NOT EXISTS idx_colony_directions_pending ON colony_directions(colony_id, status, id)");
-tryExec("ALTER TABLE colonies ADD COLUMN github_writeback INTEGER DEFAULT 0");
-tryExec("CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_profiles_recipe_role ON staff_profiles(recipe_id, role_key)");
-tryExec("CREATE INDEX IF NOT EXISTS idx_staff_suggestions_profile_status ON staff_operator_suggestions(profile_id, status)");
-tryExec("CREATE INDEX IF NOT EXISTS idx_staff_chat_created ON staff_chat_messages(created_at)");
-// Personality split out of the core system prompt for staff profiles. The
-// system_prompt (when set) overrides the recipe role's base prompt; the
-// personality is appended as its own section.
-tryExec("ALTER TABLE staff_profiles ADD COLUMN system_prompt TEXT NOT NULL DEFAULT ''");
-// Skills are richer than a name + description: they carry working instructions
-// and reusable templates (code, tables, text) injected into assigned staff prompts.
-tryExec("ALTER TABLE skills ADD COLUMN instructions TEXT NOT NULL DEFAULT ''");
-tryExec("ALTER TABLE skills ADD COLUMN templates TEXT NOT NULL DEFAULT '[]'");
-// Link a staff profile to the most recent colony worker agent seeded from it,
-// and let autonomous staff chat use a (typically smaller) dedicated model.
-tryExec("ALTER TABLE staff_profiles ADD COLUMN assigned_agent_id TEXT DEFAULT ''");
-tryExec("ALTER TABLE staff_profiles ADD COLUMN chat_model TEXT DEFAULT ''");
+// ── Schema migrations ─────────────────────────────────────────────────────────
+// Additive schema changes are versioned + recorded in schema_migrations rather
+// than run as bare `ALTER TABLE … catch {}`. See server/lib/migrations.js (#32).
+runMigrations(db);
+
 // One-time seed of a starter skills catalog (demo/testing). Guarded by a flag
 // so user deletions are not re-seeded on the next boot.
 try {
@@ -324,31 +259,12 @@ try {
     db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('skills_seeded_v1', '1')").run();
   }
 } catch (e) { logSwallowed('db:skillsSeed', e); }
-// ── Colony teams ──────────────────────────────────────────────────────────────
-// A "Colony" is now a named, persistent team (e.g. "Hive-TaskMaster") that owns
-// many runs. The legacy `colonies` table rows become *runs* under a team via
-// the new team_id column. Repo/project + base config live on the team; the
-// per-run row keeps execution state (goal, log, plan, deliverable, …).
-db.exec(`
-  CREATE TABLE IF NOT EXISTS colony_teams (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    description TEXT DEFAULT '',
-    recipe_id TEXT DEFAULT 'development_team',
-    repo_path TEXT,
-    cloud_enabled INTEGER DEFAULT 0,
-    github_writeback INTEGER DEFAULT 0,
-    created_at INTEGER DEFAULT (unixepoch()),
-    updated_at INTEGER DEFAULT (unixepoch())
-  );
-`);
-tryExec('ALTER TABLE colonies ADD COLUMN team_id TEXT');
-// Shared colony memory — durable knowledge the operator distills after each
-// run, editable from the colony page, injected into every agent's prompt.
-tryExec("ALTER TABLE colony_teams ADD COLUMN memory TEXT DEFAULT ''");
-tryExec('CREATE INDEX IF NOT EXISTS idx_colonies_team ON colonies(team_id, created_at)');
-// One-time migration: fold all pre-existing runs (no team) into a default
-// "Hive-TaskMaster" team so nothing is orphaned by the colony/run split.
+
+// ── Colony teams data migration ───────────────────────────────────────────────
+// The colony_teams table + colonies.team_id are created by the versioned
+// migrations above (see migrations.js). This one-time DATA migration folds all
+// pre-existing runs (no team) into a default "Hive-TaskMaster" team so nothing
+// is orphaned by the colony/run split.
 try {
   const done = db.prepare("SELECT value FROM app_settings WHERE key='colony_teams_migrated_v1'").get();
   if (!done) {

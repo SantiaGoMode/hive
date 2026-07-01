@@ -25,7 +25,7 @@ Roadmap board by the **Phase** field.
 - [x] 🟡 [#24](../../issues/24) Shared `<ModelSelect>` — *PR #63*
 - [x] 🟡 [#4](../../issues/4) Shared Tool Configuration component — *PR #64*
 - [x] 🟡 [#31](../../issues/31) Structured logging + `/api/system/metrics` — *PR #66; feeds #7*
-- [ ] 🟡 [#32](../../issues/32) Versioned schema migrations
+- [x] 🟡 [#32](../../issues/32) Versioned schema migrations — *PR #78*
 - [x] 🟡 [#36](../../issues/36) Consolidate env/config + `.env.example` — *PR #71*
 - [x] 🟡 [#46](../../issues/46) Tests for untested libs (pipelineRunner, sandbox, …) — *PR #76*
 - [x] 🟡 [#47](../../issues/47) HTTP route tests via supertest — *PR #73*
@@ -64,9 +64,8 @@ Roadmap board by the **Phase** field.
 - **Sub-issue rollups:** #7 ← #31, #39, #41 · #3 ← #37 · #48 ← #42
 
 ## 🔀 Open PRs (awaiting merge)
-- #76 (#46 lib tests). Also: #75 (security: js-yaml + @babel/core advisories).
-- All earlier P1/P2 PRs merged (incl. #47, #48, #36, #31, the shared-client trio). **P1 cleared**; **#23 and #6 unblocked**.
-- **P2 is complete except #32** (versioned schema migrations).
+- #78 (#32 versioned schema migrations). Also: #75 (security: js-yaml + @babel/core advisories).
+- All earlier P1/P2 PRs merged. **P1 and P2 are now complete** → the whole foundations phase is done; **P3 refactors are unblocked** (#23/#6 and the splits).
 
 ## ✅ Recently completed (do not redo)
 - #26 `logSwallowed()` — observable swallowed errors (redaction + rate-limit); 91 call sites across 19 modules.
@@ -80,6 +79,7 @@ Roadmap board by the **Phase** field.
 - #36 Central config surface (`server/lib/config.js`) + `.env.example` — env inventory, typed accessors, canonical `githubToken()` resolver.
 - #47 HTTP route tests (`server/tests/*Routes.test.js` + `helpers/testApp.js`) — supertest coverage for agents/pipelines/skills/schedules/mcp/staff/sandbox/ollama/system (56 tests, externals faked/stubbed).
 - #46 Lib unit tests — githubBoard pure helpers, pipelineRunner (groupSteps/renderStepPrompt/abort), colonyTeams CRUD.
+- #32 Versioned schema migrations (`server/lib/migrations.js` + `schema_migrations` table) — replaced ~40 bare `ALTER … catch {}` with an ordered, idempotent, recorded runner. **Completes P2.**
 - scrt4 secret isolation — 0 plaintext secrets at rest (cloud keys via gateway; GitHub/Brave/ngrok via `env:` refs).
 - LiteLLM gateway (Docker) — failover aliases, retries/cooldowns, Postgres spend tracking, per-agent budgets, response caching, master-key auth.
 - scrt4 long-running launch fix (`scripts/spawn-detached.sh`, `run-dev.sh`).
