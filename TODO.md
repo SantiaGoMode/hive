@@ -27,7 +27,7 @@ Roadmap board by the **Phase** field.
 - [x] 🟡 [#31](../../issues/31) Structured logging + `/api/system/metrics` — *PR #66; feeds #7*
 - [ ] 🟡 [#32](../../issues/32) Versioned schema migrations
 - [x] 🟡 [#36](../../issues/36) Consolidate env/config + `.env.example` — *PR #71*
-- [ ] 🟡 [#46](../../issues/46) Tests for untested libs (pipelineRunner, sandbox, …)
+- [x] 🟡 [#46](../../issues/46) Tests for untested libs (pipelineRunner, sandbox, …) — *PR #76*
 - [x] 🟡 [#47](../../issues/47) HTTP route tests via supertest — *PR #73*
 - [x] 🟡 [#48](../../issues/48) Server eslint + CI workflow — *PR #69; parent of #42*
 
@@ -64,9 +64,9 @@ Roadmap board by the **Phase** field.
 - **Sub-issue rollups:** #7 ← #31, #39, #41 · #3 ← #37 · #48 ← #42
 
 ## 🔀 Open PRs (awaiting merge)
-- #73 (#47 HTTP route tests via supertest).
-- All earlier P1/P2 PRs merged, incl. #48 (CI runs server tests + lint + client build on every push/PR; client lint non-blocking) and #36. **P1 cleared**; shared-client-utils trio (#5/#24/#4) + #31 in `main` → **#23 and #6 unblocked**.
-- **P2 nearly done** — only #32 (schema migrations) and #46 (lib tests) remain.
+- #76 (#46 lib tests). Also: #75 (security: js-yaml + @babel/core advisories).
+- All earlier P1/P2 PRs merged (incl. #47, #48, #36, #31, the shared-client trio). **P1 cleared**; **#23 and #6 unblocked**.
+- **P2 is complete except #32** (versioned schema migrations).
 
 ## ✅ Recently completed (do not redo)
 - #26 `logSwallowed()` — observable swallowed errors (redaction + rate-limit); 91 call sites across 19 modules.
@@ -79,6 +79,7 @@ Roadmap board by the **Phase** field.
 - #48 Server eslint (`eslint.config.js`, `lint:server`) + GitHub Actions CI (`.github/workflows/ci.yml`) — tests/lint/build on push & PR.
 - #36 Central config surface (`server/lib/config.js`) + `.env.example` — env inventory, typed accessors, canonical `githubToken()` resolver.
 - #47 HTTP route tests (`server/tests/*Routes.test.js` + `helpers/testApp.js`) — supertest coverage for agents/pipelines/skills/schedules/mcp/staff/sandbox/ollama/system (56 tests, externals faked/stubbed).
+- #46 Lib unit tests — githubBoard pure helpers, pipelineRunner (groupSteps/renderStepPrompt/abort), colonyTeams CRUD.
 - scrt4 secret isolation — 0 plaintext secrets at rest (cloud keys via gateway; GitHub/Brave/ngrok via `env:` refs).
 - LiteLLM gateway (Docker) — failover aliases, retries/cooldowns, Postgres spend tracking, per-agent budgets, response caching, master-key auth.
 - scrt4 long-running launch fix (`scripts/spawn-detached.sh`, `run-dev.sh`).
