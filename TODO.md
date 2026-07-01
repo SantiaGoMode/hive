@@ -33,7 +33,7 @@ Roadmap board by the **Phase** field.
 
 ## ▶ P3 — Refactors (depend on P2 foundations)
 - [x] 🟠 [#27](../../issues/27) Split `agentTools.js` (2,413 lines) into a tools/ registry — *PR #79*
-- [ ] 🟠 [#28](../../issues/28) Split `colonyRunner.js` (1,488 lines)
+- [x] 🟠 [#28](../../issues/28) Split `colonyRunner.js` (1,488 lines) — *PR #82*
 - [ ] 🟠 [#22](../../issues/22) Route-level code-splitting (~716KB bundle)
 - [ ] 🟠 [#23](../../issues/23) Decompose oversized client pages — *after #5, #24, #4*
 - [ ] 🟡 [#29](../../issues/29) Split `routes/colony.js` (775 lines)
