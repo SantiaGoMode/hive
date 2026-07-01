@@ -1,5 +1,5 @@
-import { useColonyPage } from './colony/useColonyPage';
+import { ColonyPageView } from './colony/views';
 
 export default function ColonyPage() {
-  return useColonyPage();
+  return <ColonyPageView />;
 }

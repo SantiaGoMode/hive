@@ -11,6 +11,21 @@ export function getHiveAuthToken() {
   }
 }
 
+export function setHiveAuthToken(token) {
+  try {
+    if (token) localStorage.setItem(AUTH_STORAGE_KEY, token);
+    else localStorage.removeItem(AUTH_STORAGE_KEY);
+  } catch { /* storage unavailable (private mode) — token stays session-only */ }
+}
+
+// Fired when the server rejects our credentials; the AuthGate listens and
+// prompts for the token.
+export const UNAUTHORIZED_EVENT = 'hive:unauthorized';
+
+function notifyUnauthorized() {
+  try { window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT)); } catch { /* non-browser env */ }
+}
+
 function authHeaders(headers = {}) {
   const token = getHiveAuthToken();
   return token ? { ...headers, 'x-hive-auth-token': token } : headers;
@@ -21,6 +36,7 @@ async function req(method, path, body) {
   if (body) opts.body = JSON.stringify(body);
   const res = await fetch(`${BASE}${path}`, opts);
   if (!res.ok) {
+    if (res.status === 401) notifyUnauthorized();
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error || res.statusText);
   }
@@ -206,7 +222,9 @@ export const api = {
   clearWebhookEvents: (id) => req('DELETE', `/webhooks/${id}/events`),
 };
 
-export const WS_URL = `ws://${location.host}/ws/chat`;
+// Derive ws/wss from the page protocol — a hardcoded ws:// is blocked as
+// mixed content when the app is served over HTTPS (e.g. via ngrok).
+export const WS_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/chat`;
 export function buildWebSocketUrl(agentId) {
   const token = getHiveAuthToken();
   const url = `${WS_URL}/${agentId}`;

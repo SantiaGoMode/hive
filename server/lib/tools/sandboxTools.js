@@ -49,9 +49,9 @@ module.exports = {
       const sandbox = require('../sandbox');
       const safe    = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
       const tmpFile = `/tmp/${safe}`;
-      // Write via base64 to avoid heredoc quoting issues
-      const b64 = Buffer.from(code).toString('base64');
-      await sandbox.exec(callerAgentId, `echo "${b64}" | base64 -d > ${tmpFile}`);
+      // Pipe the source via stdin — embedding it in the command string
+      // (base64 or otherwise) hits ARG_MAX on large payloads.
+      await sandbox.exec(callerAgentId, `cat > ${tmpFile}`, undefined, { input: code });
       const { stdout, stderr, exitCode } = await sandbox.exec(callerAgentId, `python3 ${tmpFile}`);
       return { stdout: stdout.slice(0, 8000), stderr: stderr.slice(0, 2000), exitCode };
     },

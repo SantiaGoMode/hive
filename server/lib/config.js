@@ -16,6 +16,7 @@
 //   HIVE_AUTH_TOKEN               API auth token (else the hive_auth_token setting)
 //   HIVE_MUTATION_RATE_LIMIT      mutating-request cap per window (default 120)
 //   HIVE_MUTATION_RATE_WINDOW_MS  rate window in ms (default 60000)
+//   HIVE_SANDBOX_NETWORK          sandbox container network: none (default) | bridge — read in sandbox.js
 //   LOG_LEVEL                     logger console level: debug|info|warn|error|silent (default info) — read in logger.js
 //   LOG_SWALLOWED                 set to '0' to silence swallowed-error logs — read in logSwallowed.js
 //   LLM_GATEWAY_URL / LLM_GATEWAY_KEY   LiteLLM gateway — resolved in providers/index.js gatewayConfig()
@@ -71,15 +72,26 @@ function mutationRateWindowMs() { return num(process.env.HIVE_MUTATION_RATE_WIND
 // ── GitHub token ────────────────────────────────────────────────────────────────
 // Canonical resolver: stored settings first, then the conventional env var
 // names in order, then the GitHub CLI (`gh auth token`). Returns null if none.
+// `gh auth token` shells out and can stall the event loop; cache the result
+// with a short TTL since CLI tokens change rarely.
+const GH_CLI_TOKEN_TTL = 60_000; // ms
+let _ghCliTokenCache = null; // { at, value }
+
 function githubCliToken() {
+  const now = Date.now();
+  if (_ghCliTokenCache && now - _ghCliTokenCache.at < GH_CLI_TOKEN_TTL) return _ghCliTokenCache.value;
+  let value = '';
   try {
-    return execFileSync('gh', ['auth', 'token'], {
+    value = execFileSync('gh', ['auth', 'token'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 5_000,
     }).trim();
   } catch {
-    return '';
+    value = '';
   }
+  _ghCliTokenCache = { at: now, value };
+  return value;
 }
 
 function githubToken() {

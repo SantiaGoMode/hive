@@ -125,13 +125,14 @@ export function ChatPage() {
         <Button size="sm" variant="ghost" onClick={startNewChat} title="New chat (⌘N)">
           <Plus size={14} /> New Chat
         </Button>
+        {/* group-focus-within keeps the menu reachable by keyboard, not just hover */}
         <div className="relative group">
-          <Button size="icon" variant="ghost" title="Export conversation">
+          <Button size="icon" variant="ghost" title="Export conversation" aria-haspopup="menu">
             <Download size={16} />
           </Button>
-          <div className="absolute right-0 top-full mt-1 hidden group-hover:flex flex-col bg-gray-800 border border-gray-700 rounded-lg shadow-xl overflow-hidden z-20 min-w-[100px]">
-            <button onClick={() => handleExport('md')} className="px-4 py-2 text-sm text-gray-200 hover:bg-gray-700 text-left">Markdown</button>
-            <button onClick={() => handleExport('json')} className="px-4 py-2 text-sm text-gray-200 hover:bg-gray-700 text-left">JSON</button>
+          <div className="absolute right-0 top-full mt-1 hidden group-hover:flex group-focus-within:flex flex-col bg-gray-800 border border-gray-700 rounded-lg shadow-xl overflow-hidden z-20 min-w-[100px]" role="menu">
+            <button role="menuitem" onClick={() => handleExport('md')} className="px-4 py-2 text-sm text-gray-200 hover:bg-gray-700 focus:bg-gray-700 text-left">Markdown</button>
+            <button role="menuitem" onClick={() => handleExport('json')} className="px-4 py-2 text-sm text-gray-200 hover:bg-gray-700 focus:bg-gray-700 text-left">JSON</button>
           </div>
         </div>
         <Button size="icon" variant="ghost" onClick={() => setShowHistory(!showHistory)} title="Session history (⌘H)">

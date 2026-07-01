@@ -118,11 +118,24 @@ function gatewayHeaders(metadata) {
   return Object.keys(clean).length ? { 'x-litellm-spend-logs-metadata': JSON.stringify(clean) } : undefined;
 }
 
+// ai-sdk-ollama never forwards streamText's abortSignal to the underlying
+// ollama client, so an abort would leave the HTTP request running to
+// completion server-side. Injecting the signal at the fetch layer guarantees
+// abort actually tears down the socket.
+function abortableFetch(signal) {
+  return (input, init = {}) => {
+    const merged = init.signal && typeof AbortSignal.any === 'function'
+      ? AbortSignal.any([init.signal, signal])
+      : signal;
+    return fetch(input, { ...init, signal: merged });
+  };
+}
+
 // Build an AI SDK model instance for a parsed model.
 function getModel(provider, modelId, settings = {}) {
-  // metadata + a per-agent gateway key ride alongside model settings but are only
-  // used for the gateway; strip them before passing the rest to the Ollama client.
-  const { metadata, gatewayKey, ...modelSettings } = settings;
+  // metadata, a per-agent gateway key, and the abort signal ride alongside model
+  // settings but aren't model settings; strip them before passing the rest on.
+  const { metadata, gatewayKey, signal, ...modelSettings } = settings;
   // Capability alias ("gateway/hive-smart"): send the bare alias to the gateway
   // so its multi-provider failover pool (retries + fallbacks) applies.
   if (provider === 'gateway') {
@@ -161,7 +174,10 @@ function getModel(provider, modelId, settings = {}) {
     }
     case 'ollama':
     default: {
-      return createOllama({ baseURL: ollamaBaseUrl() })(modelId, modelSettings);
+      return createOllama({
+        baseURL: ollamaBaseUrl(),
+        ...(signal ? { fetch: abortableFetch(signal) } : {}),
+      })(modelId, modelSettings);
     }
   }
 }
@@ -199,7 +215,7 @@ async function* streamChat(modelString, { messages, tools, options = {}, signal 
   if (provider === 'ollama' && options.reasoning != null && supportsOllamaReasoning(modelId)) {
     modelSettings.think = !!options.reasoning;
   }
-  const model = getModel(provider, modelId, { ...modelSettings, metadata: options.metadata, gatewayKey: options.gatewayKey });
+  const model = getModel(provider, modelId, { ...modelSettings, metadata: options.metadata, gatewayKey: options.gatewayKey, signal });
   const { system, rest } = splitSystem(messages || []);
 
   const providerOptions = {};
@@ -222,12 +238,10 @@ async function* streamChat(modelString, { messages, tools, options = {}, signal 
     // Single model round; Hive runs its own tool loop (tools have no execute).
   });
 
-  // ai-sdk-ollama does NOT forward abortSignal to the underlying ollama
-  // client (its doStream calls client.chat without a signal), so an abort
-  // never cancels the in-flight HTTP request — runs become unstoppable while
-  // waiting on a slow/hung model. We can't cancel the socket through the
-  // provider, but we CAN stop consuming and return control immediately:
-  // race every stream read against the abort signal and bail with AbortError.
+  // For Ollama the abort signal is injected at the fetch layer (see
+  // abortableFetch), so aborting closes the actual socket. The read race below
+  // stays as defense in depth: it returns control to the caller immediately
+  // even if a provider swallows the cancellation.
   const abortError = () => {
     const e = new Error('The operation was aborted');
     e.name = 'AbortError';

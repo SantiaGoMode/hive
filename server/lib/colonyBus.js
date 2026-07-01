@@ -46,4 +46,28 @@ function maybeCleanup(colonyId) {
   }
 }
 
-module.exports = { getBus, hasBus, publish, maybeCleanup };
+// Listener-count cleanup relies on every socket emitting 'close'; one that
+// never does leaks the bus forever. Sweep buses whose colony has reached a
+// terminal status — anything still subscribed is tailing a finished run.
+const SWEEP_INTERVAL_MS = 10 * 60 * 1000;
+
+function sweepTerminalBuses() {
+  if (buses.size === 0) return 0;
+  let removed = 0;
+  try {
+    const db = require('../db'); // lazy: avoid a load-order dependency on db
+    for (const colonyId of [...buses.keys()]) {
+      const row = db.prepare('SELECT status FROM colonies WHERE id = ?').get(colonyId);
+      if (!row || row.status !== 'running') {
+        buses.delete(colonyId);
+        removed++;
+      }
+    }
+  } catch { /* db unavailable (tests) — retry next sweep */ }
+  return removed;
+}
+
+const sweepTimer = setInterval(sweepTerminalBuses, SWEEP_INTERVAL_MS);
+sweepTimer.unref?.(); // don't hold the process open for the sweep
+
+module.exports = { getBus, hasBus, publish, maybeCleanup, sweepTerminalBuses };

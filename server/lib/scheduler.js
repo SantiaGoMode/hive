@@ -11,6 +11,10 @@ const os = require('os');
 // Map of schedule id → cron.ScheduledTask
 const tasks = new Map();
 
+// Schedule ids with a run currently in flight. A slow run must not stack with
+// the next cron fire of the same schedule.
+const running = new Set();
+
 function getSettings() {
   return {
     ollamaUrl: getOllamaUrl(),
@@ -19,6 +23,12 @@ function getSettings() {
 }
 
 function runSchedule(schedule) {
+  if (running.has(schedule.id)) {
+    lifecycle.heartbeat('scheduler', { schedule_id: schedule.id, event: 'skip_overlapping_run' });
+    db.prepare('UPDATE scheduled_runs SET last_error=? WHERE id=?')
+      .run('Skipped: previous run still in progress', schedule.id);
+    return;
+  }
   lifecycle.heartbeat('scheduler', { schedule_id: schedule.id, event: 'run' });
   const agent = readAgent(schedule.agent_id);
   if (!agent) {
@@ -42,6 +52,7 @@ function runSchedule(schedule) {
     if (Array.isArray(parsed) && parsed.length > 0) toolsOverride = parsed;
   } catch (e) { logSwallowed('scheduler:parseTools', e, { scheduleId: schedule.id }); }
 
+  running.add(schedule.id);
   runAgentOnce(agent, [{ role: 'user', content: schedule.prompt }], ollamaUrl, 0, null, hivePath, toolsOverride)
     .then((output) => {
       db.prepare(
@@ -53,6 +64,9 @@ function runSchedule(schedule) {
       db.prepare(
         'UPDATE scheduled_runs SET last_run=unixepoch(), last_error=?, run_count=run_count+1 WHERE id=?',
       ).run(err.message, schedule.id);
+    })
+    .finally(() => {
+      running.delete(schedule.id);
     });
 }
 

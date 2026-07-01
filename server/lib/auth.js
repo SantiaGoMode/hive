@@ -1,4 +1,6 @@
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const config = require('./config');
 
 const DEFAULT_LOCAL_ORIGINS = [
@@ -112,9 +114,36 @@ function extractAuthToken(req) {
 
 function hasValidAuth(req, options = {}) {
   const expected = configuredAuthToken(options);
-  if (!expected) return isLocalRequest(req, options);
+  if (!expected) {
+    // No token configured (should only happen if the user cleared it — first
+    // boot generates one). Fall back to loopback-only access, but refuse
+    // state-changing requests that carry no Origin header: those are not
+    // browser requests from the local UI, they're arbitrary local processes.
+    if (MUTATING_METHODS.has(req.method) && !req.headers?.origin) return false;
+    return isLocalRequest(req, options);
+  }
   const actual = extractAuthToken(req);
   return !!actual && timingSafeEqualString(actual, expected);
+}
+
+// First-boot token bootstrap: if no auth token is configured via env or the
+// hive_auth_token setting, generate a random one, persist it, and drop a copy
+// at <HIVE_HOME>/auth_token (0600) so the local user can paste it into the UI.
+// Returns the active token.
+function ensureAuthTokenConfigured() {
+  const existing = config.authToken();
+  if (existing) return existing;
+  const token = crypto.randomBytes(32).toString('base64url');
+  const db = require('../db');
+  db.prepare('INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value')
+    .run('hive_auth_token', token);
+  config.invalidateSettingsCache('hive_auth_token');
+  try {
+    const tokenFile = path.join(config.hiveHome(), 'auth_token');
+    fs.mkdirSync(path.dirname(tokenFile), { recursive: true });
+    fs.writeFileSync(tokenFile, token + '\n', { mode: 0o600 });
+  } catch { /* best-effort convenience copy; the DB row is authoritative */ }
+  return token;
 }
 
 function isIncomingWebhook(req) {
@@ -152,12 +181,29 @@ function requireHiveAuth(options = {}) {
 function createMutatingRateLimiter(options = {}) {
   const limit = options.limit || config.mutationRateLimit();
   const windowMs = options.windowMs || config.mutationRateWindowMs();
+  const maxBuckets = options.maxBuckets || 10_000;
   const buckets = new Map();
+  let lastSweepAt = 0;
+
+  // The map would otherwise grow one entry per distinct IP/token forever (a
+  // real leak behind ngrok). Sweep expired windows at most once per window,
+  // and hard-cap the map by evicting the oldest entries.
+  function sweep(now) {
+    if (now - lastSweepAt < windowMs && buckets.size <= maxBuckets) return;
+    lastSweepAt = now;
+    for (const [key, bucket] of buckets) {
+      if (now > bucket.resetAt) buckets.delete(key);
+    }
+    while (buckets.size > maxBuckets) {
+      buckets.delete(buckets.keys().next().value);
+    }
+  }
 
   return function mutatingRateLimiter(req, res, next) {
     if (!MUTATING_METHODS.has(req.method) || isIncomingWebhook(req)) return next();
 
     const now = Date.now();
+    sweep(now);
     const token = extractAuthToken(req);
     const identity = token ? `token:${crypto.createHash('sha256').update(token).digest('hex')}` : `ip:${getRemoteAddress(req)}`;
     const bucket = buckets.get(identity);
@@ -199,6 +245,7 @@ module.exports = {
   DEFAULT_LOCAL_ORIGINS,
   assertCanExposePublicly,
   configuredAuthToken,
+  ensureAuthTokenConfigured,
   createCorsOptions,
   createMutatingRateLimiter,
   createOriginGuard,
@@ -206,4 +253,5 @@ module.exports = {
   isAllowedOrigin,
   rejectSocket,
   requireHiveAuth,
+  timingSafeEqualString,
 };

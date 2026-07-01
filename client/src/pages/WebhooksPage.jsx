@@ -5,7 +5,9 @@ import { Button } from '../components/ui/Button';
 import { Input, Textarea } from '../components/ui/Input';
 import { Modal } from '../components/ui/Modal';
 import { toast } from '../stores/toastStore';
-import { RunModal } from './PipelinesPage';
+// Import RunModal from its own module — going through the PipelinesPage
+// re-export pulls the whole PipelinesPage graph into this chunk.
+import { RunModal } from '../features/pipelines/RunModal';
 
 function CopyBtn({ text }) {
   const [copied, setCopied] = useState(false);

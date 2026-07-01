@@ -2,6 +2,7 @@ const { execSync, spawn } = require('child_process');
 const path = require('path');
 const os   = require('os');
 const fs   = require('fs');
+const config = require('./config');
 
 const HIVE_DIR     = process.env.HIVE_HOME || path.join(os.homedir(), '.hive');
 const IMAGE        = 'hive-sandbox:latest';
@@ -13,17 +14,18 @@ const PUBLISHED_PORTS = [3000, 5000, 8000, 8080];
 // in-memory port map: agentId → { containerPort: hostPort }
 const _portCache = {};
 
-// agentId → absolute repo path to mount as the agent's /workspace. Set by the
-// colony runner for coding workers so they edit the real project, not an empty
-// scratch dir. When unset, the agent gets its private sandbox dir.
+// agentId → { path, writable } for the repo to mount as the agent's /workspace.
+// Set by the colony runner for coding workers so they edit the real project,
+// not an empty scratch dir. When unset, the agent gets its private sandbox dir.
+// Repo mounts are read-only unless the caller explicitly opts into writes.
 const _repoMounts = {};
 
-function setAgentRepo(agentId, repoPath) {
+function setAgentRepo(agentId, repoPath, options = {}) {
   validateAgentId(agentId);
   if (repoPath && fs.existsSync(repoPath)) {
     const real = fs.realpathSync(repoPath);
     if (!fs.statSync(real).isDirectory()) throw new Error('Sandbox repo path must be an existing directory');
-    _repoMounts[agentId] = real;
+    _repoMounts[agentId] = { path: real, writable: !!options.writable };
   }
   else delete _repoMounts[agentId];
 }
@@ -31,8 +33,24 @@ function setAgentRepo(agentId, repoPath) {
 // What the workspace volume should be for this agent (repo if assigned + exists).
 function workspaceDir(agentId) {
   const repo = _repoMounts[agentId];
-  if (repo && fs.existsSync(repo)) return repo;
+  if (repo && fs.existsSync(repo.path)) return repo.path;
   return sandboxDir(agentId);
+}
+
+function workspaceMount(agentId) {
+  const repo = _repoMounts[agentId];
+  if (repo && fs.existsSync(repo.path)) {
+    return { dir: repo.path, readOnly: !repo.writable };
+  }
+  return { dir: sandboxDir(agentId), readOnly: false };
+}
+
+// Sandbox network mode. Default is no network at all — a prompt-injected model
+// must not get free egress. Opt in to bridge networking with
+// HIVE_SANDBOX_NETWORK=bridge or the sandbox_network app setting.
+function sandboxNetwork() {
+  const raw = String(process.env.HIVE_SANDBOX_NETWORK || config.getSetting('sandbox_network') || '').trim().toLowerCase();
+  return raw === 'bridge' ? 'bridge' : 'none';
 }
 
 // Report sandbox capability so the colony can tell the user up front whether
@@ -147,9 +165,20 @@ function listWorkspaceFiles(agentId, directory = '.', options = {}) {
   return files.sort();
 }
 
+// `docker info` can block for seconds when the daemon is slow, and this runs
+// inside request handlers — cache the probe so the event loop isn't repeatedly
+// frozen on it.
+const DOCKER_PROBE_TTL = 5_000; // ms
+let _dockerProbe = { at: 0, ok: false };
+
 function isDockerAvailable() {
-  try { execSync('docker info', { stdio: 'ignore' }); return true; }
-  catch { return false; }
+  const now = Date.now();
+  if (now - _dockerProbe.at < DOCKER_PROBE_TTL) return _dockerProbe.ok;
+  let ok;
+  try { execSync('docker info', { stdio: 'ignore', timeout: 5_000 }); ok = true; }
+  catch { ok = false; }
+  _dockerProbe = { at: now, ok };
+  return ok;
 }
 
 function containerStatus(agentId) {
@@ -221,47 +250,62 @@ async function ensureContainer(agentId) {
   validateAgentId(agentId);
   if (!isDockerAvailable()) throw new Error('Docker is not available or not running');
   const name   = containerName(agentId);
-  const dir    = workspaceDir(agentId);
+  const mount  = workspaceMount(agentId);
   const status = containerStatus(agentId);
 
-  if (status === 'running') return dir;
+  if (status === 'running') return mount.dir;
 
   if (status === 'exited' || status === 'created') {
     execSync(`docker start ${name}`, { stdio: 'ignore' });
     delete _portCache[agentId]; // re-read ports
-    return dir;
+    return mount.dir;
   }
 
-  // Create a fresh container
+  // Create a fresh container. Locked down by default: no capabilities, no
+  // privilege escalation, no network. Port publishing only makes sense when
+  // networking is enabled.
   const image   = resolveImage();
-  const portArgs = PUBLISHED_PORTS.map(p => `-p 0:${p}`).join(' ');
+  const network = sandboxNetwork();
+  const portArgs = network === 'none' ? '' : PUBLISHED_PORTS.map(p => `-p 0:${p}`).join(' ');
   execSync([
     'docker run -d',
     `--name ${name}`,
     `--label hive-sandbox=true`,
     `--label hive-agent-id=${agentId}`,
-    `-v "${dir}:/workspace"`,
+    `-v "${mount.dir}:/workspace${mount.readOnly ? ':ro' : ''}"`,
     `-w /workspace`,
     portArgs,
     `--memory=512m`,
     `--cpus=1.0`,
-    `--network=bridge`,
+    `--network=${network}`,
     `--pids-limit=200`,
+    `--cap-drop=ALL`,
+    `--security-opt no-new-privileges`,
     image,
-  ].join(' '), { stdio: 'ignore' });
+  ].join(' ').replace(/\s+/g, ' '), { stdio: 'ignore' });
 
   delete _portCache[agentId];
-  return dir;
+  return mount.dir;
 }
 
 // ── Command execution ─────────────────────────────────────────────────────────
 
-async function exec(agentId, cmd, timeoutMs = EXEC_TIMEOUT) {
+async function exec(agentId, cmd, timeoutMs = EXEC_TIMEOUT, options = {}) {
   validateAgentId(agentId);
   await ensureContainer(agentId);
   return new Promise((resolve) => {
     let stdout = '', stderr = '';
-    const proc  = spawn('docker', ['exec', containerName(agentId), 'bash', '-c', cmd]);
+    // -i only when piping stdin: large payloads (e.g. run_python source) go
+    // through stdin instead of the command string, which is capped by ARG_MAX.
+    const args = options.input != null
+      ? ['exec', '-i', containerName(agentId), 'bash', '-c', cmd]
+      : ['exec', containerName(agentId), 'bash', '-c', cmd];
+    const proc  = spawn('docker', args);
+    if (options.input != null) {
+      proc.stdin.on('error', () => {}); /* container may exit before the write completes */
+      proc.stdin.write(options.input);
+      proc.stdin.end();
+    }
     const timer = setTimeout(() => {
       proc.kill();
       resolve({ stdout, stderr: stderr + '\n[timed out after 60s]', exitCode: 124 });
@@ -330,7 +374,7 @@ function warmImage() {
 module.exports = {
   ensureContainer, exec, execBackground,
   getStatus, reset,
-  setAgentRepo, capabilities, workspaceDir,
+  setAgentRepo, capabilities, workspaceDir, workspaceMount, sandboxNetwork,
   sandboxDir, hostPort, loadPortMap,
   isDockerAvailable, containerName,
   resolveWorkspacePath, listWorkspaceFiles,

@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { listAgents, readAgent, writeAgent, deleteAgent } = require('../lib/agentParser');
 const activity = require('../lib/activityTracker');
+const { validateBody, createAgentSchema, updateAgentSchema } = require('../lib/validate');
 
 router.get('/', (req, res) => {
   res.json(listAgents());
@@ -32,18 +33,16 @@ router.get('/:id', (req, res) => {
   res.json(agent);
 });
 
-router.post('/', (req, res) => {
-  const { name, ...rest } = req.body;
-  if (!name) return res.status(400).json({ error: 'name is required' });
+router.post('/', validateBody(createAgentSchema), (req, res) => {
   try {
-    const agent = writeAgent(null, { name, ...rest });
+    const agent = writeAgent(null, req.body);
     res.status(201).json(agent);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-router.put('/:id', (req, res) => {
+router.put('/:id', validateBody(updateAgentSchema), (req, res) => {
   const existing = readAgent(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Agent not found' });
   try {

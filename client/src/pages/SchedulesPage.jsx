@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { api } from '../lib/api';
 import { Clock, Plus, Play, Trash2, ToggleLeft, ToggleRight, Edit2, X, CheckCircle, AlertCircle, Loader2, ChevronDown, ChevronUp, Copy, Check, RotateCcw } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { toast } from '../stores/toastStore';
+import { Modal } from '../components/ui/Modal';
 import { ToolPicker } from '../components/ToolPicker';
 
 function CopyBtn({ text }) {
@@ -113,13 +115,8 @@ function ScheduleEditor({ schedule, agents, onSave, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-      <div className="bg-[#1a1d27] border border-gray-700 rounded-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-700">
-          <h2 className="font-semibold text-gray-100">{schedule ? 'Edit Schedule' : 'New Schedule'}</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-100"><X size={16} /></button>
-        </div>
-        <form onSubmit={handleSubmit} className="p-5 flex flex-col gap-4">
+    <Modal open onClose={onClose} title={schedule ? 'Edit Schedule' : 'New Schedule'}>
+      <form onSubmit={handleSubmit} className="flex flex-col gap-4 max-h-[70vh] overflow-y-auto">
           {/* Label */}
           <div>
             <label className="text-xs text-gray-400 font-medium block mb-1">Label</label>
@@ -223,8 +220,7 @@ function ScheduleEditor({ schedule, agents, onSave, onClose }) {
             </button>
           </div>
         </form>
-      </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -243,6 +239,8 @@ function ScheduleCard({ schedule, agents, onEdit, onDelete, onToggle, onRefresh 
       await api.runScheduleNow(schedule.id);
       // Poll for result after the agent likely finishes
       setTimeout(() => onRefresh(), 3000);
+    } catch (e) {
+      toast.error(`Failed to run schedule: ${e.message}`);
     } finally {
       setRunning(false);
     }
@@ -253,6 +251,8 @@ function ScheduleCard({ schedule, agents, onEdit, onDelete, onToggle, onRefresh 
     try {
       await api.clearScheduleHistory(schedule.id);
       onRefresh();
+    } catch (e) {
+      toast.error(`Failed to clear history: ${e.message}`);
     } finally {
       setClearingHistory(false);
     }
@@ -374,16 +374,13 @@ function ScheduleCard({ schedule, agents, onEdit, onDelete, onToggle, onRefresh 
 // ── Delete confirm ────────────────────────────────────────────────────────────
 function DeleteConfirm({ onConfirm, onCancel }) {
   return (
-    <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-      <div className="bg-[#1a1d27] border border-gray-700 rounded-xl p-6 w-full max-w-sm">
-        <h3 className="font-semibold text-gray-100 mb-2">Delete schedule?</h3>
-        <p className="text-sm text-gray-400 mb-4">This will permanently remove the schedule. No more runs will trigger.</p>
-        <div className="flex gap-2 justify-end">
-          <button onClick={onCancel} className="px-4 py-2 text-sm text-gray-400 hover:text-gray-100 rounded-lg hover:bg-gray-800">Cancel</button>
-          <button onClick={onConfirm} className="px-4 py-2 text-sm bg-red-600 hover:bg-red-500 text-white rounded-lg">Delete</button>
-        </div>
+    <Modal open onClose={onCancel} title="Delete schedule?" size="sm">
+      <p className="text-sm text-gray-400 mb-4">This will permanently remove the schedule. No more runs will trigger.</p>
+      <div className="flex gap-2 justify-end">
+        <button onClick={onCancel} className="px-4 py-2 text-sm text-gray-400 hover:text-gray-100 rounded-lg hover:bg-gray-800">Cancel</button>
+        <button onClick={onConfirm} className="px-4 py-2 text-sm bg-red-600 hover:bg-red-500 text-white rounded-lg">Delete</button>
       </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -412,12 +409,22 @@ export default function SchedulesPage() {
   useEffect(() => { load(); }, [load]);
 
   const handleToggle = async (id) => {
-    await api.toggleSchedule(id);
+    try {
+      await api.toggleSchedule(id);
+    } catch (e) {
+      toast.error(`Failed to toggle schedule: ${e.message}`);
+      return;
+    }
     load();
   };
 
   const handleDelete = async () => {
-    await api.deleteSchedule(deleteId);
+    try {
+      await api.deleteSchedule(deleteId);
+    } catch (e) {
+      toast.error(`Failed to delete schedule: ${e.message}`);
+      return;
+    }
     setDeleteId(null);
     load();
   };

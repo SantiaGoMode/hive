@@ -14,7 +14,6 @@
 // db is passed in (never required here) to avoid a cycle with db.js.
 
 const { logger } = require('./logger');
-const { logSwallowed } = require('./logSwallowed');
 
 function columnExists(db, table, column) {
   return db.prepare(`PRAGMA table_info(${table})`).all().some(c => c.name === column);
@@ -150,9 +149,10 @@ const MIGRATIONS = [
 
 const LATEST_VERSION = MIGRATIONS.reduce((max, m) => Math.max(max, m.version), 0);
 
-// Apply all pending migrations in order. Each runs in its own transaction and is
-// recorded only on success; a failure is logged and left unrecorded so it's
-// retried next boot (the DDL is idempotent) rather than crashing startup.
+// Apply all pending migrations in order. Each runs in its own transaction and
+// is recorded only on success. A failing migration aborts startup — running
+// against a half-migrated schema surfaces as confusing feature-level failures
+// far from the actual cause.
 function runMigrations(db) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -171,12 +171,18 @@ function runMigrations(db) {
       db.transaction(() => { m.up(db); record.run(m.version, m.name); })();
       ran++;
     } catch (e) {
-      logSwallowed('db:migration', e, { version: m.version, name: m.name });
+      logger.error('db', 'migration_failed', { version: m.version, name: m.name, error: e.message });
+      throw new Error(`Database migration ${m.version} (${m.name}) failed: ${e.message}. Refusing to start on a half-migrated schema.`);
     }
   }
 
-  if (ran > 0) logger.info('db', 'migrations_applied', { count: ran, version: currentVersion(db) });
-  return { applied: ran, version: currentVersion(db) };
+  const version = currentVersion(db);
+  if (version < LATEST_VERSION) {
+    throw new Error(`Database schema is at version ${version} but ${LATEST_VERSION} is required. Refusing to start on a half-migrated schema.`);
+  }
+
+  if (ran > 0) logger.info('db', 'migrations_applied', { count: ran, version });
+  return { applied: ran, version };
 }
 
 function currentVersion(db) {

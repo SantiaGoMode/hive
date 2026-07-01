@@ -20,14 +20,25 @@ const db = require('./db');
 const config = require('./lib/config');
 const gatewayHealth = require('./lib/gatewayHealth');
 const { settingSecret } = require('./lib/secrets');
-const { logSwallowed } = require('./lib/logSwallowed');
 const {
   assertCanExposePublicly,
   createCorsOptions,
   createMutatingRateLimiter,
   createOriginGuard,
+  ensureAuthTokenConfigured,
   requireHiveAuth,
 } = require('./lib/auth');
+
+// Auth is token-based even on loopback: any local process can reach the API,
+// so an unauthenticated local mode is not a real boundary. Generate + persist
+// a token on first boot; the UI prompts for it once (copy from Settings env,
+// server log, or ~/.hive/auth_token).
+if (!config.authToken()) {
+  ensureAuthTokenConfigured();
+  logger.info('auth', 'token_generated', {
+    hint: 'A Hive auth token was generated on first boot. Paste the contents of ~/.hive/auth_token into the UI when prompted.',
+  });
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -63,12 +74,11 @@ const PORT = config.port();
 
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
-    logger.warn('server', 'port_in_use', { port: PORT, action: 'killing existing process' });
-    const { execSync } = require('child_process');
-    try {
-      execSync(`lsof -ti tcp:${PORT} | xargs kill -9`);
-    } catch (e) { logSwallowed('server:killPortProcess', e, { port: PORT }); }
-    setTimeout(() => server.listen(PORT), 500);
+    logger.error('server', 'port_in_use', {
+      port: PORT,
+      hint: `Another process is listening on port ${PORT}. Stop it (or set PORT to a free port) and restart Hive.`,
+    });
+    process.exit(1);
   } else {
     throw err;
   }

@@ -25,10 +25,6 @@ function manualChunks(id) {
     return 'vendor-react';
   }
 
-  if (id.includes('/node_modules/@radix-ui/')) {
-    return 'vendor-radix';
-  }
-
   if (id.includes('/node_modules/react-markdown/') || id.includes('/node_modules/js-yaml/')) {
     return 'vendor-content';
   }
@@ -37,7 +33,7 @@ function manualChunks(id) {
     return 'vendor-icons';
   }
 
-  if (id.includes('/node_modules/zustand/') || id.includes('/node_modules/clsx/') || id.includes('/node_modules/tailwind-merge/')) {
+  if (id.includes('/node_modules/zustand/')) {
     return 'vendor-utils';
   }
 

@@ -6,6 +6,8 @@ const { buildEnvelope } = require('../lib/webhookProjection');
 const { serializeActions, triggerWebhookActions } = require('../lib/webhookActions');
 const { processWebhookEvent } = require('../lib/colonyTriggers');
 const { resolveSecret } = require('../lib/secrets');
+const { timingSafeEqualString } = require('../lib/auth');
+const { validateBody, createWebhookSchema, updateWebhookSchema } = require('../lib/validate');
 
 function newId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -27,9 +29,8 @@ router.get('/', (req, res) => {
   res.json(rows);
 });
 
-router.post('/', (req, res) => {
+router.post('/', validateBody(createWebhookSchema), (req, res) => {
   const { name, description = '', secret = '', enabled = 1, context_spec, actions_config } = req.body;
-  if (!name) return res.status(400).json({ error: 'name is required' });
   const id = newId();
   db.prepare('INSERT INTO webhooks (id, name, description, secret, enabled, context_spec, actions_config) VALUES (?, ?, ?, ?, ?, ?, ?)')
     .run(id, name, description, secret, enabled ? 1 : 0, serializeSpec(context_spec), serializeActions(actions_config));
@@ -37,7 +38,7 @@ router.post('/', (req, res) => {
   res.status(201).json(row);
 });
 
-router.put('/:id', (req, res) => {
+router.put('/:id', validateBody(updateWebhookSchema), (req, res) => {
   const { name, description, secret, enabled, context_spec, actions_config } = req.body;
   const existing = db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Webhook not found' });
@@ -141,20 +142,21 @@ router.post('/incoming/:id', (req, res) => {
     // Check GitHub HMAC-SHA256 signature
     const ghSignature = req.headers['x-hub-signature-256'];
     if (ghSignature && req.rawBody) {
-      try {
-        const hmac = crypto.createHmac('sha256', secret);
-        const digest = 'sha256=' + hmac.update(req.rawBody).digest('hex');
-        if (crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(ghSignature))) {
-          isValid = true;
-        }
-      } catch (e) {
-        // ignore crypto errors, isValid remains false
+      const hmac = crypto.createHmac('sha256', secret);
+      const digest = 'sha256=' + hmac.update(req.rawBody).digest('hex');
+      // timingSafeEqualString length-checks first — crypto.timingSafeEqual
+      // throws on attacker-controlled length mismatches.
+      if (timingSafeEqualString(digest, String(ghSignature))) {
+        isValid = true;
       }
     }
-    // Check custom static headers
-    if (!isValid && req.headers['authorization'] === `Bearer ${secret}`) isValid = true;
-    if (!isValid && req.headers['x-api-key'] === secret) isValid = true;
-    if (!isValid && req.query.secret === secret) isValid = true;
+    // Check custom static headers — constant-time, never ===
+    if (!isValid && typeof req.headers['authorization'] === 'string'
+      && timingSafeEqualString(req.headers['authorization'], `Bearer ${secret}`)) isValid = true;
+    if (!isValid && typeof req.headers['x-api-key'] === 'string'
+      && timingSafeEqualString(req.headers['x-api-key'], secret)) isValid = true;
+    if (!isValid && typeof req.query.secret === 'string'
+      && timingSafeEqualString(req.query.secret, secret)) isValid = true;
 
     if (!isValid) {
       return res.status(401).json({ error: 'Invalid or missing signature/secret' });

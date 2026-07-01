@@ -234,13 +234,13 @@ async function runChatLoop(ws, agentId, clientMessages, model, sessionId, deps =
 
         if (ws.readyState === ws.OPEN) {
           const serverName = mcpManager.isMcpTool(toolName) ? mcpManager.getServerName(toolName) : null;
-          ws.send(JSON.stringify({ type: 'tool_call', name: toolName, args: toolArgs, serverName }));
+          ws.send(JSON.stringify({ type: 'tool_call', id: tc.id, name: toolName, args: toolArgs, serverName }));
         }
 
         const result = await executeTool(toolName, toolArgs, agentId, ollamaUrl, 0, agent?.workspace, null, ws);
 
         if (ws.readyState === ws.OPEN) {
-          ws.send(JSON.stringify({ type: 'tool_result', name: toolName, result }));
+          ws.send(JSON.stringify({ type: 'tool_result', id: tc.id, name: toolName, result }));
         }
 
         messages.push({ role: 'tool', content: JSON.stringify(result), tool_call_id: tc.id, name: toolName });

@@ -2,10 +2,16 @@ const ngrok = require('@ngrok/ngrok');
 const { logSwallowed } = require('./logSwallowed');
 
 let currentListener = null;
+let currentOptions = null; // { domain, port } the active listener was started with
 
 async function startTunnel({ authtoken, domain, port = 3001 }) {
   if (currentListener) {
-    return currentListener.url();
+    // Reuse only if the requested options match; otherwise restart so the
+    // caller doesn't silently get a tunnel to the wrong domain/port.
+    if (currentOptions && currentOptions.domain === (domain || null) && currentOptions.port === port) {
+      return currentListener.url();
+    }
+    await stopTunnel();
   }
 
   if (!authtoken) {
@@ -15,11 +21,13 @@ async function startTunnel({ authtoken, domain, port = 3001 }) {
   try {
     const opts = { addr: port, authtoken };
     if (domain) opts.domain = domain;
-    
+
     currentListener = await ngrok.forward(opts);
+    currentOptions = { domain: domain || null, port };
     return currentListener.url();
   } catch (error) {
     currentListener = null;
+    currentOptions = null;
     throw new Error(`Failed to start ngrok: ${error.message}`);
   }
 }
@@ -33,6 +41,7 @@ async function stopTunnel() {
       await ngrok.disconnect();
     } catch (e) { logSwallowed('ngrok:disconnect', e); }
     currentListener = null;
+    currentOptions = null;
   }
 }
 

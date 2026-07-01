@@ -1,5 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-
+/* Inter is self-hosted via @fontsource/inter, imported in main.jsx. */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

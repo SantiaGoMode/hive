@@ -1,7 +1,39 @@
 const db = require('../db');
 const { createColony, runColony } = require('./colonyRunner');
+const { logger } = require('./logger');
 
 const DEFAULT_COMMENT_TOKEN = '@hive';
+
+// A webhook redelivery storm must not spin up unbounded concurrent colonies —
+// each one spawns containers, git operations, and paid model calls. Triggered
+// runs go through a small semaphore + bounded queue instead of fire-and-forget.
+const MAX_CONCURRENT_TRIGGERED_RUNS = Number(process.env.HIVE_MAX_TRIGGERED_COLONY_RUNS) || 2;
+const MAX_QUEUED_TRIGGERED_RUNS = 50;
+let activeTriggeredRuns = 0;
+const queuedTriggeredRuns = [];
+
+function drainTriggeredRuns() {
+  while (activeTriggeredRuns < MAX_CONCURRENT_TRIGGERED_RUNS && queuedTriggeredRuns.length) {
+    const colonyId = queuedTriggeredRuns.shift();
+    activeTriggeredRuns += 1;
+    runColony(colonyId, null)
+      .catch(err => logger.error('colonyTriggers', 'triggered_run_failed', { colonyId, error: err?.message || String(err) }))
+      .finally(() => {
+        activeTriggeredRuns -= 1;
+        drainTriggeredRuns();
+      });
+  }
+}
+
+function enqueueTriggeredRun(colonyId) {
+  if (queuedTriggeredRuns.length >= MAX_QUEUED_TRIGGERED_RUNS) {
+    logger.error('colonyTriggers', 'triggered_run_dropped', { colonyId, reason: 'queue_full', queued: queuedTriggeredRuns.length });
+    return false;
+  }
+  queuedTriggeredRuns.push(colonyId);
+  setImmediate(drainTriggeredRuns);
+  return true;
+}
 
 function parseJson(value, fallback = null) {
   if (!value) return fallback;
@@ -184,9 +216,7 @@ function processWebhookEvent(event, opts = {}) {
     triggered.push({ source_colony_id: row.id, colony_id: triggeredColonyId, trigger });
 
     if (startRun) {
-      setImmediate(() => {
-        runColony(triggeredColonyId, null).catch(() => {});
-      });
+      enqueueTriggeredRun(triggeredColonyId);
     }
   }
 

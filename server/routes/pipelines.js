@@ -5,6 +5,7 @@ const { readAgent } = require('../lib/agentParser');
 const { runAgentOnce } = require('../lib/agentTools');
 const { abortError, isAbortError, runPipelineById } = require('../lib/pipelineRunner');
 const { getOllamaUrl } = require('../lib/ollamaUrl');
+const { validateBody, createPipelineSchema, updatePipelineSchema } = require('../lib/validate');
 
 function newId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -23,9 +24,8 @@ router.get('/:id', (req, res) => {
   res.json({ ...row, steps: JSON.parse(row.steps) });
 });
 
-router.post('/', (req, res) => {
+router.post('/', validateBody(createPipelineSchema), (req, res) => {
   const { name, description = '', steps = [] } = req.body;
-  if (!name) return res.status(400).json({ error: 'name is required' });
   const id = newId();
   db.prepare('INSERT INTO pipelines (id, name, description, steps) VALUES (?, ?, ?, ?)')
     .run(id, name, description, JSON.stringify(steps));
@@ -33,7 +33,7 @@ router.post('/', (req, res) => {
   res.status(201).json({ ...row, steps: JSON.parse(row.steps) });
 });
 
-router.put('/:id', (req, res) => {
+router.put('/:id', validateBody(updatePipelineSchema), (req, res) => {
   const { name, description, steps } = req.body;
   const existing = db.prepare('SELECT * FROM pipelines WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Pipeline not found' });

@@ -117,9 +117,10 @@ function seedRecipeWorkers(ctx) {
     }
     // Coding roles get the colony's repo mounted as their sandbox workspace
     // so they edit the real project. The PM gets it too — it maintains
-    // CHANGELOG/release notes and persists artifacts under docs/.
+    // CHANGELOG/release notes and persists artifacts under docs/. Both need
+    // writes, so opt in explicitly; every other mount stays read-only.
     if (row.repo_path && (colonyModels.CODING_ROLES.has(workerConfig.role_key) || workerConfig.role_key === 'project_manager')) {
-      try { sandbox.setAgentRepo(worker.id, row.repo_path); } catch (e) { logSwallowed('colonyRunner:setAgentRepo', e, { agentId: worker.id }); }
+      try { sandbox.setAgentRepo(worker.id, row.repo_path, { writable: true }); } catch (e) { logSwallowed('colonyRunner:setAgentRepo', e, { agentId: worker.id }); }
     }
     const roleReasoning = workerConfig.role_key && Object.prototype.hasOwnProperty.call(reasoningDecision.by_role, workerConfig.role_key)
       ? reasoningDecision.by_role[workerConfig.role_key]

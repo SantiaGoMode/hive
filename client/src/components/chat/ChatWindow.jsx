@@ -5,6 +5,7 @@ import { useWebSocket } from '../../hooks/useWebSocket';
 import { Button } from '../ui/Button';
 import { AgentAvatar } from '../agents/AgentAvatar';
 import { cn, formatDate } from '../../lib/utils';
+import { chatSendState } from '../../lib/frontendRegression';
 import { toast } from '../../stores/toastStore';
 
 // ── Copy button ───────────────────────────────────────────────────────────────
@@ -263,7 +264,7 @@ export function ChatWindow({ agent, initialMessages, initialSessionId, onSession
   const bottomRef  = useRef(null);
   const inputRef   = useRef(null);
   const fileInputRef = useRef(null);
-  const { connect, disconnect } = useWebSocket(agent.id);
+  const { connect, disconnect, wsRef } = useWebSocket(agent.id);
 
   // Reset when agent changes or new chat triggered externally
   useEffect(() => {
@@ -327,7 +328,7 @@ export function ChatWindow({ agent, initialMessages, initialSessionId, onSession
   }, [addFiles]);
 
   const handleSend = useCallback(() => {
-    if ((!input.trim() && !attachments.length) || phase !== 'idle') return;
+    if (!chatSendState({ input, attachments, agent, isActive: phase !== 'idle' }).canSend) return;
 
     const content = buildMessageContent(input.trim(), attachments);
     // For display: always show text. For images show a placeholder.
@@ -353,23 +354,41 @@ export function ChatWindow({ agent, initialMessages, initialSessionId, onSession
 
     const ws = connect();
 
-    ws.onopen = () => {
-      // Build wire-format messages: use actual content (may be array for multimodal)
-      // for the last user message, plain strings for history.
-      const wireMessages = [
-        ...history.slice(0, -1).map(m => ({ role: m.role, content: m.content })),
-        { role: 'user', content },
-      ];
-      ws.send(JSON.stringify({
-        type: 'chat',
-        model: agent.model,
-        messages: wireMessages,
-        sessionId: sessionId || undefined,
-      }));
+    // Build wire-format messages: use actual content (may be array for multimodal)
+    // for the last user message, plain strings for history.
+    const wireMessages = [
+      ...history.slice(0, -1).map(m => ({ role: m.role, content: m.content })),
+      { role: 'user', content },
+    ];
+    const startFrame = JSON.stringify({
+      type: 'chat',
+      model: agent.model,
+      messages: wireMessages,
+      sessionId: sessionId || undefined,
+    });
+    // connect() may return an already-open socket; onopen won't fire then.
+    if (ws.readyState === WebSocket.OPEN) ws.send(startFrame);
+    else ws.onopen = () => ws.send(startFrame);
+
+    // Set when the stream reaches a terminal frame (done/stopped/error) so an
+    // onclose after normal completion doesn't double-finalize.
+    let finished = false;
+    const finalize = () => {
+      finished = true;
+      const finalText = [priorText, currentText].filter(Boolean).join('\n\n');
+      commitStreamingText(finalText, currentTools);
+      setPhase('idle');
+      disconnect();
     };
 
     ws.onmessage = (e) => {
-      const data = JSON.parse(e.data);
+      let data;
+      try {
+        data = JSON.parse(e.data);
+      } catch {
+        // One malformed frame must not wedge the stream state machine.
+        return;
+      }
 
       if (data.type === 'chunk') {
         currentText += data.content;
@@ -392,17 +411,23 @@ export function ChatWindow({ agent, initialMessages, initialSessionId, onSession
         setPhase('tools');
 
       } else if (data.type === 'tool_call') {
-        const entry = { name: data.name, args: data.args, result: null, status: 'pending', serverName: data.serverName ?? null };
+        const entry = { id: data.id ?? null, name: data.name, args: data.args, result: null, status: 'pending', serverName: data.serverName ?? null };
         currentTools = [...liveToolsRef.current, entry];
         setLiveTools(currentTools);
         liveToolsRef.current = currentTools;
 
       } else if (data.type === 'tool_result') {
-        currentTools = liveToolsRef.current.map(t =>
-          t.name === data.name && t.status === 'pending' && !t.subAgent
-            ? { ...t, result: data.result, status: data.result?.error ? 'error' : 'done' }
-            : t
-        );
+        // Match by call id — two parallel calls to the same tool must not both
+        // receive the first result. Fall back to the first pending name match
+        // for frames without an id.
+        let matched = false;
+        currentTools = liveToolsRef.current.map(t => {
+          if (matched || t.status !== 'pending' || t.subAgent) return t;
+          const isMatch = data.id != null ? t.id === data.id : t.name === data.name;
+          if (!isMatch) return t;
+          matched = true;
+          return { ...t, result: data.result, status: data.result?.error ? 'error' : 'done' };
+        });
         setLiveTools(currentTools);
         liveToolsRef.current = currentTools;
 
@@ -431,6 +456,7 @@ export function ChatWindow({ agent, initialMessages, initialSessionId, onSession
 
       } else if (data.type === 'done') {
         setOllamaDown(false);
+        finished = true;
         // Combine prior-round text with final-round text into one commit
         const finalText = [priorText, currentText].filter(Boolean).join('\n\n');
         commitStreamingText(finalText, currentTools, data.truncated);
@@ -442,10 +468,7 @@ export function ChatWindow({ agent, initialMessages, initialSessionId, onSession
         disconnect();
 
       } else if (data.type === 'stopped') {
-        const finalText = [priorText, currentText].filter(Boolean).join('\n\n');
-        commitStreamingText(finalText, currentTools);
-        setPhase('idle');
-        disconnect();
+        finalize();
 
       } else if (data.type === 'error') {
         const msg = data.message || '';
@@ -453,27 +476,31 @@ export function ChatWindow({ agent, initialMessages, initialSessionId, onSession
           setOllamaDown(true);
         }
         toast.error(msg || 'Error during generation');
-        const finalText = [priorText, currentText].filter(Boolean).join('\n\n');
-        commitStreamingText(finalText, currentTools);
-        setPhase('idle');
-        disconnect();
+        finalize();
       }
     };
 
     ws.onerror = () => {
       setOllamaDown(true);
       toast.error('Connection failed — is Ollama running?');
-      const finalText = [priorText, currentText].filter(Boolean).join('\n\n');
-      commitStreamingText(finalText, currentTools);
-      setPhase('idle');
-      disconnect();
+      finalize();
+    };
+
+    // A drop without a terminal frame (server restart, network blip) must not
+    // leave the input disabled in a stuck 'streaming' phase.
+    ws.onclose = () => {
+      if (finished) return;
+      toast.error('Connection to Hive closed unexpectedly');
+      finalize();
     };
   }, [input, attachments, messages, phase, agent, sessionId, connect, disconnect, commitStreamingText, onSessionSaved]);
 
   const handleStop = useCallback(() => {
-    const ws = connect();
-    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'stop' }));
-  }, [connect]);
+    // Use the live socket ref — opening a fresh connection here could never
+    // carry the stop to the in-flight run.
+    const ws = wsRef.current;
+    if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'stop' }));
+  }, [wsRef]);
 
   // Escape stops generation
   useEffect(() => {
@@ -618,7 +645,7 @@ export function ChatWindow({ agent, initialMessages, initialSessionId, onSession
               <Square size={16} />
             </Button>
           ) : (
-            <Button size="icon" onClick={handleSend} disabled={(!input.trim() && !attachments.length) || !agent.model} title="Send (Enter)">
+            <Button size="icon" onClick={handleSend} disabled={!chatSendState({ input, attachments, agent, isActive }).canSend} title="Send (Enter)">
               <Send size={16} />
             </Button>
           )}

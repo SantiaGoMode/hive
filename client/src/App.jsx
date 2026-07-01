@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { Layout } from './components/ui/Layout';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { Toaster } from './components/ui/Toast';
+import { AuthGate } from './components/ui/AuthGate';
 import { useThemeStore } from './stores/themeStore';
 
 const lazyNamed = (loader, exportName) => lazy(() => (
@@ -55,6 +56,7 @@ export default function App() {
         </ErrorBoundary>
       </Layout>
       <Toaster />
+      <AuthGate />
     </BrowserRouter>
   );
 }
