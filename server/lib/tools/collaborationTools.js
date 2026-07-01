@@ -33,23 +33,36 @@ module.exports = {
 
       let target = readAgent(agent_id);
       let resolvedId = agent_id;
-      // The orchestrator sometimes passes the agent's display name instead of its ID.
-      // If the direct lookup fails and we're in a colony, search colony members by name.
+      // Small models routinely mangle ids or pass a name/role instead. If the
+      // direct lookup fails inside a colony, resolve against the roster by name,
+      // persona role, or role key — and on a true miss, return the roster so the
+      // model can self-correct next round instead of guessing again.
+      let roster = [];
       if (!target && colonyContext?.colonyId) {
         try {
           const row = db.prepare('SELECT agent_ids FROM colonies WHERE id=?').get(colonyContext.colonyId);
           const ids = JSON.parse(row?.agent_ids || '[]');
+          const wanted = String(agent_id).trim().toLowerCase();
           for (const id of ids) {
             const candidate = readAgent(id);
-            if (candidate?.name === agent_id) {
+            if (!candidate) continue;
+            const roleKey = colonyContext.roleByAgentId?.get?.(id) || null;
+            roster.push({ agent_id: id, name: candidate.name, role: roleKey || candidate.persona_role || '' });
+            const names = [candidate.name, candidate.persona_role, roleKey]
+              .filter(Boolean).map(v => String(v).trim().toLowerCase());
+            if (!target && names.includes(wanted)) {
               target = candidate;
               resolvedId = id;
-              break;
             }
           }
         } catch (e) { logSwallowed('agentTools:resolveAgentByName', e, { colonyId: colonyContext.colonyId }); }
       }
-      if (!target) return { error: `Agent "${agent_id}" not found. Pass the agent_id returned by create_agent, not the agent name.` };
+      if (!target) {
+        return {
+          error: `Agent "${agent_id}" not found. Use one of these exact agent_ids:`,
+          ...(roster.length ? { colony_agents: roster } : {}),
+        };
+      }
       if (!target.model) return { error: `Agent "${resolvedId}" has no model configured` };
 
       // In a colony run, maintain a persistent conversation thread per worker so

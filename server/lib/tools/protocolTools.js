@@ -81,7 +81,7 @@ module.exports = {
       type: 'function',
       function: {
         name: 'blackboard_write',
-        description: 'Append an entry to the colony Blackboard so other agents can see your state. APPENDS — it never overwrites prior notes. Use entry_type "blocker" to flag something that stops progress, "state" for completed work or shared facts.',
+        description: 'Append an entry to the colony Blackboard so other agents can see your state. APPENDS — it never overwrites prior notes. Use entry_type "blocker" to flag something that stops progress, "state" for completed work or shared facts. Write ONE consolidated entry per stage of work — do not narrate each micro-step in separate entries.',
         parameters: {
           type: 'object',
           properties: {
@@ -96,6 +96,17 @@ module.exports = {
       if (!colonyContext?.colonyId) return { error: 'blackboard_write is only available inside a Colony run' };
       if (!content || !String(content).trim()) return { error: 'content is required' };
       const author = agentLabel(colonyContext, callerAgentId);
+      // Suppress exact repeats: small models re-post the same status every round,
+      // burning context for every reader of blackboard_read.
+      try {
+        const last = db.prepare(
+          'SELECT content FROM colony_blackboard WHERE colony_id=? AND agent=? AND entry_type=? ORDER BY id DESC LIMIT 1',
+        ).get(colonyContext.colonyId, author, entry_type);
+        const norm = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+        if (last && norm(last.content) === norm(content)) {
+          return { success: true, deduplicated: true, message: 'Identical entry already on the blackboard — not re-posted. Move on to the actual work.' };
+        }
+      } catch (e) { logSwallowed('protocolTools:blackboardDedup', e, { colonyId: colonyContext.colonyId }); }
       const entry = protocol.writeBlackboard(colonyContext.colonyId, author, entry_type, content);
       return { success: true, entry_id: entry.id, agent: author, entry_type: entry.entry_type };
     },
@@ -153,13 +164,26 @@ module.exports = {
       if (!protocol.hasProtocol(recipeId)) {
         return { error: `No communication protocol flow is defined for this colony (recipe "${recipeId}").` };
       }
-      const fromRole = resolveRoleKey(colonyContext, callerAgentId, from_role);
+      // Impersonation guard: the caller's REGISTERED role wins over the claimed
+      // from_role. Without this the orchestrator can forge handoffs on behalf of
+      // workers (observed in real runs: fabricated payloads, empty artifacts),
+      // and each forged acceptance auto-completes a plan step no one worked on.
+      const registeredRole = colonyContext?.roleByAgentId?.get?.(callerAgentId) || null;
+      const hasRoster = colonyContext?.roleByAgentId && typeof colonyContext.roleByAgentId.get === 'function'
+        && colonyContext.roleByAgentId.size > 0;
+      if (hasRoster && !registeredRole) {
+        return {
+          error: `handoff is a worker tool — you are not a registered worker in the ${recipeId} flow, and handing off on a worker's behalf is not allowed. ` +
+            `To advance work, call ask_agent for the target worker (use its agent_id); each worker calls handoff itself when its work is complete.`,
+        };
+      }
+      const fromRole = registeredRole || resolveRoleKey(colonyContext, callerAgentId, from_role);
       if (!fromRole) {
         return protocol.protocolViolation('Could not determine your role key. Pass from_role explicitly (e.g. "business_analyst").');
       }
+      const claimedMismatch = registeredRole && from_role && from_role !== registeredRole;
 
-      // The operator/orchestrator is NOT part of the handoff flow — handoff is a
-      // worker tool. Redirect instead of recording a rejected handoff + violation.
+      // The flow only recognizes its own roles — anything else gets redirected.
       const flowRoles = new Set((protocol.getFlow(recipeId) || []).flatMap(e => [e.from, e.to]));
       if (!flowRoles.has(fromRole)) {
         return {
@@ -229,8 +253,14 @@ module.exports = {
         const planRow = db.prepare('SELECT plan FROM colonies WHERE id=?').get(colonyContext.colonyId);
         if (planRow?.plan) {
           const plan = JSON.parse(planRow.plan);
-          const step = (plan.steps || []).find(s => s.status === 'in_progress')
-            || (plan.steps || []).find(s => s.status === 'pending');
+          // Complete only work attributable to the handing-off role: its own
+          // assigned step, or an unassigned step already in progress. A blanket
+          // "next pending" would let a BA handoff complete an env-setup step.
+          const steps = plan.steps || [];
+          const ownSteps = steps.filter(s => (s.assigned_to || null) === fromRole);
+          const step = ownSteps.find(s => s.status === 'in_progress')
+            || ownSteps.find(s => s.status === 'pending')
+            || steps.find(s => s.status === 'in_progress' && !s.assigned_to);
           if (step) {
             step.status = 'done';
             step.note = `auto-completed: handoff ${fromRole}→${to_role} accepted`;
@@ -248,6 +278,7 @@ module.exports = {
         handoff_id: record.id,
         status: 'accepted',
         command: commandObject,
+        ...(claimedMismatch ? { note: `from_role "${from_role}" ignored — recorded under your registered role "${registeredRole}".` } : {}),
         ...(updatedPlan ? { plan: updatedPlan } : {}),
       };
     },

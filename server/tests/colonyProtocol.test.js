@@ -171,6 +171,48 @@ describe('protocol tools', () => {
     assert.equal(out.command.contract, 'Validated Business Rules & Logic Map');
   });
 
+  it('rejects a handoff from an agent not on the worker roster (operator impersonation)', async () => {
+    const id = newDevColony();
+    // Roster exists, but the caller ("orch") is not on it — claiming a worker's
+    // from_role must not be honored, or forged handoffs auto-complete plan steps.
+    const map = new Map([['ba', 'business_analyst']]);
+    const out = await executeTool('handoff',
+      { to_role: 'project_manager', summary: 'forged', from_role: 'business_analyst', payload: {} },
+      'orch', 'http://x', 0, null, null, null, 20, null, ctx(id, map));
+    assert.equal(out.success, undefined);
+    assert.match(out.error, /worker tool/);
+    assert.equal(protocol.listHandoffs(id).length, 0);
+  });
+
+  it('records under the registered role when from_role claims a different one', async () => {
+    const id = newDevColony();
+    const map = new Map([['ba', 'business_analyst']]);
+    const out = await executeTool('handoff',
+      { to_role: 'project_manager', summary: 'rules validated', from_role: 'qa_engineer', payload: {} },
+      'ba', 'http://x', 0, null, null, null, 20, null, ctx(id, map));
+    assert.equal(out.success, true);
+    assert.equal(out.command.from, 'business_analyst');
+    assert.match(out.note, /registered role/);
+  });
+
+  it('handoff auto-advance only completes steps assigned to the handing-off role', async () => {
+    const id = newDevColony();
+    db.prepare('UPDATE colonies SET plan=? WHERE id=?').run(JSON.stringify({
+      steps: [
+        { id: '1', description: 'env setup', assigned_to: 'software_developer', status: 'pending' },
+        { id: '2', description: 'validate rules', assigned_to: 'business_analyst', status: 'pending' },
+      ],
+    }), id);
+    const map = new Map([['ba', 'business_analyst']]);
+    const out = await executeTool('handoff',
+      { to_role: 'project_manager', summary: 'rules validated', payload: {} },
+      'ba', 'http://x', 0, null, null, null, 20, null, ctx(id, map));
+    assert.equal(out.success, true);
+    const plan = JSON.parse(db.prepare('SELECT plan FROM colonies WHERE id=?').get(id).plan);
+    assert.equal(plan.steps.find(s => s.id === '1').status, 'pending');   // developer's step untouched
+    assert.equal(plan.steps.find(s => s.id === '2').status, 'done');      // BA's own step completed
+  });
+
   it('the dev→QA handoff is accepted without a human gate (review happens on the Draft PR)', async () => {
     const id = newDevColony();
     // Seed upstream edges so the dev→QA preconditions pass.
