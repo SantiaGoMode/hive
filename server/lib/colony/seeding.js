@@ -106,7 +106,10 @@ function seedRecipeWorkers(ctx) {
       if (usesResearch) {
         workerConfig.system_prompt += `\n\n[MCP Tools]\nUse the connected MCP tools for live web or document access. When both search and fetch tools are available, use search for topic discovery and fetch for known URLs. The built-in Ollama web_search endpoint is not enabled for this worker when MCP tools are available, so do not refer to it or try to call it. Tool errors, rate limits, and throttling are not evidence that no sources exist; report them as live-access failures and list the verification gap.`;
       } else {
-        workerConfig.system_prompt += `\n\n[MCP Tools]\nYou have connected MCP tools for repository/code access (${matched.map(s => s.name).join(', ')}). Prefer them for reading code, issues, PRs, and files over guessing. Report tool errors as access failures rather than assuming nothing exists.`;
+        const pathHint = row.repo_path
+          ? ` Filesystem tool paths must be ABSOLUTE under the repository root ${row.repo_path} (e.g. ${row.repo_path}/package.json) — relative paths resolve outside the allowed directory and are denied.`
+          : '';
+        workerConfig.system_prompt += `\n\n[MCP Tools]\nYou have connected MCP tools for repository/code access (${matched.map(s => s.name).join(', ')}). Prefer them for reading code, issues, PRs, and files over guessing.${pathHint} Report tool errors as access failures rather than assuming nothing exists.`;
       }
     }
     const worker = writeAgent(null, workerConfig);
