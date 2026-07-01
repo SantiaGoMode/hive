@@ -139,7 +139,10 @@ module.exports = {
   },
 
   handoff: {
-    group: 'protocol',
+    // Worker-only group: the operator delegates via ask_agent and must not see
+    // this tool at all — every operator "handoff" is either impersonation or a
+    // wasted round on the rejection.
+    group: 'protocol_worker',
     definition: {
       type: 'function',
       function: {

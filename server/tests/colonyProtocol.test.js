@@ -171,6 +171,15 @@ describe('protocol tools', () => {
     assert.equal(out.command.contract, 'Validated Business Rules & Logic Map');
   });
 
+  it('exposes handoff to workers but not to the operator tool groups', () => {
+    const { getToolDefinitions } = require('../lib/tools/registry');
+    const operatorTools = getToolDefinitions(['colony_tools', 'delegation', 'protocol']).map(d => d.function.name);
+    assert.ok(!operatorTools.includes('handoff'), 'operator must not see the handoff tool');
+    assert.ok(operatorTools.includes('blackboard_read'));
+    const workerTools = getToolDefinitions(['memory', 'protocol', 'protocol_worker']).map(d => d.function.name);
+    assert.ok(workerTools.includes('handoff'));
+  });
+
   it('rejects a handoff from an agent not on the worker roster (operator impersonation)', async () => {
     const id = newDevColony();
     // Roster exists, but the caller ("orch") is not on it — claiming a worker's

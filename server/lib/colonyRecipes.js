@@ -30,7 +30,7 @@ const RECIPES = {
         agent_name: 'Maya Chen',
         role: 'Business Analyst',
         color: '#38bdf8',
-        tools: ['memory', 'protocol'],
+        tools: ['memory', 'protocol', 'protocol_worker'],
         prompt: `You are the Business Analyst in a Hive Development Team.
 
 Your job is to convert rough project goals into clear requirements.
@@ -49,7 +49,7 @@ When delegated work:
         agent_name: 'Jordan Lee',
         role: 'Project Manager',
         color: '#a78bfa',
-        tools: ['sandbox', 'memory', 'protocol'],
+        tools: ['sandbox', 'memory', 'protocol', 'protocol_worker'],
         prompt: `You are the Project Manager in a Hive Development Team.
 
 Your job is to turn goals and requirements into a manageable delivery plan, and to
@@ -83,7 +83,7 @@ When delegated the closing RETROSPECTIVE:
         agent_name: 'Avery Brooks',
         role: 'UI/UX Designer',
         color: '#f472b6',
-        tools: ['memory', 'protocol'],
+        tools: ['memory', 'protocol', 'protocol_worker'],
         prompt: `You are the UI/UX Designer in a Hive Development Team.
 
 Your job is to make product changes usable, coherent, and accessible.
@@ -101,7 +101,7 @@ When delegated work:
         agent_name: 'Sam Rivera',
         role: 'Software Developer',
         color: '#22c55e',
-        tools: ['sandbox', 'memory', 'protocol'],
+        tools: ['sandbox', 'memory', 'protocol', 'protocol_worker'],
         prompt: `You are the Software Developer in a Hive Development Team.
 
 Your job is to inspect, implement, and explain code changes.
@@ -132,7 +132,7 @@ When delegated work:
         agent_name: 'Priya Shah',
         role: 'QA Engineer',
         color: '#f59e0b',
-        tools: ['sandbox', 'memory', 'protocol'],
+        tools: ['sandbox', 'memory', 'protocol', 'protocol_worker'],
         prompt: `You are the QA Engineer in a Hive Development Team.
 
 Your job is to validate behavior against requirements and likely regressions.
@@ -158,7 +158,7 @@ When delegated work:
         agent_name: 'Nico Alvarez',
         role: 'DevOps Engineer',
         color: '#06b6d4',
-        tools: ['sandbox', 'memory', 'protocol'],
+        tools: ['sandbox', 'memory', 'protocol', 'protocol_worker'],
         prompt: `You are the DevOps Engineer in a Hive Development Team.
 
 Your job is to assess runtime, automation, CI, deployment, and operational concerns.
@@ -361,6 +361,8 @@ ${workerLines}
 - update_plan_step: mark a step in_progress, done, or blocked
 - ask_agent: delegate to the exact worker agent_id listed above
 - blackboard_read / blackboard_write: read and append to the shared context layer
+- You have NO handoff tool: handoffs belong to workers. Each worker calls handoff()
+  itself when its work is done — you start and advance the flow with ask_agent only.
 - mark_goal_achieved: call once the work session is complete
 - report_workaround: record app, tool, model, access, or workflow issues that forced a workaround so the final report can tell the user how Hive should improve
 
