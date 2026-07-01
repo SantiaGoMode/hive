@@ -32,7 +32,7 @@ Roadmap board by the **Phase** field.
 - [x] 🟡 [#48](../../issues/48) Server eslint + CI workflow — *PR #69; parent of #42*
 
 ## ▶ P3 — Refactors (depend on P2 foundations)
-- [ ] 🟠 [#27](../../issues/27) Split `agentTools.js` (2,413 lines) into a tools/ registry
+- [x] 🟠 [#27](../../issues/27) Split `agentTools.js` (2,413 lines) into a tools/ registry — *PR #79*
 - [x] 🟠 [#28](../../issues/28) Split `colonyRunner.js` (1,488 lines) — *PR #82*
 - [ ] 🟠 [#22](../../issues/22) Route-level code-splitting (~716KB bundle)
 - [ ] 🟠 [#23](../../issues/23) Decompose oversized client pages — *after #5, #24, #4*
@@ -64,8 +64,8 @@ Roadmap board by the **Phase** field.
 - **Sub-issue rollups:** #7 ← #31, #39, #41 · #3 ← #37 · #48 ← #42
 
 ## 🔀 Open PRs (awaiting merge)
-- #78 (#32 versioned schema migrations). Also: #75 (security: js-yaml + @babel/core advisories).
-- All earlier P1/P2 PRs merged. **P1 and P2 are now complete** → the whole foundations phase is done; **P3 refactors are unblocked** (#23/#6 and the splits).
+- #79 (#27 split agentTools.js). Also open if unmerged: #78 (#32 migrations), #75 (security).
+- **P1 + P2 complete.** P3 started: #27 done → next candidates #28 (split colonyRunner.js), #23/#6 (client refactors), #30, #22.
 
 ## ✅ Recently completed (do not redo)
 - #26 `logSwallowed()` — observable swallowed errors (redaction + rate-limit); 91 call sites across 19 modules.
@@ -80,6 +80,7 @@ Roadmap board by the **Phase** field.
 - #47 HTTP route tests (`server/tests/*Routes.test.js` + `helpers/testApp.js`) — supertest coverage for agents/pipelines/skills/schedules/mcp/staff/sandbox/ollama/system (56 tests, externals faked/stubbed).
 - #46 Lib unit tests — githubBoard pure helpers, pipelineRunner (groupSteps/renderStepPrompt/abort), colonyTeams CRUD.
 - #32 Versioned schema migrations (`server/lib/migrations.js` + `schema_migrations` table) — replaced ~40 bare `ALTER … catch {}` with an ordered, idempotent, recorded runner. **Completes P2.**
+- #27 Split `agentTools.js` (2,413 lines) → `server/lib/tools/` (registry + 10 domain modules, all <400 lines) + `agentRunner.js` + a thin `agentTools.js` façade. 46 handlers moved byte-identical; public API + behavior unchanged.
 - scrt4 secret isolation — 0 plaintext secrets at rest (cloud keys via gateway; GitHub/Brave/ngrok via `env:` refs).
 - LiteLLM gateway (Docker) — failover aliases, retries/cooldowns, Postgres spend tracking, per-agent budgets, response caching, master-key auth.
 - scrt4 long-running launch fix (`scripts/spawn-detached.sh`, `run-dev.sh`).
