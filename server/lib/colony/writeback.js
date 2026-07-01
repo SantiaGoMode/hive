@@ -10,6 +10,7 @@ const { getColony } = require('./persistence');
 const {
   gitExec,
   gitCommitAndPush,
+  gitDefaultBranch,
   gitHasUncommittedChanges,
   gitBranchHasNewCommits,
 } = require('./git');
@@ -73,6 +74,7 @@ function createPerformWriteback(ctx) {
         base: 'main',
       });
 
+      state.prUrl = pr.html_url; // read by the verified-outcome report
       addEntry({ kind: 'writeback', message: `✅ Draft PR opened: ${pr.html_url}`, pr_url: pr.html_url });
       db.prepare("UPDATE colonies SET summary=COALESCE(summary,'') || ? WHERE id=?")
         .run(`\n\n**Draft PR:** ${pr.html_url}`, colonyId);
@@ -93,6 +95,43 @@ function createPerformWriteback(ctx) {
       onEvent({ type: 'blocker', blocker: { message: msg, action: 'retry_push', branch: colonyBranch } });
     }
   };
+}
+
+// System-verified run outcome, measured from git — never from model claims.
+// Models routinely fabricate "Draft PR opened" / "deployed" in their final
+// summaries; this entry states what actually exists so the user (and the UI)
+// can spot the contradiction immediately.
+// `ctx` = { colonyId, row, state, colonyBranch, addEntry }
+function emitVerifiedOutcome({ colonyId, row, state, colonyBranch, addEntry }) {
+  try {
+    const facts = {
+      writeback_enabled: !!state.githubWriteback,
+      pr_url: state.prUrl || null,
+      branch: null,
+      new_commits: false,
+      uncommitted_files: 0,
+    };
+    const parts = [];
+    if (!row?.repo_path) {
+      parts.push('no repository is attached to this run — any claimed code changes, commits, or PRs do not exist');
+    } else {
+      try { facts.branch = gitExec(['rev-parse', '--abbrev-ref', 'HEAD'], row.repo_path).trim(); } catch { /* not a git repo */ }
+      try { facts.uncommitted_files = gitExec(['status', '--porcelain'], row.repo_path).split('\n').filter(Boolean).length; } catch { /* ignore */ }
+      facts.new_commits = gitBranchHasNewCommits(row.repo_path, gitDefaultBranch(row.repo_path));
+      parts.push(facts.writeback_enabled
+        ? `write-back enabled (branch "${colonyBranch}")`
+        : 'write-back DISABLED — Hive created no branch, commit, or PR');
+      parts.push(facts.pr_url ? `Draft PR: ${facts.pr_url}` : 'pull request: NONE');
+      parts.push(facts.new_commits ? 'new commits: yes' : 'new commits: none');
+      parts.push(`uncommitted changes in working tree: ${facts.uncommitted_files} file(s)`);
+      if (facts.branch) parts.push(`repo is on branch "${facts.branch}"`);
+    }
+    addEntry({
+      kind: 'outcome',
+      message: `📋 Verified outcome (measured from git, not model claims): ${parts.join(' · ')}. If the summary above contradicts this, trust this.`,
+      facts,
+    });
+  } catch (e) { logSwallowed('colonyRunner:verifiedOutcome', e, { colonyId }); }
 }
 
 // Auto-post the deliverable summary to the linked board work-item so the user
@@ -117,4 +156,4 @@ async function postBoardComment(ctx) {
   }
 }
 
-module.exports = { createPerformWriteback, postBoardComment };
+module.exports = { createPerformWriteback, postBoardComment, emitVerifiedOutcome };

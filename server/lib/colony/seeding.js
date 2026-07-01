@@ -156,7 +156,7 @@ function createOrchestrator(ctx) {
     reasoningByAgentId, addEntry, onEvent,
   } = ctx;
 
-  const recipePrompt = recipeOrchestratorPrompt(row.goal, operatorModel, recipe, recipeWorkers);
+  const recipePrompt = recipeOrchestratorPrompt(row.goal, operatorModel, recipe, recipeWorkers, { githubWriteback: !!row.github_writeback });
   const orchestratorTools = isCustomAutoRecipe(recipe.id)
     ? ['colony_tools', 'agent_tools', 'sandbox', 'memory', 'protocol']
     : ['colony_tools', 'delegation', 'protocol'];

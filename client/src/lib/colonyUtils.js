@@ -99,6 +99,7 @@ export function dbLogToEntries(dbLog, agentColorMap) {
     if (e.kind === 'checkpoint') return { type: 'checkpoint', agent: e.agent, ts: e.ts };
     if (e.kind === 'blackboard') return { type: 'blackboard', agent: e.agent, entry_type: e.entry_type, ts: e.ts };
     if (e.kind === 'writeback') return { type: 'system', message: e.message, ts: e.ts };
+    if (e.kind === 'outcome') return { type: 'system', message: e.message, ts: e.ts };
     if (e.kind === 'sandbox_cleanup') return { type: 'system', message: e.message, ts: e.ts };
     if (e.kind === 'done') return { type: 'done', status: e.status, ts: e.ts };
     if (e.kind === 'error') return { type: 'error', content: e.message, ts: e.ts };

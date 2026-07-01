@@ -202,7 +202,7 @@ export function useColonyPage() {
   const createEventProcessor = useCallback(({ mode, initialColonyId = null, onColonyStart = null }) => {
     let colonyId = initialColonyId;
     const agentNameMap = {};
-    const liveOnlyKinds = new Set(['preflight', 'recipe', 'bootstrap', 'writeback', 'sandbox_cleanup']);
+    const liveOnlyKinds = new Set(['preflight', 'recipe', 'bootstrap', 'writeback', 'outcome', 'sandbox_cleanup']);
 
     return (event) => {
       if (event.type === 'colony_id') {

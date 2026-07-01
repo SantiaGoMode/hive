@@ -339,12 +339,30 @@ function buildRecipeWorkerConfigs(recipe, goal, model, modelPlan = null) {
   }));
 }
 
-function recipeOrchestratorPrompt(goal, model, recipe, workers) {
+function recipeOrchestratorPrompt(goal, model, recipe, workers, { githubWriteback = false } = {}) {
   if (!recipe || isCustomAutoRecipe(recipe.id)) return null;
 
   const workerLines = workers.map(worker =>
     `- ${worker.name} (${worker.persona_role})${worker.role_key ? ` [role_key: ${worker.role_key}]` : ''} -> agent_id: "${worker.id}"`,
   ).join('\n');
+
+  // The delivery expectations must match reality: promising a Draft PR when
+  // write-back is disabled trains the operator to fabricate one in its summary.
+  const reviewLine = githubWriteback
+    ? `The run is fully unattended — there are NO human approval pauses. The human
+reviews the Draft PR the colony opens at the end and merges it manually on GitHub.`
+    : `The run is fully unattended — there are NO human approval pauses.
+GitHub write-back is DISABLED for this run: Hive will NOT create a branch, commit,
+or pull request. Changes exist only in the repository working tree. NEVER claim a
+PR, branch, or commit was created.`;
+  const publishLine = githubWriteback
+    ? `All committed work is pushed and opened as a Draft PR
+   automatically when the run completes.`
+    : `Write-back is disabled, so the changes stay uncommitted in
+   the repository working tree for the user to review locally.`;
+  const summaryPublishNote = githubWriteback
+    ? 'note that a Draft PR will be opened\n   for manual review and merge'
+    : 'state that changes are in the repo working tree,\n   uncommitted (write-back is disabled — no PR or branch exists)';
 
   if (recipe.id === 'development_team') {
     return `You are a Hive Development Team Operator. You coordinate a seeded software delivery team using normal product-development expectations.
@@ -378,8 +396,7 @@ a command object. The handoff flow is fixed and preconditions are ENFORCED:
   qa_engineer      → devops_engineer    (Test Pass/Fail Report & Stability Grade)
   devops_engineer  → project_manager    (Deployment URL or Infrastructure Post-Mortem)
 
-The run is fully unattended — there are NO human approval pauses. The human
-reviews the Draft PR the colony opens at the end and merges it manually on GitHub.
+${reviewLine}
 
 ## Delivery protocol
 1. Call set_plan first with 3-6 steps that map DIRECTLY to this work item's
@@ -406,8 +423,7 @@ reviews the Draft PR the colony opens at the end and merges it manually on GitHu
    instead of retrying the same handoff.
 6. The Software Developer must make REAL file changes in the repository workspace
    (sandbox tools), not just describe them. Its handoff artifacts must list actual
-   changed file paths. All committed work is pushed and opened as a Draft PR
-   automatically when the run completes.
+   changed file paths. ${publishLine}
 7. Add plan steps when a role uncovers necessary follow-up work.
 8. If the team works around missing access, weak tools, model limitations, unclear app flow, or manual steps, call report_workaround with the issue, workaround, impact, and product recommendation.
 9. RETROSPECTIVE — after the final handoff returns to the Project Manager and
@@ -425,8 +441,7 @@ reviews the Draft PR the colony opens at the end and merges it manually on GitHu
 10. Call mark_goal_achieved only after EVERY role has completed its handoff — the
    full chain BA→PM→UX→Dev→QA→DevOps→PM must be on record (it is enforced; the
    call fails listing any missing handoffs) — AND the retrospective is done. The
-   summary should include retro highlights and note that a Draft PR will be opened
-   for manual review and merge.
+   summary should include retro highlights and ${summaryPublishNote}.
 
 ## Hard rules
 - Do not create agents. Your team already exists.
