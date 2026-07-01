@@ -41,7 +41,7 @@ Roadmap board by the **Phase** field.
 - [ ] 🟡 [#6](../../issues/6) Pipeline Builder Refactor — *after #4, #5, #24*
 - [x] 🟡 [#25](../../issues/25) Client ErrorBoundary around routes — *PR #80*
 - [x] 🟡 [#34](../../issues/34) Staff scheduler backoff + dedupe error posts — *PR #81*
-- [ ] 🟡 [#38](../../issues/38) Derive gateway alias list (avoid drift) — *related #24*
+- [x] 🟡 [#38](../../issues/38) Derive gateway alias list (avoid drift) — *PR #83*
 - [ ] ⚪ [#33](../../issues/33) Memoize `getSetting` / gateway-config reads
 - [ ] ⚪ [#35](../../issues/35) Unify scheduler lifecycle + heartbeat — *after #45*
 

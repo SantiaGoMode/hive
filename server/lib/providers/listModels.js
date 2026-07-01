@@ -5,6 +5,7 @@
 // so this list is a convenience, never a hard constraint.
 
 const { keyFor, ollamaBaseUrl, gatewayConfig } = require('./index');
+const { deriveGatewayAliases } = require('./gatewayAliases');
 
 const TIMEOUT_MS = 6000;
 
@@ -91,8 +92,10 @@ async function listGemini() {
 }
 
 // Capability aliases served by the gateway (multi-provider failover pools).
-// Mirrors the model_name aliases in gateway/litellm.config.yaml.
-const GATEWAY_ALIASES = ['hive-smart', 'hive-coding', 'hive-cheap', 'hive-bigctx'];
+// DERIVED from the model_name aliases in gateway/litellm.config.yaml (issue #38)
+// so the picker can't drift from the gateway routing config. Computed once at
+// module load; falls back to the known list if the yaml is missing/unparseable.
+const GATEWAY_ALIASES = deriveGatewayAliases();
 function listGateway() {
   if (!gatewayConfig().enabled) return [];
   return GATEWAY_ALIASES.map(a => entry('gateway', a, 'gateway'));
