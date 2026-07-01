@@ -47,6 +47,56 @@ function GatewayStatus({ status, loading }) {
   );
 }
 
+function money(value) {
+  if (value == null) return 'n/a';
+  return `$${Number(value).toFixed(value > 0 && value < 0.01 ? 4 : 2)}`;
+}
+
+function percent(value) {
+  if (value == null) return 'n/a';
+  return `${Math.round(Number(value) * 100)}%`;
+}
+
+function GatewaySpendSummary({ spend }) {
+  if (!spend?.enabled) return null;
+  const topAgents = spend.agents?.slice(0, 5) || [];
+  return (
+    <div className="rounded-lg border border-gray-800 bg-gray-950/50 p-3 flex flex-col gap-3">
+      <div className="grid grid-cols-3 gap-2">
+        <div>
+          <p className="text-[11px] text-gray-500">Spend</p>
+          <p className="text-sm font-medium text-gray-200">{money(spend.totals?.spend_usd)}</p>
+        </div>
+        <div>
+          <p className="text-[11px] text-gray-500">Calls</p>
+          <p className="text-sm font-medium text-gray-200">{spend.totals?.calls ?? 0}</p>
+        </div>
+        <div>
+          <p className="text-[11px] text-gray-500">Cache hits</p>
+          <p className="text-sm font-medium text-gray-200">{percent(spend.totals?.cache_hit_rate)}</p>
+        </div>
+      </div>
+      <div className="flex items-center gap-1 text-[11px] text-gray-500">
+        {spend.persistence?.spend_logs_reachable ? <CheckCircle size={10} className="text-emerald-400" /> : <XCircle size={10} className="text-red-400" />}
+        <span>{spend.persistence?.message || 'Spend log status unavailable'}</span>
+      </div>
+      {topAgents.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          {topAgents.map(agent => (
+            <div key={agent.agent_id} className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 text-xs">
+              <span className="truncate text-gray-300">{agent.agent_name || agent.agent_id}</span>
+              <span className="text-gray-400">{money(agent.spend_usd)}</span>
+              <span className={agent.budget_remaining_usd != null && agent.budget_remaining_usd <= 0 ? 'text-red-400' : 'text-gray-500'}>
+                {agent.budget_usd == null ? 'no cap' : `${money(agent.budget_remaining_usd)} left`}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ModelProvidersSection({ config, setConfig, gatewayStatus, gatewayLoading }) {
   const [testing, setTesting] = useState(null);
   const [results, setResults] = useState({});
@@ -146,7 +196,12 @@ function ModelProvidersSection({ config, setConfig, gatewayStatus, gatewayLoadin
           placeholder={isMasked(config.llm_gateway_key || '') ? 'Saved — type to replace' : 'Virtual key (optional until gateway master_key is set)'}
         />
         {config.llm_gateway_url
-          ? <GatewayStatus status={gatewayStatus} loading={gatewayLoading} />
+          ? (
+            <>
+              <GatewayStatus status={gatewayStatus} loading={gatewayLoading} />
+              <GatewaySpendSummary spend={gatewayStatus?.spend} />
+            </>
+          )
           : null}
       </div>
 

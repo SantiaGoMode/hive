@@ -6,6 +6,7 @@ const express = require('express');
 const request = require('supertest');
 const systemRouter = require('../routes/system');
 const gatewayHealth = require('../lib/gatewayHealth');
+const gatewaySpend = require('../lib/gatewaySpend');
 
 const app = express();
 app.use(express.json());
@@ -32,6 +33,7 @@ describe('GET /api/system/metrics', () => {
     assert.equal(typeof b.gateway.enabled, 'boolean');
     assert.ok('reachable' in b.gateway);
     assert.equal(typeof b.gateway.message, 'string');
+    assert.equal(typeof b.gateway.spend.enabled, 'boolean');
     assert.ok(Array.isArray(b.recent_logs));
   });
 
@@ -54,6 +56,7 @@ describe('GET /api/system/metrics', () => {
       if (saved.key === undefined) delete process.env.LLM_GATEWAY_KEY; else process.env.LLM_GATEWAY_KEY = saved.key;
       global.fetch = savedFetch;
       gatewayHealth._resetForTests();
+      gatewaySpend._resetForTests();
     }
   });
 
@@ -81,6 +84,66 @@ describe('GET /api/system/metrics', () => {
       if (saved.key === undefined) delete process.env.LLM_GATEWAY_KEY; else process.env.LLM_GATEWAY_KEY = saved.key;
       global.fetch = savedFetch;
       gatewayHealth._resetForTests();
+      gatewaySpend._resetForTests();
+    }
+  });
+
+  it('returns sanitized per-agent gateway spend summaries', async () => {
+    const saved = { url: process.env.LLM_GATEWAY_URL, key: process.env.LLM_GATEWAY_KEY };
+    const savedFetch = global.fetch;
+    process.env.LLM_GATEWAY_URL = 'http://gateway-spend:4000/v1';
+    process.env.LLM_GATEWAY_KEY = 'sk-spend-secret';
+    gatewayHealth._resetForTests();
+    gatewaySpend._resetForTests();
+    const seen = [];
+    global.fetch = async (url) => {
+      seen.push(String(url));
+      if (String(url).includes('/health')) return { ok: true, status: 200, json: async () => ({}) };
+      if (String(url).includes('/spend/logs')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: [
+              {
+                spend: 0.0125,
+                total_tokens: 1250,
+                cache_hit: true,
+                metadata: { spend_logs_metadata: { agent_id: 'agent-1', agent_name: 'Planner' } },
+              },
+              {
+                spend: 0.01,
+                prompt_tokens: 100,
+                completion_tokens: 200,
+                metadata: JSON.stringify({ spend_logs_metadata: { agent_id: 'agent-1', agent_name: 'Planner' } }),
+              },
+            ],
+          }),
+        };
+      }
+      return { ok: false, status: 503, json: async () => ({ models: [] }) };
+    };
+    try {
+      const res = await request(app).get('/api/system/metrics');
+      assert.equal(res.status, 200);
+      assert.equal(res.body.gateway.spend.enabled, true);
+      assert.equal(res.body.gateway.spend.persistence.spend_logs_reachable, true);
+      assert.equal(res.body.gateway.spend.persistence.observed_rows, 2);
+      assert.equal(res.body.gateway.spend.totals.calls, 2);
+      assert.equal(res.body.gateway.spend.totals.tokens, 1550);
+      assert.equal(res.body.gateway.spend.totals.cache_hit_rate, 0.5);
+      assert.equal(res.body.gateway.spend.agents[0].agent_id, 'agent-1');
+      assert.equal(res.body.gateway.spend.agents[0].spend_usd, 0.0225);
+      assert.ok(seen.some(url => url === 'http://gateway-spend:4000/spend/logs?limit=500'));
+      const blob = JSON.stringify(res.body);
+      assert.ok(!blob.includes('gateway-spend'), 'gateway host not leaked');
+      assert.ok(!blob.includes('sk-spend-secret'), 'gateway key not leaked');
+    } finally {
+      if (saved.url === undefined) delete process.env.LLM_GATEWAY_URL; else process.env.LLM_GATEWAY_URL = saved.url;
+      if (saved.key === undefined) delete process.env.LLM_GATEWAY_KEY; else process.env.LLM_GATEWAY_KEY = saved.key;
+      global.fetch = savedFetch;
+      gatewayHealth._resetForTests();
+      gatewaySpend._resetForTests();
     }
   });
 

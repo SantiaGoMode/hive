@@ -48,12 +48,12 @@ Roadmap board by the **Phase** field.
 ## ▶ P4 — Observability & Polish (last)
 - [ ] 🟡 [#7](../../issues/7) Workflow Health Dashboard — *needs #31, #39, #41 (sub-issues)*
 - [x] 🟡 [#39](../../issues/39) Gateway startup health probe + Settings status — *implemented on main; child of #7*
-- [ ] 🟡 [#41](../../issues/41) Gateway spend persistence + per-agent dashboard — *child of #7*
-- [ ] 🟡 [#40](../../issues/40) Tune response cache TTL / scope caching
+- [x] 🟡 [#41](../../issues/41) Gateway spend persistence + per-agent dashboard — *implemented on main; child of #7*
+- [x] 🟡 [#40](../../issues/40) Tune response cache TTL / scope caching — *implemented on main*
 - [ ] 🟡 [#8](../../issues/8) Accessible Modal & Form System
 - [ ] 🟡 [#10](../../issues/10) Frontend Regression Test Suite
 - [ ] ⚪ [#9](../../issues/9) Progressive Advanced Settings
-- [ ] ⚪ [#42](../../issues/42) CI lint: validate gateway model ids resolve — *child of #48*
+- [x] ⚪ [#42](../../issues/42) CI lint: validate gateway model ids resolve — *implemented on main; child of #48*
 - [ ] ⚪ [#49](../../issues/49) Gateway auto-start + portable `run-gateway.sh`
 
 ---

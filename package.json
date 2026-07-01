@@ -9,7 +9,8 @@
     "test": "node --import ./server/tests/setup.js --test server/tests/*.test.js",
     "test:client": "npm test --prefix client",
     "lint:server": "eslint server",
-    "lint": "npm run lint:server && npm run lint --prefix client"
+    "lint:gateway-models": "node scripts/validate-gateway-models.js",
+    "lint": "npm run lint:server && npm run lint:gateway-models && npm run lint --prefix client"
   },
   "keywords": [],
   "author": "",

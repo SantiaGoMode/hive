@@ -54,15 +54,13 @@ model_list:
 litellm_settings:
   drop_params: true          # tolerate provider-unsupported params instead of erroring
   request_timeout: 600
-  # Response caching (experiment): identical requests (same model+messages+params)
-  # reuse the response for `ttl` seconds. In-memory (no Redis) since num_workers=1.
-  # Saves cost/latency on retries and duplicate calls. CAVEAT: an identical chat
-  # message returns the cached reply (no variation) within the window — disable by
-  # commenting `cache` out and restarting if that's unwanted.
+  # Response caching policy: only absorb near-term duplicate retries. The short
+  # window avoids hour-long stale chat/tool replies while still saving cost on
+  # accidental replays and transient retry loops.
   cache: true
   cache_params:
     type: local
-    ttl: 3600
+    ttl: 300
 
 router_settings:
   routing_strategy: simple-shuffle   # within a pool; on failure retry the other deployments

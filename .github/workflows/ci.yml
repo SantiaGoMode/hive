@@ -32,6 +32,9 @@ jobs:
       - name: Server lint
         run: npm run lint:server
 
+      - name: Gateway model id validation
+        run: npm run lint:gateway-models
+
       # Non-blocking: the client carries pre-existing lint debt (mostly strict
       # react-hooks/react-compiler rules). Surfaced here for visibility; gating
       # is deferred to a dedicated client-lint cleanup so CI stays green.

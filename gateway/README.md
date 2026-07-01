@@ -73,6 +73,13 @@ a specific model.
 
 Editing this file requires `docker compose -f gateway/docker-compose.yml restart` to reload.
 
+## Response cache policy
+LiteLLM response caching is enabled with a local in-process cache and a **300 second TTL**.
+That scope is intentionally narrow: it catches accidental duplicate requests and short retry
+loops without keeping chat or tool-call responses stale for an hour. If you need fully fresh
+responses while debugging a prompt, comment out `cache: true` in `litellm.config.yaml` and
+restart the gateway.
+
 ## Security model & limits
 - **Loopback only** — published on `127.0.0.1`, never reachable off-box.
 - **Stops key theft, not capability misuse** — anything that can reach the proxy can make
@@ -103,6 +110,10 @@ get cost visibility.
 
 Inspect spend: `docker exec hive-llm-gateway-db psql -U litellm -d litellm -c 'SELECT model, total_tokens, spend FROM "LiteLLM_SpendLogs" ORDER BY "startTime" DESC LIMIT 10;'`
 or LiteLLM's `/spend/logs` and `/global/spend/report` endpoints.
+
+Hive also reads `/spend/logs` from `/api/system/metrics` and summarizes persisted rows on
+the Settings gateway panel by agent, budget headroom, total calls, token count, and cache
+hit-rate. The API response is sanitized and never includes the gateway URL or key.
 
 ### Per-agent attribution (wired — metadata headers)
 Hive tags every gateway call with `x-litellm-spend-logs-metadata` carrying `agent_id`,
