@@ -54,9 +54,23 @@ router.get('/status', async (req, res) => {
 router.get('/metrics', async (req, res) => {
   let ollamaReachable = false;
   let loadedModels = 0;
+  let loadedModelDetails = [];
   try {
     const r = await fetch(ollamaApiUrl('ps'), { signal: AbortSignal.timeout(2000) });
-    if (r.ok) { loadedModels = ((await r.json()).models || []).length; ollamaReachable = true; }
+    if (r.ok) {
+      const models = (await r.json()).models || [];
+      loadedModels = models.length;
+      loadedModelDetails = models.map(m => ({
+        name: m.name,
+        model: m.model,
+        size: m.size,
+        size_vram: m.size_vram,
+        expires_at: m.expires_at,
+        parameter_size: m.details?.parameter_size,
+        quantization_level: m.details?.quantization_level,
+      }));
+      ollamaReachable = true;
+    }
   } catch { /* Ollama down → reachable:false */ }
 
   const gw = safe(() => providers.gatewayConfig(), { enabled: false });
@@ -75,7 +89,7 @@ router.get('/metrics', async (req, res) => {
     scheduled_tasks: safe(() => scheduler.scheduledCount(), null),
     staff_scheduler: safe(() => staffScheduler.status(), null),
     scheduler_lifecycle: safe(() => schedulerLifecycle.statuses(), null),
-    ollama: { reachable: ollamaReachable, url: getOllamaUrl(), loaded_models: loadedModels },
+    ollama: { reachable: ollamaReachable, url: getOllamaUrl(), loaded_models: loadedModels, loaded_model_details: loadedModelDetails },
     gateway: { ...gatewayStatus, spend }, // sanitized: never expose gateway url/key
     recent_logs: safe(() => getRecentLogs(50), []),
   });

@@ -57,6 +57,32 @@ function percent(value) {
   return `${Math.round(Number(value) * 100)}%`;
 }
 
+function AdvancedDisclosure({ id, title, summary, children, defaultOpen = false }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="rounded-lg border border-gray-800 bg-gray-950/30">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen(v => !v)}
+        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-gray-800/40 transition-colors"
+      >
+        <div>
+          <p className="text-xs font-medium text-gray-300">{title}</p>
+          {summary && <p className="text-xs text-gray-600 mt-0.5">{summary}</p>}
+        </div>
+        <ChevronRight size={14} className={`text-gray-500 transition-transform ${open ? 'rotate-90' : ''}`} />
+      </button>
+      {open && (
+        <div id={id} className="border-t border-gray-800 px-3 py-3">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GatewaySpendSummary({ spend }) {
   if (!spend?.enabled) return null;
   const topAgents = spend.agents?.slice(0, 5) || [];
@@ -179,35 +205,45 @@ function ModelProvidersSection({ config, setConfig, gatewayStatus, gatewayLoadin
       })}
       <p className="text-xs text-gray-600">Tip: you can also set <code className="bg-gray-800 px-1 rounded">ANTHROPIC_API_KEY</code>, <code className="bg-gray-800 px-1 rounded">OPENAI_API_KEY</code>, or <code className="bg-gray-800 px-1 rounded">GEMINI_API_KEY</code> as environment variables instead.</p>
 
-      <div className="pt-3 border-t border-gray-800/60 flex flex-col gap-2">
-        <h4 className="text-xs font-medium text-gray-300 flex items-center gap-2"><Cpu size={13} className="text-emerald-400" /> LLM Gateway (optional)</h4>
-        <p className="text-xs text-gray-500">Route all cloud providers through a local LiteLLM proxy that holds the real keys, so Hive only stores a revocable, localhost-scoped key. When a gateway URL is set, the per-provider keys above are bypassed for cloud calls.</p>
-        <Input
-          label="Gateway base URL"
-          value={config.llm_gateway_url || ''}
-          onChange={e => setConfig(c => ({ ...c, llm_gateway_url: e.target.value }))}
-          placeholder="e.g. http://127.0.0.1:4000/v1"
-        />
-        <Input
-          label="Gateway key"
-          type="password"
-          value={config.llm_gateway_key || ''}
-          onChange={e => setConfig(c => ({ ...c, llm_gateway_key: e.target.value }))}
-          placeholder={isMasked(config.llm_gateway_key || '') ? 'Saved — type to replace' : 'Virtual key (optional until gateway master_key is set)'}
-        />
-        {config.llm_gateway_url
-          ? (
-            <>
-              <GatewayStatus status={gatewayStatus} loading={gatewayLoading} />
-              <GatewaySpendSummary spend={gatewayStatus?.spend} />
-            </>
-          )
-          : null}
-      </div>
+      {config.llm_gateway_url && (
+        <div className="rounded-lg border border-emerald-700/30 bg-emerald-500/5 p-3">
+          <GatewayStatus status={gatewayStatus} loading={gatewayLoading} />
+          <GatewaySpendSummary spend={gatewayStatus?.spend} />
+        </div>
+      )}
 
-      <Button size="sm" variant="secondary" onClick={clearStoredSecrets} disabled={clearing} className="w-fit">
-        {clearing ? 'Clearing...' : 'Clear stored secrets'}
-      </Button>
+      <AdvancedDisclosure
+        id="settings-provider-advanced"
+        title="Advanced provider settings"
+        summary={gatewayOn ? 'LLM gateway configured · stored-secret cleanup available' : 'LLM gateway and stored-secret cleanup'}
+        defaultOpen={gatewayOn}
+      >
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-2">
+            <h4 className="text-xs font-medium text-gray-300 flex items-center gap-2"><Cpu size={13} className="text-emerald-400" /> LLM Gateway (optional)</h4>
+            <p className="text-xs text-gray-500">Route all cloud providers through a local LiteLLM proxy that holds the real keys, so Hive only stores a revocable, localhost-scoped key. When a gateway URL is set, the per-provider keys above are bypassed for cloud calls.</p>
+            <Input
+              label="Gateway base URL"
+              value={config.llm_gateway_url || ''}
+              onChange={e => setConfig(c => ({ ...c, llm_gateway_url: e.target.value }))}
+              placeholder="e.g. http://127.0.0.1:4000/v1"
+            />
+            <Input
+              label="Gateway key"
+              type="password"
+              value={config.llm_gateway_key || ''}
+              onChange={e => setConfig(c => ({ ...c, llm_gateway_key: e.target.value }))}
+              placeholder={isMasked(config.llm_gateway_key || '') ? 'Saved — type to replace' : 'Virtual key (optional until gateway master_key is set)'}
+            />
+          </div>
+
+          <div className="pt-3 border-t border-gray-800/60">
+            <Button size="sm" variant="secondary" onClick={clearStoredSecrets} disabled={clearing} className="w-fit">
+              {clearing ? 'Clearing...' : 'Clear stored secrets'}
+            </Button>
+          </div>
+        </div>
+      </AdvancedDisclosure>
     </div>
   );
 }
@@ -334,7 +370,7 @@ function MemBar({ used, total, label, detail }) {
   );
 }
 
-function SystemMonitor() {
+function SystemMonitor({ embedded = false }) {
   const [status, setStatus]     = useState(null);
   const [loading, setLoading]   = useState(true);
   const [stopping, setStopping] = useState(null); // model name being stopped
@@ -369,7 +405,7 @@ function SystemMonitor() {
   const models = status?.models ?? [];
 
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 flex flex-col gap-5">
+    <div className={`${embedded ? '' : 'bg-gray-900 border border-gray-800 rounded-xl p-6'} flex flex-col gap-5`}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Cpu size={15} className="text-blue-400" />
@@ -597,36 +633,44 @@ export function SettingsPage() {
               </Button>
             </div>
           </div>
-          
-          <div className="grid grid-cols-2 gap-4">
-            <Input
-              label="Ngrok Auth Token"
-              type="password"
-              value={config.ngrok_authtoken || ''}
-              onChange={e => setConfig(c => ({ ...c, ngrok_authtoken: e.target.value }))}
-              placeholder={config.ngrok_authtoken_from_env ? 'Provided by NGROK_AUTHTOKEN' : 'Your ngrok authtoken'}
-            />
-            <Input
-              label="Static Domain (Optional)"
-              value={config.ngrok_domain || ''}
-              onChange={e => setConfig(c => ({ ...c, ngrok_domain: e.target.value }))}
-              placeholder="e.g. my-hive.ngrok-free.app"
-            />
-          </div>
-          <label className="flex items-center gap-2 cursor-pointer mt-1">
-            <input type="checkbox" checked={config.ngrok_enabled === 'true'} onChange={e => setConfig({ ...config, ngrok_enabled: e.target.checked ? 'true' : 'false' })} className="rounded bg-gray-900 border-gray-700 text-blue-500 focus:ring-blue-500" />
-            <span className="text-sm text-gray-300">Auto-start tunnel when Hive starts</span>
-          </label>
-        </div>
 
-        <div className="pt-4 border-t border-gray-800 flex flex-col gap-4">
-          <Input
-            label="Manual Webhook Public Base URL"
-            value={config.webhook_public_url || ''}
-            onChange={e => setConfig(c => ({ ...c, webhook_public_url: e.target.value }))}
-            placeholder="https://my-tunnel.ngrok-free.app"
-          />
-          <p className="text-xs text-gray-600 -mt-2">Only needed if you are running your own tunnel manually instead of using the built-in ngrok integration.</p>
+          <AdvancedDisclosure
+            id="settings-webhook-advanced"
+            title="Advanced webhook exposure"
+            summary={config.webhook_public_url ? 'Manual public URL set' : 'Ngrok token, static domain, auto-start, and manual public URL'}
+            defaultOpen={!!config.webhook_public_url || !!config.ngrok_domain}
+          >
+            <div className="flex flex-col gap-4">
+              <div className="grid grid-cols-2 gap-4">
+                <Input
+                  label="Ngrok Auth Token"
+                  type="password"
+                  value={config.ngrok_authtoken || ''}
+                  onChange={e => setConfig(c => ({ ...c, ngrok_authtoken: e.target.value }))}
+                  placeholder={config.ngrok_authtoken_from_env ? 'Provided by NGROK_AUTHTOKEN' : 'Your ngrok authtoken'}
+                />
+                <Input
+                  label="Static Domain (Optional)"
+                  value={config.ngrok_domain || ''}
+                  onChange={e => setConfig(c => ({ ...c, ngrok_domain: e.target.value }))}
+                  placeholder="e.g. my-hive.ngrok-free.app"
+                />
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer mt-1">
+                <input type="checkbox" checked={config.ngrok_enabled === 'true'} onChange={e => setConfig({ ...config, ngrok_enabled: e.target.checked ? 'true' : 'false' })} className="rounded bg-gray-900 border-gray-700 text-blue-500 focus:ring-blue-500" />
+                <span className="text-sm text-gray-300">Auto-start tunnel when Hive starts</span>
+              </label>
+              <div className="pt-4 border-t border-gray-800 flex flex-col gap-4">
+                <Input
+                  label="Manual Webhook Public Base URL"
+                  value={config.webhook_public_url || ''}
+                  onChange={e => setConfig(c => ({ ...c, webhook_public_url: e.target.value }))}
+                  placeholder="https://my-tunnel.ngrok-free.app"
+                />
+                <p className="text-xs text-gray-600 -mt-2">Only needed if you are running your own tunnel manually instead of using the built-in ngrok integration.</p>
+              </div>
+            </div>
+          </AdvancedDisclosure>
         </div>
 
         <Button onClick={handleSave} disabled={saving} className="mt-2 w-fit">
@@ -647,47 +691,46 @@ export function SettingsPage() {
         </div>
       </div>
 
-      {/* System Monitor */}
-      <SystemMonitor />
-
-      {/* Agent Data */}
       <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 flex flex-col gap-4">
-        <h2 className="text-sm font-semibold text-gray-300">Agent Data</h2>
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm text-gray-200">Shared Blackboard</p>
-            <p className="text-xs text-gray-500 mt-0.5">Notes written to <code className="bg-gray-800 px-1 rounded">~/.hive/shared/SHARED.md</code> by any agent</p>
-          </div>
-          <Button variant="danger" size="sm" onClick={handleClearBlackboard} disabled={clearingBlackboard}>
-            <Trash2 size={13} />
-            {clearingBlackboard ? 'Clearing…' : 'Clear'}
-          </Button>
-        </div>
-      </div>
+        <h2 className="text-sm font-semibold text-gray-300">Advanced</h2>
+        <AdvancedDisclosure id="settings-system-monitor" title="System resources" summary="Loaded models, RAM, and Ollama status">
+          <SystemMonitor embedded />
+        </AdvancedDisclosure>
 
-      {/* Run History */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 flex flex-col gap-4">
-        <h2 className="text-sm font-semibold text-gray-300">Run History</h2>
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm text-gray-200">Pipeline Runs</p>
-            <p className="text-xs text-gray-500 mt-0.5">Clears stored inputs, outputs, and step traces for all pipelines</p>
+        <AdvancedDisclosure id="settings-maintenance" title="Maintenance actions" summary="Clear shared notes and run history">
+          <div className="flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-200">Shared Blackboard</p>
+                <p className="text-xs text-gray-500 mt-0.5">Notes written to <code className="bg-gray-800 px-1 rounded">~/.hive/shared/SHARED.md</code> by any agent</p>
+              </div>
+              <Button variant="danger" size="sm" onClick={handleClearBlackboard} disabled={clearingBlackboard}>
+                <Trash2 size={13} />
+                {clearingBlackboard ? 'Clearing…' : 'Clear'}
+              </Button>
+            </div>
+            <div className="flex items-center justify-between border-t border-gray-800 pt-4">
+              <div>
+                <p className="text-sm text-gray-200">Pipeline Runs</p>
+                <p className="text-xs text-gray-500 mt-0.5">Clears stored inputs, outputs, and step traces for all pipelines</p>
+              </div>
+              <Button variant="danger" size="sm" onClick={handleClearPipelineRuns} disabled={clearingPipelineRuns}>
+                <Trash2 size={13} />
+                {clearingPipelineRuns ? 'Clearing…' : 'Clear all'}
+              </Button>
+            </div>
+            <div className="flex items-center justify-between border-t border-gray-800 pt-4">
+              <div>
+                <p className="text-sm text-gray-200">Schedule History</p>
+                <p className="text-xs text-gray-500 mt-0.5">Resets last run time, output, and error log for all schedules</p>
+              </div>
+              <Button variant="danger" size="sm" onClick={handleClearScheduleHistory} disabled={clearingScheduleHistory}>
+                <Trash2 size={13} />
+                {clearingScheduleHistory ? 'Clearing…' : 'Clear all'}
+              </Button>
+            </div>
           </div>
-          <Button variant="danger" size="sm" onClick={handleClearPipelineRuns} disabled={clearingPipelineRuns}>
-            <Trash2 size={13} />
-            {clearingPipelineRuns ? 'Clearing…' : 'Clear all'}
-          </Button>
-        </div>
-        <div className="flex items-center justify-between border-t border-gray-800 pt-4">
-          <div>
-            <p className="text-sm text-gray-200">Schedule History</p>
-            <p className="text-xs text-gray-500 mt-0.5">Resets last run time, output, and error log for all schedules</p>
-          </div>
-          <Button variant="danger" size="sm" onClick={handleClearScheduleHistory} disabled={clearingScheduleHistory}>
-            <Trash2 size={13} />
-            {clearingScheduleHistory ? 'Clearing…' : 'Clear all'}
-          </Button>
-        </div>
+        </AdvancedDisclosure>
       </div>
 
     </div>

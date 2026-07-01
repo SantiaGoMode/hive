@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Zap, Trash2, Clock, XCircle, Loader2, Users, RefreshCw, ArrowLeft, Plus, Pencil, Search, Link2 } from 'lucide-react';
+import { Zap, Trash2, Clock, XCircle, Loader2, Users, RefreshCw, ArrowLeft, Plus, Pencil, Search, Link2, ChevronRight } from 'lucide-react';
 import { api } from '../../lib/api';
 import { Button } from '../../components/ui/Button';
 import { formatDate } from '../../lib/utils';
@@ -45,6 +45,7 @@ export function useColonyPage() {
   const [boardSearch, setBoardSearch] = useState('');
   const [launching, setLaunching] = useState(false);
   const [launchError, setLaunchError] = useState('');
+  const [launchAdvancedOpen, setLaunchAdvancedOpen] = useState(false);
 
   // ── Run display state ───────────────────────────────────────────────────────
   const [colonies, setColonies] = useState([]);          // flat run list (status bookkeeping)
@@ -696,13 +697,7 @@ export function useColonyPage() {
                 </div>
 
                 <div className="flex flex-col gap-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium text-gray-400">Operator / base model</span>
-                    <button type="button" onClick={handleProposeModels} disabled={proposing} className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 disabled:opacity-50">
-                      {proposing ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
-                      {modelPlan ? 'Re-propose plan' : 'Let operator propose a per-role plan'}
-                    </button>
-                  </div>
+                  <span className="text-xs font-medium text-gray-400">Operator / base model</span>
                   <select value={model} onChange={e => setModel(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500">
                     {Object.entries(groupedModels).map(([prov, list]) => {
                       const opts = (Array.isArray(list) ? list : []).filter(m => cloudEnabled || (m.provider || prov) === 'ollama');
@@ -710,54 +705,85 @@ export function useColonyPage() {
                       return <optgroup key={prov} label={PROVIDER_LABEL[prov] || prov}>{opts.map(m => <option key={m.id} value={m.id}>{m.name || m.id}</option>)}</optgroup>;
                     })}
                   </select>
-                  {modelPlan && overview?.crew?.length > 0 && (
-                    <div className="mt-1 rounded-lg border border-gray-800 overflow-hidden">
-                      <div className="px-3 py-1.5 bg-gray-900/60 text-xs text-gray-500 border-b border-gray-800">Model plan — operator proposed, editable</div>
-                      {[{ role_key: 'operator', display_name: 'Operator' }, ...overview.crew].map(member => (
-                        <div key={member.role_key} className="flex items-center gap-2 px-3 py-1.5 border-b border-gray-800/60 last:border-0">
-                          <span className="text-xs text-gray-400 w-32 flex-shrink-0 truncate">{member.display_name}</span>
-                          <select value={modelPlan[member.role_key] || ''} onChange={e => setModelPlan(p => ({ ...p, [member.role_key]: e.target.value }))} className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500">
-                            {models.map(m => <option key={m.id} value={m.id}>{m.name || m.id}</option>)}
-                          </select>
+                </div>
+
+                <div className="rounded-lg border border-gray-800 bg-gray-950/30">
+                  <button
+                    type="button"
+                    aria-expanded={launchAdvancedOpen}
+                    aria-controls="colony-launch-advanced"
+                    onClick={() => setLaunchAdvancedOpen(v => !v)}
+                    className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-gray-800/40 transition-colors"
+                  >
+                    <div>
+                      <p className="text-xs font-medium text-gray-300">Advanced launch settings</p>
+                      <p className="text-xs text-gray-600 mt-0.5">
+                        {modelPlan ? 'Per-role model plan · ' : ''}{selectedWebhookId ? 'webhook trigger selected' : 'per-role model plan and webhook trigger'}
+                      </p>
+                    </div>
+                    <ChevronRight size={13} className={`text-gray-500 transition-transform ${launchAdvancedOpen ? 'rotate-90' : ''}`} />
+                  </button>
+                  {launchAdvancedOpen && (
+                    <div id="colony-launch-advanced" className="border-t border-gray-800 px-3 py-3">
+                      <div className="flex flex-col gap-4">
+                        <div className="flex flex-col gap-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-xs font-medium text-gray-400">Per-role model plan</span>
+                            <button type="button" onClick={handleProposeModels} disabled={proposing} className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 disabled:opacity-50">
+                              {proposing ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
+                              {modelPlan ? 'Re-propose plan' : 'Let operator propose'}
+                            </button>
+                          </div>
+                          {modelPlan && overview?.crew?.length > 0 && (
+                            <div className="rounded-lg border border-gray-800 overflow-hidden">
+                              <div className="px-3 py-1.5 bg-gray-900/60 text-xs text-gray-500 border-b border-gray-800">Operator proposed, editable</div>
+                              {[{ role_key: 'operator', display_name: 'Operator' }, ...overview.crew].map(member => (
+                                <div key={member.role_key} className="flex items-center gap-2 px-3 py-1.5 border-b border-gray-800/60 last:border-0">
+                                  <span className="text-xs text-gray-400 w-32 flex-shrink-0 truncate">{member.display_name}</span>
+                                  <select value={modelPlan[member.role_key] || ''} onChange={e => setModelPlan(p => ({ ...p, [member.role_key]: e.target.value }))} className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500">
+                                    {models.map(m => <option key={m.id} value={m.id}>{m.name || m.id}</option>)}
+                                  </select>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                      ))}
+
+                        <div className="flex flex-col gap-1.5 pt-3 border-t border-gray-800">
+                          <span className="text-xs font-medium text-gray-400">Webhook trigger</span>
+                          <select
+                            value={selectedWebhookId}
+                            onChange={e => setSelectedWebhookId(e.target.value)}
+                            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          >
+                            <option value="">No webhook selected</option>
+                            {webhooks.map(webhook => (
+                              <option key={webhook.id} value={webhook.id}>{webhook.name}</option>
+                            ))}
+                          </select>
+                          <div className="flex flex-wrap gap-1.5 items-center">
+                            {[['issue', 'New issue'], ['task', 'New task'], ['comment', 'New comment']].map(([key, label]) => {
+                              const on = triggerEvents.includes(key);
+                              return (
+                                <button key={key} type="button" onClick={() => setTriggerEvents(t => on ? t.filter(x => x !== key) : [...t, key])} className={`text-xs rounded-md px-2.5 py-1 border transition-colors ${on ? 'border-blue-500/50 bg-blue-500/10 text-blue-300' : 'border-gray-800 text-gray-500 hover:border-gray-700'}`}>
+                                  {on ? '✓ ' : ''}{label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          {triggerEvents.includes('comment') && (
+                            <input
+                              value={commentToken}
+                              onChange={e => setCommentToken(e.target.value)}
+                              placeholder="@hive"
+                              className="w-40 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-600"
+                            />
+                          )}
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>
-
-                <details className="group">
-                  <summary className="text-xs font-medium text-gray-400 cursor-pointer hover:text-gray-300 select-none">Webhook trigger (optional)</summary>
-                  <div className="flex flex-col gap-1.5 pt-2">
-                    <select
-                      value={selectedWebhookId}
-                      onChange={e => setSelectedWebhookId(e.target.value)}
-                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      <option value="">No webhook selected</option>
-                      {webhooks.map(webhook => (
-                        <option key={webhook.id} value={webhook.id}>{webhook.name}</option>
-                      ))}
-                    </select>
-                    <div className="flex flex-wrap gap-1.5 items-center">
-                      {[['issue', 'New issue'], ['task', 'New task'], ['comment', 'New comment']].map(([key, label]) => {
-                        const on = triggerEvents.includes(key);
-                        return (
-                          <button key={key} type="button" onClick={() => setTriggerEvents(t => on ? t.filter(x => x !== key) : [...t, key])} className={`text-xs rounded-md px-2.5 py-1 border transition-colors ${on ? 'border-blue-500/50 bg-blue-500/10 text-blue-300' : 'border-gray-800 text-gray-500 hover:border-gray-700'}`}>
-                            {on ? '✓ ' : ''}{label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    {triggerEvents.includes('comment') && (
-                      <input
-                        value={commentToken}
-                        onChange={e => setCommentToken(e.target.value)}
-                        placeholder="@hive"
-                        className="w-40 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-600"
-                      />
-                    )}
-                  </div>
-                </details>
 
                 {launchError && <p className="text-xs text-red-400">{launchError}</p>}
                 <Button onClick={handleLaunch} disabled={(!goal.trim() && !selectedBoardCard) || !model || launching || !!activeColonyId}>

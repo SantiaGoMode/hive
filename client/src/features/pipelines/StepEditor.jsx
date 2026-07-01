@@ -1,5 +1,6 @@
 // Extracted from PipelinesPage (#23).
-import { Trash2, GitMerge, AlertCircle, Wrench } from 'lucide-react';
+import { useState } from 'react';
+import { Trash2, GitMerge, AlertCircle, Wrench, ChevronRight } from 'lucide-react';
 import { Input, Textarea } from '../../components/ui/Input';
 import { ToolPicker } from '../../components/ToolPicker';
 
@@ -9,6 +10,32 @@ function toolLabel(id, mcpServers) {
     return server?.name || id;
   }
   return id;
+}
+
+function AdvancedDisclosure({ id, title, summary, children, defaultOpen = false }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="pt-2 border-t border-gray-700/50">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen(v => !v)}
+        className="flex w-full items-center justify-between gap-3 rounded-lg px-2 py-2 text-left hover:bg-gray-800/50 transition-colors"
+      >
+        <div>
+          <p className="text-xs font-medium text-gray-300">{title}</p>
+          {summary && <p className="text-xs text-gray-600 mt-0.5">{summary}</p>}
+        </div>
+        <ChevronRight size={13} className={`text-gray-500 transition-transform ${open ? 'rotate-90' : ''}`} />
+      </button>
+      {open && (
+        <div id={id} className="mt-2 flex flex-col gap-3">
+          {children}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function StepEditor({ step, agents, mcpServers, onChange, onRemove, index, errors = {} }) {
@@ -68,40 +95,47 @@ export function StepEditor({ step, agents, mcpServers, onChange, onRemove, index
       />
       <p className="text-xs text-gray-600">Variables: <code className="text-gray-500">{'{prev}'}</code> = last output · <code className="text-gray-500">{'{input}'}</code> = original input</p>
 
-      {/* Tool picker */}
-      <div className="pt-2 border-t border-gray-700/50">
-        {tools.length > 0 && (
-          <div className="mb-3 rounded-md border border-blue-700/30 bg-blue-500/5 p-2">
-            <div className="flex items-center gap-1.5 text-xs font-medium text-blue-300">
-              <Wrench size={11} />
-              Step tool override
-            </div>
-            <p className="mt-1 text-xs text-gray-500">
-              This step uses {tools.length} explicit tool{tools.length !== 1 ? 's' : ''}: {tools.map(id => toolLabel(id, mcpServers)).join(', ')}
-            </p>
-          </div>
-        )}
-        <ToolPicker
-          tools={tools}
-          onChange={t => onChange({ ...step, tools: t })}
-          mcpServers={mcpServers}
-          overrideHint="These tools override the agent's configured tools for this step only."
-        />
-      </div>
-
-      {/* Parallel toggle */}
-      <div
-        className="flex items-center justify-between pt-2 border-t border-gray-700/50 cursor-pointer select-none"
-        onClick={() => onChange({ ...step, parallel: !step.parallel })}
+      <AdvancedDisclosure
+        id={`pipeline-step-${index}-advanced`}
+        title="Advanced step options"
+        summary={`${tools.length} tool override${tools.length === 1 ? '' : 's'}${step.parallel ? ' · parallel enabled' : ''}`}
+        defaultOpen={tools.length > 0 || !!step.parallel}
       >
         <div>
-          <p className="text-xs font-medium text-gray-300">Run in parallel</p>
-          <p className="text-xs text-gray-600">Consecutive parallel steps run simultaneously via Promise.all</p>
+          {tools.length > 0 && (
+            <div className="mb-3 rounded-md border border-blue-700/30 bg-blue-500/5 p-2">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-blue-300">
+                <Wrench size={11} />
+                Step tool override
+              </div>
+              <p className="mt-1 text-xs text-gray-500">
+                This step uses {tools.length} explicit tool{tools.length !== 1 ? 's' : ''}: {tools.map(id => toolLabel(id, mcpServers)).join(', ')}
+              </p>
+            </div>
+          )}
+          <ToolPicker
+            tools={tools}
+            onChange={t => onChange({ ...step, tools: t })}
+            mcpServers={mcpServers}
+            overrideHint="These tools override the agent's configured tools for this step only."
+          />
         </div>
-        <div className={`w-9 h-5 rounded-full flex-shrink-0 transition-colors ${step.parallel ? 'bg-purple-600' : 'bg-gray-700'} relative`}>
-          <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${step.parallel ? 'translate-x-4' : 'translate-x-0.5'}`} />
-        </div>
-      </div>
+
+        <button
+          type="button"
+          className="flex w-full items-center justify-between rounded-lg border border-gray-700/50 px-3 py-2 text-left transition-colors hover:border-gray-600 select-none"
+          onClick={() => onChange({ ...step, parallel: !step.parallel })}
+          aria-pressed={!!step.parallel}
+        >
+          <div>
+            <p className="text-xs font-medium text-gray-300">Run in parallel</p>
+            <p className="text-xs text-gray-600">Consecutive parallel steps run simultaneously via Promise.all</p>
+          </div>
+          <div className={`w-9 h-5 rounded-full flex-shrink-0 transition-colors ${step.parallel ? 'bg-purple-600' : 'bg-gray-700'} relative`}>
+            <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${step.parallel ? 'translate-x-4' : 'translate-x-0.5'}`} />
+          </div>
+        </button>
+      </AdvancedDisclosure>
     </div>
   );
 }

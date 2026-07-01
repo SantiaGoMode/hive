@@ -17,6 +17,32 @@ function CopyBtn({ text }) {
   );
 }
 
+function AdvancedDisclosure({ id, title, summary, children, defaultOpen = false }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="rounded-lg border border-gray-800 bg-[#0f1117]/60">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen(v => !v)}
+        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-gray-800/40 transition-colors"
+      >
+        <div>
+          <p className="text-xs font-medium text-gray-300">{title}</p>
+          {summary && <p className="text-xs text-gray-600 mt-0.5">{summary}</p>}
+        </div>
+        <ChevronDown size={13} className={`text-gray-500 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div id={id} className="border-t border-gray-800 px-3 py-3">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // The built-in tool groups + compact tool picker are shared via
 // components/ToolPicker (issue #4) with PipelinesPage.
 
@@ -50,6 +76,8 @@ function ScheduleEditor({ schedule, agents, onSave, onClose }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [mcpServers, setMcpServers] = useState([]);
+  const hasCustomCron = presetKey === 'custom';
+  const hasToolOverrides = form.tools.length > 0;
 
   useEffect(() => {
     api.getMcpServers().then(setMcpServers).catch(() => setMcpServers([]));
@@ -128,13 +156,6 @@ function ScheduleEditor({ schedule, agents, onSave, onClose }) {
             >
               {PRESETS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
             </select>
-            <input
-              className="w-full bg-[#0f1117] border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 font-mono focus:outline-none focus:border-blue-500"
-              placeholder="cron expression: min hr dom mon dow"
-              value={form.cron_expr}
-              onChange={e => { setPresetKey('custom'); set('cron_expr', e.target.value); }}
-            />
-            <p className="text-xs text-gray-600 mt-1">Format: minute hour day-of-month month day-of-week</p>
           </div>
 
           {/* Prompt */}
@@ -149,15 +170,31 @@ function ScheduleEditor({ schedule, agents, onSave, onClose }) {
             />
           </div>
 
-          {/* Tools */}
-          <div>
-            <ToolPicker
-              tools={form.tools}
-              onChange={t => set('tools', t)}
-              mcpServers={mcpServers}
-              overrideHint="Overrides the agent's configured tools for this schedule."
-            />
-          </div>
+          <AdvancedDisclosure
+            id="schedule-advanced"
+            title="Advanced schedule options"
+            summary={`${hasCustomCron ? `Custom cron ${form.cron_expr}` : 'Raw cron expression'} · ${form.tools.length} tool override${form.tools.length === 1 ? '' : 's'}`}
+            defaultOpen={hasCustomCron || hasToolOverrides}
+          >
+            <div className="flex flex-col gap-4">
+              <div>
+                <label className="text-xs text-gray-400 font-medium block mb-1">Cron expression</label>
+                <input
+                  className="w-full bg-[#0f1117] border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 font-mono focus:outline-none focus:border-blue-500"
+                  placeholder="cron expression: min hr dom mon dow"
+                  value={form.cron_expr}
+                  onChange={e => { setPresetKey('custom'); set('cron_expr', e.target.value); }}
+                />
+                <p className="text-xs text-gray-600 mt-1">Format: minute hour day-of-month month day-of-week</p>
+              </div>
+              <ToolPicker
+                tools={form.tools}
+                onChange={t => set('tools', t)}
+                mcpServers={mcpServers}
+                overrideHint="Overrides the agent's configured tools for this schedule."
+              />
+            </div>
+          </AdvancedDisclosure>
 
           {/* Enabled */}
           <label className="flex items-center gap-2 cursor-pointer select-none">
@@ -192,10 +229,9 @@ function ScheduleEditor({ schedule, agents, onSave, onClose }) {
 }
 
 // ── Schedule card ─────────────────────────────────────────────────────────────
-function ScheduleCard({ schedule, agents, onEdit, onDelete, onToggle, onRunNow, onRefresh }) {
+function ScheduleCard({ schedule, agents, onEdit, onDelete, onToggle, onRefresh }) {
   const [expanded, setExpanded] = useState(false);
   const [running, setRunning] = useState(false);
-  const [deleting, setDeleting] = useState(false);
   const [clearingHistory, setClearingHistory] = useState(false);
 
   const agent = agents.find(a => a.id === schedule.agent_id);
@@ -433,7 +469,6 @@ export default function SchedulesPage() {
               onEdit={setEditTarget}
               onDelete={setDeleteId}
               onToggle={handleToggle}
-              onRunNow={() => {}}
               onRefresh={load}
             />
           ))}

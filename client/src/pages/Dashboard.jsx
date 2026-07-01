@@ -1,5 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, Search, MessageSquare, Clock, Upload, Download, ChevronRight, Zap, RefreshCw } from 'lucide-react';
+import {
+  Plus, Search, MessageSquare, Clock, Upload, Download, ChevronRight, Zap,
+  RefreshCw, Wifi, WifiOff, Activity, Server, CalendarDays, Bot, AlertTriangle,
+  CheckCircle, XCircle, Square, Loader2, Settings, Gauge,
+} from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAgentStore } from '../stores/agentStore';
 import { AgentCard } from '../components/agents/AgentCard';
@@ -20,6 +24,235 @@ const STARTER_MODELS = [
   { name: 'mistral:7b', label: 'Mistral 7B', desc: 'Balanced · 4.1 GB · Strong reasoning' },
   { name: 'qwen3.5:latest', label: 'Qwen 3.5', desc: 'Advanced · 6.6 GB · Tool calling + thinking' },
 ];
+
+const fmtCurrency = (value) => (
+  typeof value === 'number' ? `$${value.toFixed(value >= 1 ? 2 : 4)}` : 'n/a'
+);
+
+function statusTone(ok, warn = false) {
+  if (ok) return 'border-green-500/30 bg-green-500/10 text-green-300';
+  if (warn) return 'border-yellow-500/30 bg-yellow-500/10 text-yellow-300';
+  return 'border-red-500/30 bg-red-500/10 text-red-300';
+}
+
+function StatusBadge({ ok, warn, children }) {
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs ${statusTone(ok, warn)}`}>
+      {ok ? <CheckCircle size={11} /> : warn ? <AlertTriangle size={11} /> : <XCircle size={11} />}
+      {children}
+    </span>
+  );
+}
+
+function DashboardLink({ icon, children, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className="inline-flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
+    >
+      {icon}
+      {children}
+    </button>
+  );
+}
+
+function OperationalHealthPanel({ models }) {
+  const navigate = useNavigate();
+  const [metrics, setMetrics] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [stopping, setStopping] = useState(null);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      setMetrics(await api.getSystemMetrics());
+    } catch {
+      setMetrics(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    const t = setInterval(refresh, 15000);
+    return () => clearInterval(t);
+  }, [refresh]);
+
+  const handleStop = async (modelName) => {
+    setStopping(modelName);
+    try {
+      await api.stopModel(modelName);
+      toast.success(`Unloaded ${modelName}`);
+      await refresh();
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setStopping(null);
+    }
+  };
+
+  const ollama = metrics?.ollama;
+  const gateway = metrics?.gateway;
+  const installedOllama = Array.isArray(models?.ollama) ? models.ollama : [];
+  const loaded = Array.isArray(ollama?.loaded_model_details) ? ollama.loaded_model_details : [];
+  const logs = (metrics?.recent_logs || []).filter(l => l.level === 'warn' || l.level === 'error').slice(-5).reverse();
+  const lifecycleEntries = Object.values(metrics?.scheduler_lifecycle || {});
+  const schedulerErrors = lifecycleEntries.filter(s => s?.last_error || s?.status_error);
+  const schedulerRunning = lifecycleEntries.length ? lifecycleEntries.some(s => s.running) : !!metrics?.staff_scheduler?.started;
+  const gatewayOk = !!gateway?.enabled && gateway.reachable === true;
+  const gatewayWarn = !gateway?.enabled || gateway.reachable == null;
+
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 flex flex-col gap-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <Gauge size={15} className="text-blue-400" />
+            <h2 className="text-sm font-semibold text-gray-200">Workflow Health</h2>
+          </div>
+          <p className="text-xs text-gray-500 mt-1">Operational status for local models, schedulers, colonies, and gateway usage.</p>
+        </div>
+        <button onClick={refresh} className="p-1 text-gray-500 hover:text-gray-300 rounded transition-colors" title="Refresh workflow health">
+          <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+        </button>
+      </div>
+
+      {!metrics && !loading ? (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
+          Could not load system metrics.
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+            <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="flex items-center gap-1.5 text-xs font-medium text-gray-400"><Server size={12} /> Ollama</p>
+                {ollama ? (
+                  <StatusBadge ok={ollama.reachable}>{ollama.reachable ? 'Ready' : 'Unreachable'}</StatusBadge>
+                ) : <span className="text-xs text-gray-600">Loading</span>}
+              </div>
+              <p className="mt-2 text-lg font-semibold text-gray-100">{loaded.length} loaded</p>
+              <p className="text-xs text-gray-500">{installedOllama.length} installed{ollama?.url ? ` at ${ollama.url}` : ''}</p>
+              <div className="mt-3 flex flex-wrap gap-3">
+                <DashboardLink icon={<Download size={12} />} onClick={() => navigate('/models')}>Models</DashboardLink>
+                <DashboardLink icon={<Settings size={12} />} onClick={() => navigate('/settings')}>Settings</DashboardLink>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="flex items-center gap-1.5 text-xs font-medium text-gray-400"><Activity size={12} /> Gateway</p>
+                {gateway ? (
+                  <StatusBadge ok={gatewayOk} warn={gatewayWarn || !gateway.enabled}>
+                    {!gateway.enabled ? 'Off' : gateway.reachable ? 'Ready' : gatewayWarn ? 'Checking' : 'Failed'}
+                  </StatusBadge>
+                ) : <span className="text-xs text-gray-600">Loading</span>}
+              </div>
+              <p className="mt-2 text-lg font-semibold text-gray-100">{fmtCurrency(gateway?.spend?.totals?.spend_usd)}</p>
+              <p className="text-xs text-gray-500">{gateway?.message || 'Gateway status unavailable'}</p>
+              <div className="mt-3 flex flex-wrap gap-3">
+                <DashboardLink icon={<Settings size={12} />} onClick={() => navigate('/settings')}>Provider settings</DashboardLink>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="flex items-center gap-1.5 text-xs font-medium text-gray-400"><Bot size={12} /> Colonies</p>
+                <StatusBadge ok={(metrics?.active_colony_runs || 0) === 0} warn={(metrics?.active_colony_runs || 0) > 0}>
+                  {(metrics?.active_colony_runs || 0) > 0 ? 'Running' : 'Idle'}
+                </StatusBadge>
+              </div>
+              <p className="mt-2 text-lg font-semibold text-gray-100">{metrics?.active_colony_runs ?? '...'}</p>
+              <p className="text-xs text-gray-500">Active colony runs</p>
+              <div className="mt-3 flex flex-wrap gap-3">
+                <DashboardLink icon={<Bot size={12} />} onClick={() => navigate('/colony')}>Colony</DashboardLink>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="flex items-center gap-1.5 text-xs font-medium text-gray-400"><CalendarDays size={12} /> Schedulers</p>
+                <StatusBadge ok={schedulerRunning && schedulerErrors.length === 0} warn={!schedulerRunning && schedulerErrors.length === 0}>
+                  {schedulerErrors.length ? 'Errors' : schedulerRunning ? 'Running' : 'Stopped'}
+                </StatusBadge>
+              </div>
+              <p className="mt-2 text-lg font-semibold text-gray-100">{metrics?.scheduled_tasks ?? '...'}</p>
+              <p className="text-xs text-gray-500">Scheduled tasks</p>
+              <div className="mt-3 flex flex-wrap gap-3">
+                <DashboardLink icon={<CalendarDays size={12} />} onClick={() => navigate('/schedules')}>Schedules</DashboardLink>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-3">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-medium text-gray-400 flex items-center gap-1.5">
+                  {ollama?.reachable ? <Wifi size={12} /> : <WifiOff size={12} />}
+                  Model visibility
+                </p>
+                {ollama && !ollama.reachable && <StatusBadge ok={false}>Ollama unreachable</StatusBadge>}
+              </div>
+              {loaded.length ? (
+                <div className="flex flex-col gap-2">
+                  {loaded.map(m => (
+                    <div key={m.name || m.model} className="flex items-center justify-between gap-3 rounded-md border border-gray-800 bg-gray-900 px-3 py-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm text-gray-200">{m.name || m.model}</p>
+                        <p className="text-xs text-gray-500">{[m.parameter_size, m.quantization_level].filter(Boolean).join(' · ') || 'Loaded in memory'}</p>
+                      </div>
+                      <button
+                        onClick={() => handleStop(m.name || m.model)}
+                        disabled={stopping === (m.name || m.model)}
+                        title="Unload model from memory"
+                        className="flex items-center gap-1 text-xs px-2 py-1 rounded border border-red-700/40 bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors disabled:opacity-50"
+                      >
+                        {stopping === (m.name || m.model) ? <Loader2 size={10} className="animate-spin" /> : <Square size={10} />}
+                        {stopping === (m.name || m.model) ? 'Stopping' : 'Unload'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-gray-600">No Ollama models are loaded in memory.</p>
+              )}
+              {installedOllama.length > 0 && (
+                <p className="mt-3 text-xs text-gray-500 truncate">
+                  Installed: {installedOllama.slice(0, 5).map(m => m.name || m.id).join(', ')}
+                  {installedOllama.length > 5 ? `, +${installedOllama.length - 5} more` : ''}
+                </p>
+              )}
+            </div>
+
+            <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-3">
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-medium text-gray-400 flex items-center gap-1.5"><AlertTriangle size={12} /> Recent warnings/errors</p>
+                {logs.length ? <StatusBadge ok={false} warn>{logs.length} recent</StatusBadge> : <StatusBadge ok>No recent issues</StatusBadge>}
+              </div>
+              {logs.length ? (
+                <div className="flex flex-col gap-2">
+                  {logs.map((log, idx) => (
+                    <div key={`${log.ts}-${idx}`} className="rounded-md border border-gray-800 bg-gray-900 px-3 py-2">
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <span className={log.level === 'error' ? 'text-red-300' : 'text-yellow-300'}>{log.level}</span>
+                        <span className="text-gray-600">{log.ts ? new Date(log.ts).toLocaleTimeString() : ''}</span>
+                      </div>
+                      <p className="mt-1 text-sm text-gray-300 truncate">{log.component}: {log.event}</p>
+                      {log.meta?.message && <p className="text-xs text-gray-500 truncate">{log.meta.message}</p>}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-gray-600">No warnings or errors have been recorded in the metrics buffer.</p>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 function OllamaConnectionCheck() {
   const [status, setStatus] = useState(null);   // null = checking
@@ -317,6 +550,8 @@ export function Dashboard() {
           {error}
         </div>
       )}
+
+      <OperationalHealthPanel models={models} />
 
       {searchMode === 'sessions' ? (
         <div>

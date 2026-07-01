@@ -30,11 +30,51 @@ describe('GET /api/system/metrics', () => {
     assert.equal(typeof b.ollama.reachable, 'boolean');
     assert.equal(typeof b.ollama.url, 'string');
     assert.equal(typeof b.ollama.loaded_models, 'number');
+    assert.ok(Array.isArray(b.ollama.loaded_model_details));
     assert.equal(typeof b.gateway.enabled, 'boolean');
     assert.ok('reachable' in b.gateway);
     assert.equal(typeof b.gateway.message, 'string');
     assert.equal(typeof b.gateway.spend.enabled, 'boolean');
     assert.ok(Array.isArray(b.recent_logs));
+  });
+
+  it('returns sanitized loaded Ollama model details', async () => {
+    const savedFetch = global.fetch;
+    global.fetch = async (url) => {
+      if (String(url).includes('/api/ps')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            models: [{
+              name: 'llama3.2:3b',
+              model: 'llama3.2:3b',
+              size: 2019393189,
+              size_vram: 1024,
+              expires_at: '2026-07-01T12:00:00Z',
+              details: { parameter_size: '3.2B', quantization_level: 'Q4_K_M', family: 'llama' },
+            }],
+          }),
+        };
+      }
+      return { ok: false, status: 503, json: async () => ({}) };
+    };
+    try {
+      const res = await request(app).get('/api/system/metrics').expect(200);
+      assert.equal(res.body.ollama.reachable, true);
+      assert.equal(res.body.ollama.loaded_models, 1);
+      assert.deepEqual(res.body.ollama.loaded_model_details, [{
+        name: 'llama3.2:3b',
+        model: 'llama3.2:3b',
+        size: 2019393189,
+        size_vram: 1024,
+        expires_at: '2026-07-01T12:00:00Z',
+        parameter_size: '3.2B',
+        quantization_level: 'Q4_K_M',
+      }]);
+    } finally {
+      global.fetch = savedFetch;
+    }
   });
 
   it('never leaks gateway url/key or api keys', async () => {

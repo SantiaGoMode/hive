@@ -80,6 +80,33 @@ const TOOLS = [
 
 
 const BASE_TABS = ['Identity', 'Model', 'System Prompt', 'Tools', 'Memory', 'Advanced'];
+const ROUTINE_TOOLS = new Set(['agent_tools', 'memory', 'web_search']);
+
+function AdvancedDisclosure({ id, title, summary, children, defaultOpen = false }) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="rounded-lg border border-gray-800 bg-gray-900/40">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen(v => !v)}
+        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-gray-800/40 transition-colors"
+      >
+        <div>
+          <p className="text-xs font-medium text-gray-300">{title}</p>
+          {summary && <p className="text-xs text-gray-600 mt-0.5">{summary}</p>}
+        </div>
+        <ChevronRight size={14} className={`text-gray-500 transition-transform ${open ? 'rotate-90' : ''}`} />
+      </button>
+      {open && (
+        <div id={id} className="border-t border-gray-800 px-3 py-3">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function AgentEditor({ open, onClose, agent, initialValues }) {
   const { createAgent, updateAgent } = useAgentStore();
@@ -214,6 +241,9 @@ export function AgentEditor({ open, onClose, agent, initialValues }) {
     ...f,
     tools: f.tools.includes(id) ? f.tools.filter(t => t !== id) : [...f.tools, id],
   }));
+  const routineTools = TOOLS.filter(tool => ROUTINE_TOOLS.has(tool.id));
+  const advancedTools = TOOLS.filter(tool => !ROUTINE_TOOLS.has(tool.id));
+  const selectedMcpCount = form.tools.filter(id => id.startsWith('mcp:')).length;
 
   const handleSave = async () => {
     if (!form.name.trim()) return toast.error('Name is required');
@@ -336,41 +366,49 @@ export function AgentEditor({ open, onClose, agent, initialValues }) {
                 className="w-full accent-blue-500" />
               <div className="flex justify-between text-xs text-gray-500 mt-1"><span>Precise</span><span>Creative</span></div>
             </div>
-            <div>
-              <label className="text-sm font-medium text-gray-300 block mb-1">
-                Max Tokens (num_predict): {form.max_tokens.toLocaleString()}
-                <span className="text-gray-500 font-normal ml-2 text-xs">max output per response</span>
-              </label>
-              <input type="range" min="256" max="32768" step="256" value={form.max_tokens}
-                onChange={e => set('max_tokens', parseInt(e.target.value))}
-                className="w-full accent-blue-500" />
-              <div className="flex justify-between text-xs text-gray-500 mt-1"><span>256</span><span>32k</span></div>
-            </div>
-            <div>
-              <label className="text-sm font-medium text-gray-300 block mb-1">
-                Context Window (num_ctx): {form.context_length.toLocaleString()}
-                {form.context_length >= 65536 && <span className="text-blue-400 text-xs ml-2">64k+</span>}
-                <span className="text-gray-500 font-normal ml-2 text-xs">conversation memory — auto-expanded if Max Tokens exceeds this</span>
-              </label>
-              <input type="range" min="2048" max="131072" step="2048" value={form.context_length}
-                onChange={e => set('context_length', parseInt(e.target.value))}
-                className="w-full accent-blue-500" />
-              <div className="flex justify-between text-xs text-gray-500 mt-1"><span>2k</span><span>128k</span></div>
-            </div>
-            <div>
-              <label className="text-sm font-medium text-gray-300 block mb-1">
-                LLM Gateway budget (USD)
-                <span className="text-gray-500 font-normal ml-2 text-xs">optional — caps this agent's spend via a dedicated gateway key</span>
-              </label>
-              <input
-                type="number" min="0" step="0.5"
-                value={form.gateway_budget_usd ?? ''}
-                onChange={e => set('gateway_budget_usd', e.target.value === '' ? null : parseFloat(e.target.value))}
-                placeholder="No limit"
-                className="w-40 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-gray-200"
-              />
-              <p className="text-xs text-gray-600 mt-1">Requires the LLM gateway (Settings → Model Providers). When set, calls run on a per-agent key with this hard cap; changing it re-mints the key.</p>
-            </div>
+            <AdvancedDisclosure
+              id="agent-model-advanced"
+              title="Advanced model settings"
+              summary={`Output ${form.max_tokens.toLocaleString()} tokens · context ${form.context_length.toLocaleString()}${form.gateway_budget_usd != null ? ` · budget $${form.gateway_budget_usd}` : ''}`}
+            >
+              <div className="flex flex-col gap-4">
+                <div>
+                  <label className="text-sm font-medium text-gray-300 block mb-1">
+                    Max Tokens (num_predict): {form.max_tokens.toLocaleString()}
+                    <span className="text-gray-500 font-normal ml-2 text-xs">max output per response</span>
+                  </label>
+                  <input type="range" min="256" max="32768" step="256" value={form.max_tokens}
+                    onChange={e => set('max_tokens', parseInt(e.target.value))}
+                    className="w-full accent-blue-500" />
+                  <div className="flex justify-between text-xs text-gray-500 mt-1"><span>256</span><span>32k</span></div>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-gray-300 block mb-1">
+                    Context Window (num_ctx): {form.context_length.toLocaleString()}
+                    {form.context_length >= 65536 && <span className="text-blue-400 text-xs ml-2">64k+</span>}
+                    <span className="text-gray-500 font-normal ml-2 text-xs">conversation memory — auto-expanded if Max Tokens exceeds this</span>
+                  </label>
+                  <input type="range" min="2048" max="131072" step="2048" value={form.context_length}
+                    onChange={e => set('context_length', parseInt(e.target.value))}
+                    className="w-full accent-blue-500" />
+                  <div className="flex justify-between text-xs text-gray-500 mt-1"><span>2k</span><span>128k</span></div>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-gray-300 block mb-1">
+                    LLM Gateway budget (USD)
+                    <span className="text-gray-500 font-normal ml-2 text-xs">optional — caps this agent's spend via a dedicated gateway key</span>
+                  </label>
+                  <input
+                    type="number" min="0" step="0.5"
+                    value={form.gateway_budget_usd ?? ''}
+                    onChange={e => set('gateway_budget_usd', e.target.value === '' ? null : parseFloat(e.target.value))}
+                    placeholder="No limit"
+                    className="w-40 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-gray-200"
+                  />
+                  <p className="text-xs text-gray-600 mt-1">Requires the LLM gateway (Settings → Model Providers). When set, calls run on a per-agent key with this hard cap; changing it re-mints the key.</p>
+                </div>
+              </div>
+            </AdvancedDisclosure>
           </div>
         )}
 
@@ -392,7 +430,7 @@ export function AgentEditor({ open, onClose, agent, initialValues }) {
 
         {tab === 3 && (
           <div className="flex flex-col gap-3">
-            {TOOLS.map(tool => (
+            {routineTools.map(tool => (
               <div key={tool.id}
                 className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-colors ${form.tools.includes(tool.id) ? 'border-blue-500/50 bg-blue-500/5' : 'border-gray-700 hover:border-gray-600'}`}
                 onClick={() => toggleTool(tool.id)}
@@ -418,96 +456,117 @@ export function AgentEditor({ open, onClose, agent, initialValues }) {
               </div>
             )}
 
-            {/* Sandbox status — shown when sandbox tool is enabled and agent exists */}
-            {form.tools.includes('sandbox') && agent?.id && (
-              <div className="mt-1 p-3 rounded-lg border border-gray-700/60 bg-gray-800/30 flex items-center gap-3">
-                <Terminal size={13} className="text-gray-500 flex-shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-medium text-gray-300">Sandbox container</p>
-                  {!sandboxStatus ? (
-                    <p className="text-xs text-gray-600">Checking…</p>
-                  ) : !sandboxStatus.docker ? (
-                    <p className="text-xs text-yellow-500">Docker not available</p>
-                  ) : (
-                    <p className="text-xs">
-                      <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${sandboxStatus.status === 'running' ? 'bg-green-400' : 'bg-gray-600'}`} />
-                      <span className="text-gray-400">{sandboxStatus.status}</span>
-                    </p>
-                  )}
-                </div>
-                {sandboxStatus?.docker && (
-                  <div className="flex gap-1.5 flex-shrink-0">
-                    {sandboxStatus.status !== 'running' && (
-                      <button
-                        onClick={handleSandboxStart}
-                        disabled={sandboxBusy}
-                        className="px-2 py-1 text-xs bg-green-600/20 text-green-400 border border-green-600/30 rounded hover:bg-green-600/30 transition-colors disabled:opacity-50"
-                      >
-                        {sandboxBusy ? '…' : 'Start'}
-                      </button>
-                    )}
-                    <button
-                      onClick={handleSandboxReset}
-                      disabled={sandboxBusy}
-                      className="p-1 text-gray-600 hover:text-gray-400 rounded hover:bg-gray-700 transition-colors disabled:opacity-50"
-                      title="Reset sandbox (deletes all files)"
-                    >
-                      <RotateCcw size={12} />
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* MCP Servers */}
-            <div className="mt-2 pt-3 border-t border-gray-800">
-              <div className="flex items-center gap-2 mb-2">
-                <Plug size={12} className="text-gray-500" />
-                <span className="text-xs font-medium text-gray-400">MCP Servers</span>
-                {mcpServers.length === 0 && (
-                  <span className="text-xs text-gray-600 ml-1">— add servers in Settings</span>
-                )}
-              </div>
-              {mcpServers.map(server => {
-                const mcpId = `mcp:${server.id}`;
-                const enabled = form.tools.includes(mcpId);
-                return (
-                  <div key={server.id} className="mb-2">
-                    <div
-                      className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-colors ${enabled ? 'border-purple-500/50 bg-purple-500/5' : 'border-gray-700 hover:border-gray-600'}`}
-                      onClick={() => toggleTool(mcpId)}
-                    >
-                      <div className="flex-1 min-w-0 pr-3">
-                        <div className="flex items-center gap-2">
-                          <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${server.connected ? 'bg-green-400' : 'bg-gray-600'}`} />
-                          <span className="text-sm font-medium text-gray-200">{server.name}</span>
-                          <span className="text-xs bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded px-1.5 py-0.5">MCP</span>
-                        </div>
-                        <div className="text-xs text-gray-500 mt-0.5">
-                          {server.connected
-                            ? `${server.tool_count} tool${server.tool_count !== 1 ? 's' : ''} · ${server.transport === 'http' ? server.url : server.command}`
-                            : <span className="text-yellow-600">Disconnected — reconnect in Settings</span>
-                          }
-                        </div>
-                      </div>
-                      <div className={`w-10 h-5 rounded-full flex-shrink-0 transition-colors ${enabled ? 'bg-purple-600' : 'bg-gray-700'} relative`}>
-                        <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${enabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
-                      </div>
+            <AdvancedDisclosure
+              id="agent-tools-advanced"
+              title="Advanced tool access"
+              summary={`${form.tools.includes('sandbox') ? 'Sandbox enabled · ' : ''}${selectedMcpCount} MCP server${selectedMcpCount === 1 ? '' : 's'} selected`}
+              defaultOpen={form.tools.includes('sandbox') || selectedMcpCount > 0}
+            >
+              <div className="flex flex-col gap-3">
+                {advancedTools.map(tool => (
+                  <div key={tool.id}
+                    className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-colors ${form.tools.includes(tool.id) ? 'border-blue-500/50 bg-blue-500/5' : 'border-gray-700 hover:border-gray-600'}`}
+                    onClick={() => toggleTool(tool.id)}
+                  >
+                    <div className="flex-1 min-w-0 pr-3">
+                      <span className="text-sm font-medium text-gray-200">{tool.label}</span>
+                      <div className="text-xs text-gray-500 mt-0.5">{tool.desc}</div>
                     </div>
-                    {/* Show available tools when server is enabled and connected */}
-                    {enabled && server.connected && server.tool_names?.length > 0 && (
-                      <div className="mt-1 ml-3 flex flex-wrap gap-1">
-                        {server.tool_names.map(t => (
-                          <span key={t} className="text-xs bg-purple-900/30 text-purple-300 border border-purple-700/30 rounded px-1.5 py-0.5 font-mono">
-                            {t}
-                          </span>
-                        ))}
+                    <div className={`w-10 h-5 rounded-full flex-shrink-0 transition-colors ${form.tools.includes(tool.id) ? 'bg-blue-600' : 'bg-gray-700'} relative`}>
+                      <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${form.tools.includes(tool.id) ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                    </div>
+                  </div>
+                ))}
+
+                {form.tools.includes('sandbox') && agent?.id && (
+                  <div className="p-3 rounded-lg border border-gray-700/60 bg-gray-800/30 flex items-center gap-3">
+                    <Terminal size={13} className="text-gray-500 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-gray-300">Sandbox container</p>
+                      {!sandboxStatus ? (
+                        <p className="text-xs text-gray-600">Checking…</p>
+                      ) : !sandboxStatus.docker ? (
+                        <p className="text-xs text-yellow-500">Docker not available</p>
+                      ) : (
+                        <p className="text-xs">
+                          <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${sandboxStatus.status === 'running' ? 'bg-green-400' : 'bg-gray-600'}`} />
+                          <span className="text-gray-400">{sandboxStatus.status}</span>
+                        </p>
+                      )}
+                    </div>
+                    {sandboxStatus?.docker && (
+                      <div className="flex gap-1.5 flex-shrink-0">
+                        {sandboxStatus.status !== 'running' && (
+                          <button
+                            onClick={handleSandboxStart}
+                            disabled={sandboxBusy}
+                            className="px-2 py-1 text-xs bg-green-600/20 text-green-400 border border-green-600/30 rounded hover:bg-green-600/30 transition-colors disabled:opacity-50"
+                          >
+                            {sandboxBusy ? '…' : 'Start'}
+                          </button>
+                        )}
+                        <button
+                          onClick={handleSandboxReset}
+                          disabled={sandboxBusy}
+                          className="p-1 text-gray-600 hover:text-gray-400 rounded hover:bg-gray-700 transition-colors disabled:opacity-50"
+                          title="Reset sandbox (deletes all files)"
+                        >
+                          <RotateCcw size={12} />
+                        </button>
                       </div>
                     )}
                   </div>
-                );
-              })}
-            </div>
+                )}
+
+                <div className="pt-3 border-t border-gray-800">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Plug size={12} className="text-gray-500" />
+                    <span className="text-xs font-medium text-gray-400">MCP Servers</span>
+                    {mcpServers.length === 0 && (
+                      <span className="text-xs text-gray-600 ml-1">— add servers in Settings</span>
+                    )}
+                  </div>
+                  {mcpServers.map(server => {
+                    const mcpId = `mcp:${server.id}`;
+                    const enabled = form.tools.includes(mcpId);
+                    return (
+                      <div key={server.id} className="mb-2">
+                        <div
+                          className={`flex items-center justify-between p-3 rounded-lg border cursor-pointer transition-colors ${enabled ? 'border-purple-500/50 bg-purple-500/5' : 'border-gray-700 hover:border-gray-600'}`}
+                          onClick={() => toggleTool(mcpId)}
+                        >
+                          <div className="flex-1 min-w-0 pr-3">
+                            <div className="flex items-center gap-2">
+                              <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${server.connected ? 'bg-green-400' : 'bg-gray-600'}`} />
+                              <span className="text-sm font-medium text-gray-200">{server.name}</span>
+                              <span className="text-xs bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded px-1.5 py-0.5">MCP</span>
+                            </div>
+                            <div className="text-xs text-gray-500 mt-0.5">
+                              {server.connected
+                                ? `${server.tool_count} tool${server.tool_count !== 1 ? 's' : ''} · ${server.transport === 'http' ? server.url : server.command}`
+                                : <span className="text-yellow-600">Disconnected — reconnect in Settings</span>
+                              }
+                            </div>
+                          </div>
+                          <div className={`w-10 h-5 rounded-full flex-shrink-0 transition-colors ${enabled ? 'bg-purple-600' : 'bg-gray-700'} relative`}>
+                            <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${enabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                          </div>
+                        </div>
+                        {enabled && server.connected && server.tool_names?.length > 0 && (
+                          <div className="mt-1 ml-3 flex flex-wrap gap-1">
+                            {server.tool_names.map(t => (
+                              <span key={t} className="text-xs bg-purple-900/30 text-purple-300 border border-purple-700/30 rounded px-1.5 py-0.5 font-mono">
+                                {t}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </AdvancedDisclosure>
           </div>
         )}
 
@@ -607,7 +666,6 @@ export function AgentEditor({ open, onClose, agent, initialValues }) {
                 ) : sandboxFiles.map(f => {
                   const name = f.replace(/^\.\//, '');
                   const depth = (name.match(/\//g) || []).length;
-                  const isDir = false; // all entries from find are paths
                   return (
                     <button key={f} onClick={() => loadSandboxFile(name)}
                       className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-left text-xs truncate transition-colors ${sandboxSelectedFile === name ? 'bg-blue-500/15 text-blue-300' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-800'}`}

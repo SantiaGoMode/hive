@@ -26,12 +26,34 @@ detached, so this returns immediately:
 scrt4 run 'OPENAI_API_KEY=$env[OPENAI_API_KEY] \
   ANTHROPIC_API_KEY=$env[ANTHROPIC_API_KEY] \
   GEMINI_API_KEY=$env[GEMINI_API_KEY] \
-  /Users/crissantiago/Documents/AI/hive/gateway/run-gateway.sh'
+  gateway/run-gateway.sh'
 ```
+
+Run that from the repository root. From another directory, use `cd /path/to/hive &&`
+before the `scrt4 run ...` command; `run-gateway.sh` resolves the compose file from its
+own location.
 
 - **logs:** `docker logs -f hive-llm-gateway`
 - **stop:** `./gateway/stop-gateway.sh`
 - **health:** `curl http://127.0.0.1:4000/health/liveliness`
+
+## Optional Login Start
+
+The containers already use `restart: unless-stopped`, so they will come back after Docker
+starts as long as they were previously running. For a fresh login or reboot where the
+gateway is not already up, use your OS login/startup mechanism to run the same scrt4
+command from the repo root:
+
+```bash
+cd /path/to/hive && scrt4 run 'OPENAI_API_KEY=$env[OPENAI_API_KEY] \
+  ANTHROPIC_API_KEY=$env[ANTHROPIC_API_KEY] \
+  GEMINI_API_KEY=$env[GEMINI_API_KEY] \
+  gateway/run-gateway.sh'
+```
+
+For macOS, a small LaunchAgent or login item can call a wrapper script that contains the
+command above. Keep the wrapper outside the repo if it contains local paths, and keep
+secrets in scrt4 rather than in the wrapper.
 
 ## Point Hive at it
 

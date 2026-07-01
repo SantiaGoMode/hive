@@ -8,9 +8,9 @@
 # detached helper (returns exit 0 immediately; compose-up finishes in the
 # background, logs to ~/.hive/hive-gateway.log).
 #
-#   start (spend tracking off):  scrt4 run 'OPENAI_API_KEY=$env[OPENAI_API_KEY] \
+#   start (spend tracking off):  cd /path/to/hive && scrt4 run 'OPENAI_API_KEY=$env[OPENAI_API_KEY] \
 #            ANTHROPIC_API_KEY=$env[ANTHROPIC_API_KEY] GEMINI_API_KEY=$env[GEMINI_API_KEY] \
-#            /Users/crissantiago/Documents/AI/hive/gateway/run-gateway.sh'
+#            gateway/run-gateway.sh'
 #   start (spend tracking on):   add  LITELLM_MASTER_KEY=$env[LITELLM_MASTER_KEY]  to the
 #            prefix above (requires the master_key line uncommented in litellm.config.yaml).
 #   logs:  docker logs -f hive-llm-gateway   |   tail -f ~/.hive/hive-gateway.log
