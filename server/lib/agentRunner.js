@@ -9,21 +9,20 @@ const {
   MODEL_ROUND_TIMEOUT_MS, MAX_SUB_ROUNDS,
 } = require('./tools/shared');
 const { getToolDefinitions, executeTool } = require('./tools/registry');
+const { buildSystemPrompt } = require('./systemPrompt');
 
 async function runAgentOnce(targetAgent, userMessages, ollamaUrl, depth, ws = null, hivePath = null, toolsOverride = null, maxRounds = MAX_SUB_ROUNDS, signal = null, colonyContext = null) {
   const agentName = targetAgent.name || targetAgent.id;
 
-  // Build target's system prompt with identity + memory
-  const memory    = readMemory(targetAgent.workspace);
-  const memBlock  = memory
-    ? `\n\n---\n[Memory from previous sessions]\n${memory}\n---`
-    : '';
-  const userPrompt = targetAgent.system_prompt?.trim() || 'Be helpful, direct, and concise.';
-  const systemContent =
-    `You are ${agentName}, an AI assistant running in Hive.\n` +
-    `Your name is ${agentName}. You are a Hive assistant.\n` +
-    `Do not identify yourself as any underlying model or company.\n\n` +
-    userPrompt + memBlock;
+  // Build target's system prompt with identity + memory. The identity + user-prompt
+  // + memory scaffold is shared with the WebSocket chat loop via buildSystemPrompt;
+  // this path uses the 'agent' mode (leaner anchor, no chat formatting/hello lines).
+  const memory = readMemory(targetAgent.workspace);
+  const systemContent = buildSystemPrompt(targetAgent, {
+    mode: 'agent',
+    agentId: targetAgent.id,
+    memory,
+  });
 
   // toolsOverride (non-empty array) lets callers (pipeline steps, schedules) supply
   // a specific tool list that takes precedence over the agent's own configuration.
