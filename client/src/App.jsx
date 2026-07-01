@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { Layout } from './components/ui/Layout';
+import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { Toaster } from './components/ui/Toast';
 import { Dashboard } from './pages/Dashboard';
 import { ChatPage } from './pages/ChatPage';
@@ -21,20 +22,22 @@ export default function App() {
   return (
     <BrowserRouter>
       <Layout>
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/chat/:agentId" element={<ChatPage />} />
-          <Route path="/models" element={<ModelsPage />} />
-          <Route path="/pipelines" element={<PipelinesPage />} />
-          <Route path="/schedules" element={<SchedulesPage />} />
-          {/* /colony, /colony/:teamId, /colony/:teamId/run/:runId — one mounted
-              component so live SSE streams survive internal navigation. */}
-          <Route path="/colony/*" element={<ColonyPage />} />
-          <Route path="/staff" element={<StaffPage />} />
-          <Route path="/skills" element={<SkillsPage />} />
-          <Route path="/webhooks" element={<WebhooksPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-        </Routes>
+        <ErrorBoundary>
+          <Routes>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/chat/:agentId" element={<ChatPage />} />
+            <Route path="/models" element={<ModelsPage />} />
+            <Route path="/pipelines" element={<PipelinesPage />} />
+            <Route path="/schedules" element={<SchedulesPage />} />
+            {/* /colony, /colony/:teamId, /colony/:teamId/run/:runId — one mounted
+                component so live SSE streams survive internal navigation. */}
+            <Route path="/colony/*" element={<ColonyPage />} />
+            <Route path="/staff" element={<StaffPage />} />
+            <Route path="/skills" element={<SkillsPage />} />
+            <Route path="/webhooks" element={<WebhooksPage />} />
+            <Route path="/settings" element={<SettingsPage />} />
+          </Routes>
+        </ErrorBoundary>
       </Layout>
       <Toaster />
     </BrowserRouter>
