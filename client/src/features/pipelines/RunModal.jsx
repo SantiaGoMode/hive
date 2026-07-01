@@ -1,13 +1,14 @@
 // Extracted from PipelinesPage (#23).
 import { useState, useEffect, useRef } from 'react';
-import { Play, Square, Clock, ArrowDown } from 'lucide-react';
+import { Play, Square, Clock, ArrowDown, CheckCircle, AlertTriangle, RotateCcw, Ban, Loader } from 'lucide-react';
 import { api } from '../../lib/api';
 import { Button } from '../../components/ui/Button';
 import { Input, Textarea } from '../../components/ui/Input';
 import { Modal } from '../../components/ui/Modal';
 import { toast } from '../../stores/toastStore';
 import { readSSEStream } from '../../lib/streamParser';
-import { CopyBtn, StepCard, ParallelGroupTrace, groupStepEntries, getPrevOutputForRetry } from './runViews';
+import { groupStepEntries, getPrevOutputForRetry } from '../../components/pipelines/pipelineRunUtils';
+import { CopyBtn, StepCard, ParallelGroupTrace } from './runViews';
 
 export function RunModal({ open, onClose, pipeline, initialInput = '' }) {
   const [input, setInput] = useState(initialInput);
@@ -15,19 +16,36 @@ export function RunModal({ open, onClose, pipeline, initialInput = '' }) {
   const [steps, setSteps] = useState([]);       // live trace entries
   const [finalOutput, setFinalOutput] = useState(null);
   const [totalMs, setTotalMs] = useState(null);
+  const [runState, setRunState] = useState('idle');
+  const [runError, setRunError] = useState('');
   const abortRef = useRef(null);
   // Track which step indices are currently retrying
   const [retrying, setRetrying] = useState(new Set());
 
   useEffect(() => {
-    if (open) { setInput(initialInput); setSteps([]); setFinalOutput(null); setTotalMs(null); setRetrying(new Set()); }
+    if (open) {
+      setInput(initialInput);
+      setSteps([]);
+      setFinalOutput(null);
+      setTotalMs(null);
+      setRetrying(new Set());
+      setRunState('idle');
+      setRunError('');
+    }
   }, [open, initialInput]);
 
-  const handleStop = () => { abortRef.current?.abort(); };
+  const handleStop = () => {
+    if (abortRef.current) {
+      setRunState('stopped');
+      abortRef.current.abort();
+    }
+  };
 
   const handleRetryStep = async (stepEntry) => {
     const stepIndex = stepEntry.step;
     setRetrying(r => new Set([...r, stepIndex]));
+    setRunState('retrying');
+    setRunError('');
     // Reset this step to pending in the trace
     setSteps(s => s.map(e => e.step === stepIndex ? { ...e, status: 'pending', error: undefined, output: undefined, duration_ms: undefined } : e));
     // Remove final output since we're re-running
@@ -39,28 +57,45 @@ export function RunModal({ open, onClose, pipeline, initialInput = '' }) {
 
     try {
       const res = await api.retryPipelineStep(pipeline.id, stepIndex, prevOutput, input, ctrl.signal);
-      if (!res.ok) { toast.error(`Server error ${res.status}`); return; }
+      if (!res.ok) {
+        const message = `Server error ${res.status}`;
+        toast.error(message);
+        setRunState('failed');
+        setRunError(message);
+        return;
+      }
 
       for await (const evt of readSSEStream(res, { signal: ctrl.signal })) {
         if (evt.type === 'step_done') {
           setSteps(s => s.map(e => e.step === stepIndex ? { ...e, status: 'done', output: evt.output, duration_ms: evt.duration_ms } : e));
         } else if (evt.type === 'step_error') {
+          setRunState('failed');
+          setRunError(evt.error || 'Step failed');
           setSteps(s => s.map(e => e.step === stepIndex ? { ...e, status: 'error', error: evt.error, duration_ms: evt.duration_ms } : e));
+        } else if (evt.type === 'step_stopped') {
+          setRunState('stopped');
+          setRunError(evt.error || 'Pipeline run was stopped');
+          setSteps(s => s.map(e => e.step === stepIndex ? { ...e, status: 'stopped', error: evt.error, duration_ms: evt.duration_ms } : e));
         }
       }
     } catch (e) {
       if (e.name !== 'AbortError') {
         toast.error(e.message);
+        setRunState('failed');
+        setRunError(e.message);
         setSteps(s => s.map(e => e.step === stepIndex ? { ...e, status: 'error', error: e.message } : e));
       }
     } finally {
       setRetrying(r => { const n = new Set(r); n.delete(stepIndex); return n; });
+      setRunState(state => state === 'retrying' ? 'idle' : state);
     }
   };
 
   const handleRun = async () => {
     if (!input.trim()) return toast.error('Enter an input first');
     setRunning(true);
+    setRunState('pending');
+    setRunError('');
     setSteps([]);
     setFinalOutput(null);
     setTotalMs(null);
@@ -70,22 +105,44 @@ export function RunModal({ open, onClose, pipeline, initialInput = '' }) {
 
     try {
       const res = await api.runPipeline(pipeline.id, input.trim(), ctrl.signal);
-      if (!res.ok) { toast.error(`Server error ${res.status}`); setRunning(false); return; }
+      if (!res.ok) {
+        const message = `Server error ${res.status}`;
+        toast.error(message);
+        setRunState('failed');
+        setRunError(message);
+        setRunning(false);
+        return;
+      }
 
       for await (const evt of readSSEStream(res, { signal: ctrl.signal })) {
         if (evt.type === 'step_start') {
+          setRunState('running');
           setSteps(s => [...s, { status: 'pending', label: evt.label, agent_name: evt.agent_name, step: evt.step, group: evt.group }]);
         } else if (evt.type === 'step_done') {
           setSteps(s => s.map(e => e.step === evt.step ? { ...e, status: 'done', output: evt.output, duration_ms: evt.duration_ms } : e));
         } else if (evt.type === 'step_error') {
+          setRunState('failed');
+          setRunError(evt.error || 'Step failed');
           setSteps(s => s.map(e => e.step === evt.step ? { ...e, status: 'error', error: evt.error, duration_ms: evt.duration_ms } : e));
+        } else if (evt.type === 'step_stopped') {
+          setRunState('stopped');
+          setRunError(evt.error || 'Pipeline run was stopped');
+          setSteps(s => s.map(e => e.step === evt.step ? { ...e, status: 'stopped', error: evt.error, duration_ms: evt.duration_ms } : e));
         } else if (evt.type === 'done') {
+          setRunState('complete');
           setFinalOutput(evt.final_output);
+          setTotalMs(evt.total_ms);
+        } else if (evt.type === 'stopped') {
+          setRunState('stopped');
           setTotalMs(evt.total_ms);
         }
       }
     } catch (e) {
-      if (e.name !== 'AbortError') toast.error(e.message);
+      if (e.name !== 'AbortError') {
+        toast.error(e.message);
+        setRunState('failed');
+        setRunError(e.message);
+      }
     } finally {
       setRunning(false);
       abortRef.current = null;
@@ -96,10 +153,28 @@ export function RunModal({ open, onClose, pipeline, initialInput = '' }) {
   const hasResults = steps.length > 0;
   const succeeded  = finalOutput != null;
   const groupedEntries = groupStepEntries(steps);
+  const stateMeta = {
+    idle: { label: 'Ready', icon: Play, className: 'text-gray-400 border-gray-700 bg-gray-800/60' },
+    pending: { label: 'Pending', icon: Clock, className: 'text-blue-300 border-blue-700/30 bg-blue-500/5' },
+    running: { label: 'Running', icon: Loader, className: 'text-blue-300 border-blue-700/30 bg-blue-500/5', spin: true },
+    stopped: { label: 'Stopped', icon: Ban, className: 'text-yellow-300 border-yellow-700/30 bg-yellow-500/5' },
+    failed: { label: 'Failed', icon: AlertTriangle, className: 'text-red-300 border-red-700/40 bg-red-500/5' },
+    retrying: { label: 'Retrying', icon: RotateCcw, className: 'text-yellow-300 border-yellow-700/30 bg-yellow-500/5', spin: true },
+    complete: { label: 'Complete', icon: CheckCircle, className: 'text-green-300 border-green-700/30 bg-green-500/5' },
+  }[runState];
+  const StateIcon = stateMeta.icon;
 
   return (
     <Modal open={open} onClose={() => { handleStop(); onClose(); }} title={`Run: ${pipeline.name}`} size="xl">
       <div className="flex flex-col gap-4">
+        <div className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 ${stateMeta.className}`}>
+          <div className="flex items-center gap-2">
+            <StateIcon size={14} className={stateMeta.spin ? 'animate-spin' : ''} />
+            <span className="text-sm font-medium">{stateMeta.label}</span>
+          </div>
+          {runError && <span className="text-xs truncate">{runError}</span>}
+        </div>
+
         {/* Input area — shown until first step starts */}
         {!hasResults && (
           <>

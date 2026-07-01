@@ -49,7 +49,7 @@ export const api = {
   getModels: () => req('GET', '/ollama/models'),
   getModelInfo: (name) => req('GET', `/ollama/models/${encodeURIComponent(name)}/info`),
   deleteModel: (name) => req('DELETE', `/ollama/models/${encodeURIComponent(name)}`),
-  pullModel: (name) => `${BASE}/ollama/pull`, // returns SSE url; caller uses fetch + streams
+  pullModel: () => `${BASE}/ollama/pull`, // returns SSE url; caller uses fetch + streams
 
   // Unified models across all providers (grouped: { ollama, anthropic, openai, gemini })
   getAllModels: () => req('GET', '/models'),
@@ -173,6 +173,7 @@ export const api = {
 
   // System / Ollama process monitor
   getSystemStatus: () => req('GET', '/system/status'),
+  getSystemMetrics: () => req('GET', '/system/metrics'),
   stopModel: (model) => req('POST', '/system/model/stop', { model }),
   startNgrok: () => req('POST', '/system/ngrok/start'),
   stopNgrok: () => req('POST', '/system/ngrok/stop'),

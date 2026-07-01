@@ -2,7 +2,8 @@
 import { useState, useEffect } from 'react';
 import { CheckCircle, XCircle, Loader, ArrowDown, History, X, ChevronDown, ChevronUp, GitMerge, RotateCcw } from 'lucide-react';
 import { api } from '../../lib/api';
-import { CopyBtn, groupStepEntries } from './runViews';
+import { groupStepEntries } from '../../components/pipelines/pipelineRunUtils';
+import { CopyBtn } from './runViews';
 
 export function RunHistoryRow({ run }) {
   const [expanded, setExpanded] = useState(false);
@@ -156,4 +157,3 @@ export function HistoryDrawer({ pipeline, onClose }) {
 }
 
 // ── Pipeline Card ─────────────────────────────────────────────────────────────
-

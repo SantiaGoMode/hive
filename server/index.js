@@ -18,6 +18,7 @@ const mcpManager = require('./lib/mcpClient');
 const ngrokService = require('./lib/ngrokService');
 const db = require('./db');
 const config = require('./lib/config');
+const gatewayHealth = require('./lib/gatewayHealth');
 const { settingSecret } = require('./lib/secrets');
 const { logSwallowed } = require('./lib/logSwallowed');
 const {
@@ -110,6 +111,12 @@ server.listen(PORT, async () => {
     logger.error('startup', 'scheduler_lifecycle_failed', { error: e.message });
   }
   logger.info('startup', 'scheduler_done');
+  try {
+    await gatewayHealth.probeGateway({ force: true });
+    logger.info('startup', 'gateway_health_done', { gateway: gatewayHealth.getGatewayStatus() });
+  } catch (e) {
+    logger.error('startup', 'gateway_health_failed', { error: e.message });
+  }
   try {
     await mcpManager.loadAll();
     logger.info('startup', 'mcp_done');

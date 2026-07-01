@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { createElement, useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Trash2, RefreshCw, CheckCircle, XCircle, Loader, ChevronRight,
@@ -18,7 +18,36 @@ const CLOUD_PROVIDERS = [
   { id: 'gemini',    key: 'gemini_api_key',    label: 'Google Gemini',      hint: 'aistudio.google.com → API Keys' },
 ];
 
-function ModelProvidersSection({ config, setConfig }) {
+function GatewayStatus({ status, loading }) {
+  if (loading) {
+    return (
+      <span className="text-xs text-gray-500 flex items-center gap-1">
+        <Loader size={11} className="animate-spin" /> Checking gateway...
+      </span>
+    );
+  }
+  if (!status?.enabled) {
+    return (
+      <span className="text-xs text-gray-500 flex items-center gap-1">
+        <WifiOff size={11} /> Gateway not configured
+      </span>
+    );
+  }
+  if (status.reachable) {
+    return (
+      <span className="text-xs text-emerald-400/80 flex items-center gap-1">
+        <CheckCircle size={11} /> Gateway reachable
+      </span>
+    );
+  }
+  return (
+    <span className="text-xs text-red-400 flex items-center gap-1">
+      <XCircle size={11} /> {status.message || 'Gateway unreachable'}
+    </span>
+  );
+}
+
+function ModelProvidersSection({ config, setConfig, gatewayStatus, gatewayLoading }) {
   const [testing, setTesting] = useState(null);
   const [results, setResults] = useState({});
   const [clearing, setClearing] = useState(false);
@@ -117,7 +146,7 @@ function ModelProvidersSection({ config, setConfig }) {
           placeholder={isMasked(config.llm_gateway_key || '') ? 'Saved — type to replace' : 'Virtual key (optional until gateway master_key is set)'}
         />
         {config.llm_gateway_url
-          ? <span className="text-xs text-emerald-400/80 flex items-center gap-1"><CheckCircle size={11} /> Cloud providers route through the gateway.</span>
+          ? <GatewayStatus status={gatewayStatus} loading={gatewayLoading} />
           : null}
       </div>
 
@@ -155,7 +184,7 @@ function AppearanceSection() {
                   active ? '' : 'border-gray-700 text-gray-400 hover:border-gray-600 hover:text-gray-200'
                 }`}
               >
-                <Icon size={14} />
+                {createElement(Icon, { size: 14 })}
                 {label}
               </button>
             );
@@ -215,6 +244,7 @@ function AppearanceSection() {
                   active ? '' : 'border-gray-700 text-gray-400 hover:border-gray-600 hover:text-gray-200'
                 }`}
               >
+                <Icon size={12} />
                 {label}
               </button>
             );
@@ -258,7 +288,7 @@ function SystemMonitor() {
     try {
       const data = await api.getSystemStatus();
       setStatus(data);
-    } catch {}
+    } catch (e) { void e; }
     finally { setLoading(false); }
   }, []);
 
@@ -381,6 +411,8 @@ function SystemMonitor() {
 
 export function SettingsPage() {
   const [config, setConfig] = useState({ ollama_url: '' });
+  const [metrics, setMetrics] = useState(null);
+  const [metricsLoading, setMetricsLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [clearingBlackboard, setClearingBlackboard] = useState(false);
   const [clearingPipelineRuns, setClearingPipelineRuns] = useState(false);
@@ -388,10 +420,22 @@ export function SettingsPage() {
   const [ngrokStatus, setNgrokStatus] = useState({ running: false, url: null });
   const [tunnelActionLoading, setTunnelActionLoading] = useState(false);
 
+  const refreshMetrics = useCallback(async () => {
+    setMetricsLoading(true);
+    try {
+      setMetrics(await api.getSystemMetrics());
+    } catch {
+      setMetrics(null);
+    } finally {
+      setMetricsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     api.getConfig().then(setConfig).catch(() => {});
     api.getNgrokStatus().then(setNgrokStatus).catch(() => {});
-  }, []);
+    refreshMetrics();
+  }, [refreshMetrics]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -400,6 +444,7 @@ export function SettingsPage() {
       toast.success('Settings saved');
       const ngrok = await api.getNgrokStatus();
       setNgrokStatus(ngrok);
+      await refreshMetrics();
     } catch (e) { toast.error(e.message); }
     finally { setSaving(false); }
   };
@@ -473,7 +518,12 @@ export function SettingsPage() {
         />
         <p className="text-xs text-gray-600 -mt-2 mb-2">All agent data is stored in <code className="bg-gray-800 px-1 rounded">~/.hive/</code></p>
 
-        <ModelProvidersSection config={config} setConfig={setConfig} />
+        <ModelProvidersSection
+          config={config}
+          setConfig={setConfig}
+          gatewayStatus={metrics?.gateway}
+          gatewayLoading={metricsLoading}
+        />
 
         <div className="pt-4 border-t border-gray-800 flex flex-col gap-4">
           <div className="flex items-center justify-between">

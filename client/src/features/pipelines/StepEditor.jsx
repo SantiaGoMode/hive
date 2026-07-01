@@ -1,11 +1,23 @@
 // Extracted from PipelinesPage (#23).
-import { Trash2, GitMerge } from 'lucide-react';
+import { Trash2, GitMerge, AlertCircle, Wrench } from 'lucide-react';
 import { Input, Textarea } from '../../components/ui/Input';
 import { ToolPicker } from '../../components/ToolPicker';
 
-export function StepEditor({ step, agents, mcpServers, onChange, onRemove, index }) {
+function toolLabel(id, mcpServers) {
+  if (id?.startsWith('mcp:')) {
+    const server = mcpServers.find(s => `mcp:${s.id}` === id);
+    return server?.name || id;
+  }
+  return id;
+}
+
+export function StepEditor({ step, agents, mcpServers, onChange, onRemove, index, errors = {} }) {
+  const selectedAgent = agents.find(agent => String(agent.id) === String(step.agent_id));
+  const hasErrors = Object.keys(errors).length > 0;
+  const tools = step.tools || [];
+
   return (
-    <div className={`flex flex-col gap-3 p-4 rounded-lg border bg-gray-800/40 ${step.parallel ? 'border-purple-700/50' : 'border-gray-700'}`}>
+    <div className={`flex flex-col gap-3 p-4 rounded-lg border bg-gray-800/40 ${hasErrors ? 'border-red-700/50' : step.parallel ? 'border-purple-700/50' : 'border-gray-700'}`}>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Step {index + 1}</span>
@@ -14,8 +26,13 @@ export function StepEditor({ step, agents, mcpServers, onChange, onRemove, index
               <GitMerge size={10} /> parallel
             </span>
           )}
+          {hasErrors && (
+            <span className="flex items-center gap-1 text-xs bg-red-500/10 text-red-300 border border-red-500/20 rounded px-1.5 py-0.5">
+              <AlertCircle size={10} /> needs attention
+            </span>
+          )}
         </div>
-        <button onClick={onRemove} className="text-gray-600 hover:text-red-400 transition-colors">
+        <button type="button" onClick={onRemove} className="text-gray-600 hover:text-red-400 transition-colors" title="Remove step">
           <Trash2 size={13} />
         </button>
       </div>
@@ -30,11 +47,16 @@ export function StepEditor({ step, agents, mcpServers, onChange, onRemove, index
         <select
           value={step.agent_id || ''}
           onChange={e => onChange({ ...step, agent_id: e.target.value })}
-          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className={`w-full bg-gray-800 border rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors.agent || errors.model ? 'border-red-500' : 'border-gray-700'}`}
         >
           <option value="">— Select agent —</option>
-          {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+          {agents.map(a => <option key={a.id} value={a.id}>{a.name}{a.model ? ` · ${a.model}` : ' · no model'}</option>)}
         </select>
+        {errors.agent && <p className="text-xs text-red-400 mt-1">{errors.agent}</p>}
+        {errors.model && <p className="text-xs text-red-400 mt-1">{errors.model}</p>}
+        {selectedAgent && !errors.model && (
+          <p className="text-xs text-gray-600 mt-1">Model: <span className="text-gray-400">{selectedAgent.model || 'No model assigned'}</span></p>
+        )}
       </div>
       <Textarea
         label="Prompt template"
@@ -42,13 +64,25 @@ export function StepEditor({ step, agents, mcpServers, onChange, onRemove, index
         onChange={e => onChange({ ...step, prompt: e.target.value })}
         placeholder="Use {prev} for previous step's output, {input} for the original user input"
         className="h-24 font-mono text-xs"
+        error={errors.prompt}
       />
       <p className="text-xs text-gray-600">Variables: <code className="text-gray-500">{'{prev}'}</code> = last output · <code className="text-gray-500">{'{input}'}</code> = original input</p>
 
       {/* Tool picker */}
       <div className="pt-2 border-t border-gray-700/50">
+        {tools.length > 0 && (
+          <div className="mb-3 rounded-md border border-blue-700/30 bg-blue-500/5 p-2">
+            <div className="flex items-center gap-1.5 text-xs font-medium text-blue-300">
+              <Wrench size={11} />
+              Step tool override
+            </div>
+            <p className="mt-1 text-xs text-gray-500">
+              This step uses {tools.length} explicit tool{tools.length !== 1 ? 's' : ''}: {tools.map(id => toolLabel(id, mcpServers)).join(', ')}
+            </p>
+          </div>
+        )}
         <ToolPicker
-          tools={step.tools || []}
+          tools={tools}
           onChange={t => onChange({ ...step, tools: t })}
           mcpServers={mcpServers}
           overrideHint="These tools override the agent's configured tools for this step only."
@@ -71,4 +105,3 @@ export function StepEditor({ step, agents, mcpServers, onChange, onRemove, index
     </div>
   );
 }
-

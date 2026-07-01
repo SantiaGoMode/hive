@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const express = require('express');
 const request = require('supertest');
 const systemRouter = require('../routes/system');
+const gatewayHealth = require('../lib/gatewayHealth');
 
 const app = express();
 app.use(express.json());
@@ -29,13 +30,18 @@ describe('GET /api/system/metrics', () => {
     assert.equal(typeof b.ollama.url, 'string');
     assert.equal(typeof b.ollama.loaded_models, 'number');
     assert.equal(typeof b.gateway.enabled, 'boolean');
+    assert.ok('reachable' in b.gateway);
+    assert.equal(typeof b.gateway.message, 'string');
     assert.ok(Array.isArray(b.recent_logs));
   });
 
   it('never leaks gateway url/key or api keys', async () => {
     const saved = { url: process.env.LLM_GATEWAY_URL, key: process.env.LLM_GATEWAY_KEY };
+    const savedFetch = global.fetch;
     process.env.LLM_GATEWAY_URL = 'http://secret-gw-host:4000/v1';
     process.env.LLM_GATEWAY_KEY = 'sk-supersecretkey123';
+    gatewayHealth._resetForTests();
+    global.fetch = async () => ({ ok: false, status: 503, json: async () => ({}) });
     try {
       const res = await request(app).get('/api/system/metrics');
       const blob = JSON.stringify(res.body);
@@ -46,6 +52,35 @@ describe('GET /api/system/metrics', () => {
     } finally {
       if (saved.url === undefined) delete process.env.LLM_GATEWAY_URL; else process.env.LLM_GATEWAY_URL = saved.url;
       if (saved.key === undefined) delete process.env.LLM_GATEWAY_KEY; else process.env.LLM_GATEWAY_KEY = saved.key;
+      global.fetch = savedFetch;
+      gatewayHealth._resetForTests();
+    }
+  });
+
+  it('reports gateway reachability from the health probe', async () => {
+    const saved = { url: process.env.LLM_GATEWAY_URL, key: process.env.LLM_GATEWAY_KEY };
+    const savedFetch = global.fetch;
+    process.env.LLM_GATEWAY_URL = 'http://gateway-ok:4000/v1';
+    process.env.LLM_GATEWAY_KEY = 'sk-test';
+    gatewayHealth._resetForTests();
+    const seen = [];
+    global.fetch = async (url) => {
+      seen.push(String(url));
+      if (String(url).includes('/health')) return { ok: true, status: 200, json: async () => ({}) };
+      return { ok: false, status: 503, json: async () => ({ models: [] }) };
+    };
+    try {
+      const res = await request(app).get('/api/system/metrics');
+      assert.equal(res.body.gateway.enabled, true);
+      assert.equal(res.body.gateway.reachable, true);
+      assert.equal(res.body.gateway.message, 'Gateway reachable');
+      assert.ok(seen.some(url => url === 'http://gateway-ok:4000/health'));
+      assert.equal(res.body.gateway.url, undefined);
+    } finally {
+      if (saved.url === undefined) delete process.env.LLM_GATEWAY_URL; else process.env.LLM_GATEWAY_URL = saved.url;
+      if (saved.key === undefined) delete process.env.LLM_GATEWAY_KEY; else process.env.LLM_GATEWAY_KEY = saved.key;
+      global.fetch = savedFetch;
+      gatewayHealth._resetForTests();
     }
   });
 

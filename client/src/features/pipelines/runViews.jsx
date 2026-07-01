@@ -1,7 +1,6 @@
 // Extracted from PipelinesPage (#23).
 import { useState } from 'react';
 import { Play, CheckCircle, XCircle, Loader, Clock, ArrowDown, Copy, Check, GitMerge } from 'lucide-react';
-import { Modal } from '../../components/ui/Modal';
 
 export function CopyBtn({ text }) {
   const [copied, setCopied] = useState(false);
@@ -20,14 +19,16 @@ export function CopyBtn({ text }) {
 export function StepCard({ entry, onRetry }) {
   const isPending = entry.status === 'pending';
   const isError   = entry.status === 'error';
+  const isStopped = entry.status === 'stopped';
   const isDone    = entry.status === 'done';
 
   return (
-    <div className={`p-4 rounded-lg border transition-colors flex-1 min-w-0 ${isError ? 'border-red-700/40 bg-red-500/5' : isDone ? 'border-gray-700 bg-gray-800/40' : 'border-blue-700/30 bg-blue-500/5'}`}>
+    <div className={`p-4 rounded-lg border transition-colors flex-1 min-w-0 ${isError ? 'border-red-700/40 bg-red-500/5' : isStopped ? 'border-yellow-700/40 bg-yellow-500/5' : isDone ? 'border-gray-700 bg-gray-800/40' : 'border-blue-700/30 bg-blue-500/5'}`}>
       <div className="flex items-center gap-2 mb-2">
         {isPending && <Loader size={14} className="text-blue-400 animate-spin flex-shrink-0" />}
         {isDone    && <CheckCircle size={14} className="text-green-400 flex-shrink-0" />}
         {isError   && <XCircle size={14} className="text-red-400 flex-shrink-0" />}
+        {isStopped && <XCircle size={14} className="text-yellow-400 flex-shrink-0" />}
         <span className="text-sm font-medium text-gray-200 truncate">{entry.label}</span>
         <span className="text-xs text-gray-500 flex-shrink-0">→ {entry.agent_name}</span>
         {entry.duration_ms != null && (
@@ -37,10 +38,10 @@ export function StepCard({ entry, onRetry }) {
         )}
       </div>
       {isPending && <p className="text-xs text-blue-400 animate-pulse">Running…</p>}
-      {isError && (
+      {(isError || isStopped) && (
         <div className="flex items-start justify-between gap-2">
-          <p className="text-sm text-red-400">{entry.error}</p>
-          {onRetry && (
+          <p className={`text-sm ${isStopped ? 'text-yellow-300' : 'text-red-400'}`}>{entry.error}</p>
+          {isError && onRetry && (
             <button
               onClick={onRetry}
               className="flex-shrink-0 flex items-center gap-1 text-xs px-2 py-1 rounded border border-yellow-600/40 bg-yellow-500/10 text-yellow-400 hover:bg-yellow-500/20 transition-colors"
@@ -94,29 +95,3 @@ export function ParallelGroupTrace({ entries, showArrowAbove, onRetry }) {
     </div>
   );
 }
-
-// ── Run Modal ─────────────────────────────────────────────────────────────────
-
-// Group step entries by their `group` index for rendering
-export function groupStepEntries(steps) {
-  const groups = new Map();
-  for (const s of steps) {
-    const g = s.group ?? s.step; // fallback: each step is its own group
-    if (!groups.has(g)) groups.set(g, []);
-    groups.get(g).push(s);
-  }
-  return [...groups.entries()].sort((a, b) => a[0] - b[0]);
-}
-
-// Compute the prev_output for a step being retried:
-// use the last completed group's output (joined if parallel) or the original input.
-export function getPrevOutputForRetry(stepEntry, allSteps, input) {
-  const retryGroup = stepEntry.group ?? stepEntry.step;
-  if (retryGroup === 0) return input;
-  const prevGroupSteps = allSteps.filter(s => (s.group ?? s.step) === retryGroup - 1 && s.status === 'done');
-  if (!prevGroupSteps.length) return input;
-  return prevGroupSteps.length === 1
-    ? prevGroupSteps[0].output
-    : prevGroupSteps.map(s => s.output).join('\n\n---\n\n');
-}
-

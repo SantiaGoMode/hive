@@ -12,6 +12,7 @@ const scheduler = require('../lib/scheduler');
 const schedulerLifecycle = require('../lib/schedulerLifecycle');
 const staffScheduler = require('../lib/staffScheduler');
 const providers = require('../lib/providers');
+const gatewayHealth = require('../lib/gatewayHealth');
 
 // Read a value from a source, swallowing any failure so /metrics never 500s on
 // one bad source.
@@ -58,6 +59,9 @@ router.get('/metrics', async (req, res) => {
   } catch { /* Ollama down → reachable:false */ }
 
   const gw = safe(() => providers.gatewayConfig(), { enabled: false });
+  const gatewayStatus = gw.enabled
+    ? await gatewayHealth.probeGateway()
+    : gatewayHealth.getGatewayStatus();
 
   res.json({
     uptime_s: Math.round(process.uptime()),
@@ -70,7 +74,7 @@ router.get('/metrics', async (req, res) => {
     staff_scheduler: safe(() => staffScheduler.status(), null),
     scheduler_lifecycle: safe(() => schedulerLifecycle.statuses(), null),
     ollama: { reachable: ollamaReachable, url: getOllamaUrl(), loaded_models: loadedModels },
-    gateway: { enabled: !!gw.enabled }, // config only — never expose url/key
+    gateway: gatewayStatus, // sanitized: never expose gateway url/key
     recent_logs: safe(() => getRecentLogs(50), []),
   });
 });
