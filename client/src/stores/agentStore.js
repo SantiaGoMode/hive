@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { api } from '../lib/api';
 
-export const useAgentStore = create((set, get) => ({
+export const useAgentStore = create((set) => ({
   agents: [],
   loading: false,
   error: null,

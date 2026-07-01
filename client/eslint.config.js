@@ -23,7 +23,16 @@ export default defineConfig([
       },
     },
     rules: {
-      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+      // React 19's compiler-oriented rules are useful as warnings, but
+      // set-state-in-effect is too noisy for this app's existing fetch-on-mount
+      // screens. Keep exhaustive-deps visible; gate concrete syntax/errors.
+      'react-hooks/set-state-in-effect': 'off',
+      'no-empty': ['error', { allowEmptyCatch: true }],
+      'no-unused-vars': ['error', {
+        caughtErrors: 'none',
+        varsIgnorePattern: '^[A-Z_]',
+        argsIgnorePattern: '^_',
+      }],
     },
   },
 ])

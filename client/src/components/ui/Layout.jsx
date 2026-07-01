@@ -50,22 +50,25 @@ export function Layout({ children }) {
 
           {/* Nav links */}
           <div className="flex-1 px-2 py-4 flex flex-col gap-1">
-            {NAV.map(({ to, icon: Icon, label }) => (
-              <NavLink
-                key={to}
-                to={to}
-                end={to === '/'}
-                className={({ isActive }) => cn(
-                  'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
-                  isActive
-                    ? 'nav-active'
-                    : 'text-gray-400 hover:text-gray-100 hover:bg-gray-800'
-                )}
-              >
-                <Icon size={16} />
-                {label}
-              </NavLink>
-            ))}
+            {NAV.map(({ to, icon, label }) => {
+              const NavIcon = icon;
+              return (
+                <NavLink
+                  key={to}
+                  to={to}
+                  end={to === '/'}
+                  className={({ isActive }) => cn(
+                    'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                    isActive
+                      ? 'nav-active'
+                      : 'text-gray-400 hover:text-gray-100 hover:bg-gray-800'
+                  )}
+                >
+                  <NavIcon size={16} />
+                  {label}
+                </NavLink>
+              );
+            })}
           </div>
 
           {/* Footer */}

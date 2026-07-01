@@ -267,7 +267,6 @@ export function ChatWindow({ agent, initialMessages, initialSessionId, onSession
 
   // Reset when agent changes or new chat triggered externally
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMessages(initialMessages || []);
     setSessionId(initialSessionId || null);
     setStreamingText('');

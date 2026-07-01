@@ -253,7 +253,7 @@ export function McpServerModal({ open, server, onClose, onSave }) {
     url:             form.transport === 'http' ? (form.url.trim() || undefined) : undefined,
   });
 
-  const hasPlaceholders = /\<[A-Z_]+\>/.test(form.args);
+  const hasPlaceholders = /<[A-Z_]+>/.test(form.args);
 
   const handleTest = async () => {
     if (!form.name.trim()) return toast.error('Name is required');

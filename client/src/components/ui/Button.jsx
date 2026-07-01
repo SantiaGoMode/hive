@@ -15,6 +15,10 @@ const sizes = {
 };
 
 export function Button({ variant = 'primary', size = 'md', className, children, ...props }) {
+  const accessibleProps = { ...props };
+  if (!accessibleProps['aria-label'] && typeof accessibleProps.title === 'string') {
+    accessibleProps['aria-label'] = accessibleProps.title;
+  }
   return (
     <button
       className={cn(
@@ -23,7 +27,7 @@ export function Button({ variant = 'primary', size = 'md', className, children, 
         sizes[size],
         className,
       )}
-      {...props}
+      {...accessibleProps}
     >
       {children}
     </button>

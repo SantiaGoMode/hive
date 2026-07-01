@@ -317,7 +317,7 @@ export default function WebhooksPage() {
       const ng = await api.getNgrokStatus();
       setNgrokStatus(ng);
       if (wh.length > 0 && !activeId) setActiveId(wh[0].id);
-    } catch (e) { toast.error('Failed to load webhooks'); }
+    } catch { toast.error('Failed to load webhooks'); }
   };
 
   useEffect(() => { loadData(); }, []);
@@ -329,7 +329,7 @@ export default function WebhooksPage() {
       setEvents(evts);
       const runs = await api.getWebhookActionRuns(activeId);
       setActionRuns(runs);
-    } catch (e) { setEvents([]); }
+    } catch { setEvents([]); }
   };
 
   useEffect(() => { loadEvents(); }, [activeId, eventTypeFilter]);

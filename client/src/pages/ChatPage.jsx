@@ -59,7 +59,9 @@ export function ChatPage() {
       setInitialSessionId(sessId);
       setChatKey(k => k + 1);
       setShowHistory(false);
-    } catch {}
+    } catch {
+      setInitialMessages([]);
+    }
   }, [agentId]);
 
   const handleSessionSaved = useCallback(() => {

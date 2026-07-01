@@ -50,8 +50,8 @@ Roadmap board by the **Phase** field.
 - [x] 🟡 [#39](../../issues/39) Gateway startup health probe + Settings status — *implemented on main; child of #7*
 - [x] 🟡 [#41](../../issues/41) Gateway spend persistence + per-agent dashboard — *implemented on main; child of #7*
 - [x] 🟡 [#40](../../issues/40) Tune response cache TTL / scope caching — *implemented on main*
-- [ ] 🟡 [#8](../../issues/8) Accessible Modal & Form System
-- [ ] 🟡 [#10](../../issues/10) Frontend Regression Test Suite
+- [x] 🟡 [#8](../../issues/8) Accessible Modal & Form System — *implemented on main*
+- [x] 🟡 [#10](../../issues/10) Frontend Regression Test Suite — *implemented on main*
 - [x] ⚪ [#9](../../issues/9) Progressive Advanced Settings — *implemented on main*
 - [x] ⚪ [#42](../../issues/42) CI lint: validate gateway model ids resolve — *implemented on main; child of #48*
 - [x] ⚪ [#49](../../issues/49) Gateway auto-start + portable `run-gateway.sh` — *implemented on main*
