@@ -8,6 +8,30 @@ const colonyModels = require('../colonyModels');
 const protocol = require('../colonyProtocol');
 const { gitCheckoutBranch } = require('./git');
 
+// Probe installed models for the 'tools' capability (failure path only, so a
+// user picking a non-tool model gets alternatives they can select immediately).
+// Capped and parallel; a misbehaving /api/show just shortens the list.
+async function listInstalledToolModels(ollamaUrl, models, exclude) {
+  const names = models.map(m => m.name).filter(n => n !== exclude && !n.includes('embed')).slice(0, 20);
+  const probes = names.map(async (name) => {
+    try {
+      const res = await fetch(`${ollamaUrl}/api/show`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: name }),
+        signal: AbortSignal.timeout(3000),
+      });
+      if (!res.ok) return null;
+      const info = await res.json();
+      const caps = Array.isArray(info.capabilities) ? info.capabilities : [];
+      return caps.includes('tools') ? name : null;
+    } catch {
+      return null;
+    }
+  });
+  return (await Promise.all(probes)).filter(Boolean).slice(0, 8);
+}
+
 async function preflightColony(model, ollamaUrl) {
   const providers = require('../providers');
   const { provider } = providers.parseModel(model);
@@ -63,9 +87,14 @@ async function preflightColony(model, ollamaUrl) {
       const info = await showRes.json();
       const caps = Array.isArray(info.capabilities) ? info.capabilities : null;
       if (caps && caps.length > 0 && !caps.includes('tools')) {
+        // Recommend from what's actually installed, not generic pull targets.
+        const alternatives = await listInstalledToolModels(normalizedOllamaUrl, models, stripped);
+        const hint = alternatives.length
+          ? `Tool-capable models already installed: ${alternatives.join(', ')}.`
+          : 'Colony requires a tool-capable model — try llama3.1, qwen2.5, qwen3, mistral-nemo, or mistral-small.';
         return {
           ok: false,
-          error: `Model "${stripped}" does not support tool calling (capabilities: ${caps.join(', ')}). Colony requires a tool-capable model — try llama3.1, qwen2.5, qwen3, mistral-nemo, or mistral-small.`,
+          error: `Model "${stripped}" does not support tool calling (capabilities: ${caps.join(', ')}). ${hint}`,
         };
       }
     }
