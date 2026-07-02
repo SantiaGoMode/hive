@@ -38,6 +38,26 @@ router.put('/profiles/:id', (req, res) => {
   res.json(profile);
 });
 
+// What this profile actually injects into a colony run (recipe baseline,
+// override status, effective tool union) — makes invisible drift visible.
+router.get('/profiles/:id/effective', (req, res) => {
+  const config = staff.profileEffectiveConfig(req.params.id);
+  if (!config) return res.status(404).json({ error: 'Staff profile not found' });
+  res.json(config);
+});
+
+// Reset prompt and/or tools back to the CURRENT recipe defaults (and re-pin
+// the seed snapshot so the profile auto-follows future recipe changes).
+router.post('/profiles/:id/reset', (req, res) => {
+  try {
+    const profile = staff.resetProfileToRecipe(req.params.id, req.body?.fields);
+    if (!profile) return res.status(404).json({ error: 'Staff profile not found' });
+    res.json({ success: true, profile });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
 router.get('/profiles/:id/suggestions', (req, res) => {
   const profile = staff.getProfile(req.params.id);
   if (!profile) return res.status(404).json({ error: 'Staff profile not found' });

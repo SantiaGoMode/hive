@@ -26,6 +26,7 @@ export default function StaffPage() {
   const [toolOptions, setToolOptions] = useState([]);
   const [drilledMetric, setDrilledMetric] = useState(null);
   const [showNewStaff, setShowNewStaff] = useState(false);
+  const [effective, setEffective] = useState(null);
 
   const loadProfiles = useCallback(async () => {
     const data = await api.getStaffProfiles();
@@ -37,6 +38,7 @@ export default function StaffPage() {
     if (!id) return;
     const data = await api.getStaffProfile(id);
     setSelected(data);
+    api.getStaffEffectiveConfig(id).then(setEffective).catch(() => setEffective(null));
     setForm({
       display_name: data.display_name,
       role: data.role,
@@ -256,14 +258,43 @@ export default function StaffPage() {
                       placeholder="Use launch model plan"
                     />
                     <div className="md:col-span-2 flex flex-col gap-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-gray-400">Core system prompt</span>
+                        <div className="flex items-center gap-2">
+                          {selected.prompt_customized ? (
+                            <>
+                              <span className="text-xs rounded border border-amber-700/50 bg-amber-950/30 px-1.5 py-0.5 text-amber-300" title="This prompt was edited and no longer auto-updates when the recipe role's prompt improves.">
+                                Customized — frozen from recipe updates
+                              </span>
+                              <button
+                                type="button"
+                                className="text-xs text-blue-400 hover:text-blue-300"
+                                onClick={async () => {
+                                  if (!window.confirm('Replace this custom prompt with the current recipe default? It will then auto-follow future recipe improvements.')) return;
+                                  try {
+                                    await api.resetStaffProfile(selected.id, ['system_prompt']);
+                                    await loadSelected(selected.id);
+                                    toast.success('Prompt reset to recipe default');
+                                  } catch (e) { toast.error(e.message); }
+                                }}
+                              >
+                                Reset to recipe default
+                              </button>
+                            </>
+                          ) : (
+                            <span className="text-xs rounded border border-emerald-800/50 bg-emerald-950/30 px-1.5 py-0.5 text-emerald-300" title="Matches the recipe seed — automatically follows recipe prompt improvements.">
+                              Recipe default — auto-updates
+                            </span>
+                          )}
+                        </div>
+                      </div>
                       <Textarea
-                        label="Core system prompt"
                         value={form.system_prompt}
                         onChange={e => set('system_prompt', e.target.value)}
                         rows={12}
                         placeholder="Role instructions, responsibilities, and process. When set, this replaces the recipe role's base prompt."
                       />
-                      <p className="text-xs text-gray-600">Defines what this staff member does. Leave empty to use the recipe role's built-in prompt.</p>
+                      <p className="text-xs text-gray-600">Defines what this staff member does. Editing freezes it from recipe updates — use Reset to re-sync.</p>
                     </div>
                     <div className="md:col-span-2 flex flex-col gap-1">
                       <Textarea
@@ -298,6 +329,25 @@ export default function StaffPage() {
                       Manage the skills catalog and MCP servers on the
                       <Link to="/skills" className="text-blue-400 hover:text-blue-300 inline-flex items-center gap-0.5">Skills &amp; Tools page <ExternalLink size={10} /></Link>
                     </p>
+                    {effective && effective.recipe_role_exists && (
+                      <div className="md:col-span-2 rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
+                        <p className="text-sm font-medium text-gray-200">Effective tools in colony runs</p>
+                        <p className="text-xs text-gray-600 mt-0.5 mb-2">
+                          Recipe capability tools are always included — profile tools ADD to them, never replace them.
+                        </p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {effective.effective_tools.map(({ tool, source }) => (
+                            <span
+                              key={tool}
+                              className={`text-xs px-1.5 py-0.5 rounded border ${source === 'recipe' ? 'bg-gray-800/70 border-gray-700 text-gray-300' : 'bg-purple-500/10 border-purple-500/30 text-purple-300'}`}
+                              title={source === 'recipe' ? 'From the recipe role (capability architecture)' : 'Added by this profile'}
+                            >
+                              {tool}{source === 'profile' ? ' +' : ''}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     <div className="md:col-span-2 rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
                       <div className="flex items-center justify-between gap-3">
                         <div>

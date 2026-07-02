@@ -192,6 +192,14 @@ export function ProfileCard({ profile, active, onClick }) {
         <span className={`text-xs border rounded px-1.5 py-0.5 ${profile.chat_enabled ? 'border-green-800/60 text-green-300' : 'border-gray-800 text-gray-600'}`}>
           {profile.chat_enabled ? `${profile.chat_interval_minutes}m chat` : 'chat off'}
         </span>
+        {(profile.prompt_customized || profile.tools_customized) && (
+          <span
+            className="text-xs border border-amber-700/50 bg-amber-950/30 rounded px-1.5 py-0.5 text-amber-300"
+            title="Prompt or tools were customized — frozen from recipe updates (reset from the profile's Prompt tab)"
+          >
+            customized
+          </span>
+        )}
         {model && <span title={model.title} className="text-xs border border-gray-800 rounded px-1.5 py-0.5 text-gray-400 max-w-full truncate">{model.text}</span>}
       </div>
       {profile.metrics && (
@@ -366,7 +374,7 @@ export function StaffPerformanceTab({ selected, drilledMetric, setDrilledMetric 
                         { key: 'auto_recorded_handoffs', label: 'Auto-recorded', value: selected.metrics.auto_recorded_handoffs },
                         { key: 'blocker_count', label: 'Blockers', value: selected.metrics.blocker_count },
                         { key: 'tool_error_count', label: 'Tool errors', value: selected.metrics.tool_error_count },
-                        { key: 'retry_count', label: 'Retries', value: selected.metrics.retry_count },
+                        { key: 'retry_count', label: 'Loop-breaker trips', value: selected.metrics.retry_count },
                         { key: 'user_comments_received', label: 'User comments', value: selected.metrics.user_comments_received },
                       ].map(m => (
                         <Metric

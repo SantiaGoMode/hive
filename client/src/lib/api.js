@@ -172,6 +172,8 @@ export const api = {
   createStaffProfile: (data) => req('POST', '/staff/profiles', data),
   updateStaffProfile: (id, data) => req('PUT', `/staff/profiles/${id}`, data),
   deleteStaffProfile: (id) => req('DELETE', `/staff/profiles/${id}`),
+  getStaffEffectiveConfig: (id) => req('GET', `/staff/profiles/${id}/effective`),
+  resetStaffProfile: (id, fields) => req('POST', `/staff/profiles/${id}/reset`, fields ? { fields } : {}),
   syncStaffSuggestions: () => req('POST', '/staff/suggestions/sync'),
   applyStaffSuggestion: (id, proposed_value) => req('POST', `/staff/suggestions/${id}/apply`, proposed_value !== undefined ? { proposed_value } : {}),
   dismissStaffSuggestion: (id) => req('POST', `/staff/suggestions/${id}/dismiss`),

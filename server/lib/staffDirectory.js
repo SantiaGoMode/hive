@@ -33,6 +33,13 @@ function profileRowToJson(row) {
     last_chat_at: row.last_chat_at || null,
     created_at: row.created_at,
     updated_at: row.updated_at,
+    // Drift flags: whether the user customized these away from the seeded
+    // recipe defaults. Customized values are preserved by the seed drift-sync;
+    // pristine ones auto-follow recipe improvements. Surfacing this in the UI
+    // is the lesson of the stale-profile incident — an invisible override
+    // silently pinned every role to weeks-old prompts and tools.
+    prompt_customized: (row.system_prompt || '') !== (row.seeded_prompt || ''),
+    tools_customized: (row.tools || '[]') !== (row.seeded_tools || '[]'),
   };
 }
 
@@ -388,6 +395,58 @@ function applyStaffProfilesToWorkerConfigs(recipeId, workerConfigs, modelPlan = 
   });
 }
 
+// What this profile ACTUALLY injects into a colony run: the current recipe
+// baseline, whether the profile overrides it, and the effective tool union.
+// Exists so overrides are visible in the UI — an invisible stale override once
+// pinned every role to weeks-old prompts and tools with no way to notice.
+function profileEffectiveConfig(id) {
+  const profile = getProfile(id);
+  if (!profile) return null;
+  const recipe = getColonyRecipe(profile.recipe_id);
+  const role = (recipe?.roles || []).find(r => r.key === profile.role_key) || null;
+  const recipeTools = role?.tools || [];
+  const profileTools = Array.isArray(profile.tools) ? profile.tools : [];
+  const effectiveTools = [...new Set([...recipeTools, ...profileTools])].map(t => ({
+    tool: t,
+    source: recipeTools.includes(t) ? 'recipe' : 'profile',
+  }));
+  return {
+    profile_id: profile.id,
+    recipe_id: profile.recipe_id,
+    role_key: profile.role_key,
+    recipe_role_exists: !!role,
+    recipe_prompt: role?.prompt || '',
+    profile_prompt: profile.system_prompt || '',
+    prompt_source: profile.prompt_customized && profile.system_prompt ? 'profile-custom' : 'recipe-default',
+    prompt_customized: profile.prompt_customized,
+    tools_customized: profile.tools_customized,
+    effective_tools: effectiveTools,
+  };
+}
+
+// Reset a profile's prompt and/or tools to the CURRENT recipe definition —
+// the escape hatch for a customization that has drifted behind recipe
+// improvements. Updates the seed snapshot too, so the profile becomes
+// pristine again and auto-follows future recipe changes.
+function resetProfileToRecipe(id, fields = ['system_prompt', 'tools']) {
+  const profile = getProfile(id);
+  if (!profile) return null;
+  const recipe = getColonyRecipe(profile.recipe_id);
+  const role = (recipe?.roles || []).find(r => r.key === profile.role_key);
+  if (!role) throw new Error(`No recipe role "${profile.role_key}" in "${profile.recipe_id}" — custom staff have no recipe default to reset to.`);
+  const wants = new Set(Array.isArray(fields) && fields.length ? fields : ['system_prompt', 'tools']);
+  if (wants.has('system_prompt')) {
+    db.prepare('UPDATE staff_profiles SET system_prompt=?, seeded_prompt=?, updated_at=unixepoch() WHERE id=?')
+      .run(role.prompt || '', role.prompt || '', id);
+  }
+  if (wants.has('tools')) {
+    const tools = JSON.stringify(role.tools || []);
+    db.prepare('UPDATE staff_profiles SET tools=?, seeded_tools=?, updated_at=unixepoch() WHERE id=?')
+      .run(tools, tools, id);
+  }
+  return getProfile(id);
+}
+
 function insertSuggestion({ profileId, colonyId = null, evidenceType, evidenceRef, targetField, proposedValue, rationale, source = 'operator' }) {
   if (!profileId || !evidenceType || !evidenceRef || !targetField || !proposedValue) return null;
   const id = v4();
@@ -519,7 +578,14 @@ function dismissSuggestion(id) {
 
 function profileMetrics(profile) {
   const handoffs = db.prepare('SELECT * FROM colony_handoffs WHERE from_agent=? OR to_agent=?').all(profile.role_key, profile.role_key);
-  const successfulHandoffs = handoffs.filter(h => ['pending', 'accepted', 'approved', 'awaiting_human'].includes(h.status)).length;
+  // Dedupe identical handoffs: a looping worker once stacked 15 accepted
+  // dev→QA handoffs with the same summary — counting those inflates the stat.
+  const successKeys = new Set(
+    handoffs
+      .filter(h => ['pending', 'accepted', 'approved', 'awaiting_human'].includes(h.status))
+      .map(h => `${h.colony_id}|${h.from_agent}|${h.to_agent}|${String(safeParse(h.payload, {})?.summary || '').trim()}`),
+  );
+  const successfulHandoffs = successKeys.size;
   const rejectedHandoffs = handoffs.filter(h => h.status === 'rejected' || h.protocol_status !== 'ok').length;
   const autoRecordedHandoffs = handoffs.filter(h => safeParse(h.payload, {})?.auto_recorded).length;
   const notes = db.prepare('SELECT * FROM colony_blackboard ORDER BY id DESC LIMIT 1000').all()
@@ -530,12 +596,16 @@ function profileMetrics(profile) {
   const applied = suggestions.filter(s => s.status === 'applied').length;
   const logs = db.prepare('SELECT id, log FROM colonies ORDER BY created_at DESC LIMIT 100').all();
   let toolErrorCount = 0;
-  let retryCount = 0;
+  let retryCount = 0; // loop-breaker trips (duplicate/identical-result/halt guards)
   for (const colony of logs) {
     for (const entry of safeParse(colony.log, [])) {
       if (!roleMatchesProfile(profile, entry.agent)) continue;
-      if (entry.kind === 'tool_result' && entry.result?.error) toolErrorCount++;
-      if (/retry/i.test(JSON.stringify(entry))) retryCount++;
+      if (entry.kind === 'tool_result' && entry.result?.error) {
+        toolErrorCount++;
+        // Count breaker trips specifically — the old /retry/i regex over the
+        // whole entry JSON matched noise (any prompt or result mentioning it).
+        if (/Duplicate call detected|HALTED|IDENTICAL result/i.test(String(entry.result.error))) retryCount++;
+      }
     }
   }
   return {
@@ -923,6 +993,8 @@ module.exports = {
   dismissSuggestion,
   profileMetrics,
   profileMetricDetails,
+  profileEffectiveConfig,
+  resetProfileToRecipe,
   linkAssignedAgent,
   profileInteractions,
   profileBundle,

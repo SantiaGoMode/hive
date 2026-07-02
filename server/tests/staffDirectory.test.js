@@ -217,3 +217,34 @@ describe('staff evidence and chat', () => {
     assert.equal(staff.isUngroundedWorkClaim(grounded, 'Regression testing still needs attention.', ''), true);
   });
 });
+
+describe('effective config and reset-to-recipe', () => {
+  it('reports drift flags and the effective tool union', () => {
+    const dev = staff.listProfiles().find(p => p.role_key === 'software_developer' && p.recipe_id === 'development_team');
+    // Customize the prompt; tools untouched.
+    staff.updateProfile(dev.id, { system_prompt: 'You are a fully custom developer.' });
+    const updated = staff.getProfile(dev.id);
+    assert.equal(updated.prompt_customized, true);
+
+    const eff = staff.profileEffectiveConfig(dev.id);
+    assert.equal(eff.prompt_source, 'profile-custom');
+    assert.ok(eff.recipe_prompt.length > 100, 'recipe baseline prompt should be exposed');
+    const toolNames = eff.effective_tools.map(t => t.tool);
+    for (const t of ['sandbox', 'protocol', 'protocol_worker']) {
+      assert.ok(toolNames.includes(t), `effective tools must include recipe capability ${t}`);
+    }
+  });
+
+  it('reset-to-recipe restores the current recipe prompt and clears drift', () => {
+    const dev = staff.listProfiles().find(p => p.role_key === 'software_developer' && p.recipe_id === 'development_team');
+    const reset = staff.resetProfileToRecipe(dev.id, ['system_prompt']);
+    assert.equal(reset.prompt_customized, false);
+    assert.match(reset.system_prompt, /Software Developer/);
+  });
+
+  it('reset refuses for custom staff with no recipe role', () => {
+    const custom = staff.createProfile({ display_name: 'Custom Consultant', role: 'Consultant' });
+    assert.throws(() => staff.resetProfileToRecipe(custom.id), /no recipe default/);
+    staff.deleteProfile(custom.id);
+  });
+});
