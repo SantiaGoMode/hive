@@ -273,23 +273,34 @@ module.exports = {
       const trimmed = String(summary || '').trim();
       if (!trimmed) return { error: 'summary is required' };
       // Require that at least some plan exists and every step is done before declaring victory.
+      // Exception — the failure exit: when every remaining step is BLOCKED, the
+      // mission is legitimately concluded as failed. Without this the operator
+      // has no legal way to end a failed run and grinds mark_goal_achieved ↔
+      // report_workaround until someone kills it (observed: 17 minutes).
+      let missionFailed = false;
       const row = db.prepare('SELECT plan FROM colonies WHERE id=?').get(colonyContext.colonyId);
       if (row?.plan) {
         const plan = JSON.parse(row.plan);
         const unfinished = (plan.steps || []).filter(s => s.status !== 'done');
         if (unfinished.length > 0) {
-          return {
-            error: `Cannot mark goal achieved: ${unfinished.length} plan step(s) are not yet done. Update them with update_plan_step first, or address the remaining work.`,
-            unfinished: unfinished.map(s => ({ id: s.id, description: s.description, status: s.status })),
-          };
+          const allBlocked = unfinished.every(s => s.status === 'blocked');
+          if (!allBlocked) {
+            return {
+              error: `Cannot mark goal achieved: ${unfinished.length} plan step(s) are not yet done. Finish and mark them done — or, if the mission cannot proceed, mark every remaining step blocked (with a note) and call this again to conclude the run as FAILED.`,
+              unfinished: unfinished.map(s => ({ id: s.id, description: s.description, status: s.status })),
+            };
+          }
+          missionFailed = true;
         }
       }
 
       // Protocol gate: a protocol-driven colony cannot complete while a critical
       // handoff awaits human approval, or if the handoff flow was never used.
+      // A FAILED conclusion (all remaining steps blocked) skips the flow gates —
+      // a dead mission cannot complete its handoff chain by definition.
       const recipeId = colonyContext.recipeId;
       let deliverable = null;
-      if (protocol.hasProtocol(recipeId)) {
+      if (protocol.hasProtocol(recipeId) && !missionFailed) {
         const completion = protocol.flowCompletion(colonyContext.colonyId, recipeId);
         if (!completion.ok) {
           return {
@@ -324,9 +335,14 @@ module.exports = {
         deliverable.workarounds = workaroundRows;
       }
 
+      const finalSummary = missionFailed ? `⚠ MISSION CONCLUDED AS FAILED (all remaining steps blocked): ${trimmed}` : trimmed;
       db.prepare('UPDATE colonies SET summary=?, deliverable=?, updated_at=unixepoch() WHERE id=?')
-        .run(trimmed, deliverable ? JSON.stringify(deliverable) : null, colonyContext.colonyId);
-      return { success: true, goal_achieved: true, summary: trimmed, ...(deliverable ? { deliverable } : {}) };
+        .run(finalSummary, deliverable ? JSON.stringify(deliverable) : null, colonyContext.colonyId);
+      return {
+        success: true, goal_achieved: true, summary: finalSummary,
+        ...(missionFailed ? { mission_failed: true, note: 'Run concluded as FAILED — remaining steps were blocked. The summary must describe what was attempted, what blocked it, and what the user should change.' } : {}),
+        ...(deliverable ? { deliverable } : {}),
+      };
     },
   },
 

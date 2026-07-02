@@ -238,9 +238,12 @@ module.exports = {
         ...(autoHandoff ? { auto_handoff: autoHandoff, note: `The worker did not call the handoff tool, so its ${autoHandoff.from}→${autoHandoff.to} handoff was auto-recorded from its response. The flow has advanced — delegate to the next role.` } : {}),
         ...(flowHint && !autoHandoff ? { flow_hint: flowHint } : {}),
         ...(noOutput ? {
-          warning: silentTurns >= 2
+          warning: (silentTurns >= 2
             ? `${target.name} has produced no output ${silentTurns} times in a row — re-delegating to it AGAIN will fail the same way and is forbidden. Instead: mark its plan step blocked with a note, call report_workaround (issue: worker unresponsive), and continue the flow — delegate the NEXT role using the best available context.`
-            : 'Worker produced no output. Retry ONCE with a simpler, more explicit task description. If it happens again, mark the step blocked and move on — do NOT keep retrying. Do NOT mark the step done until you have real output.',
+            : 'Worker produced no output. Retry ONCE with a simpler, more explicit task description. If it happens again, mark the step blocked and move on — do NOT keep retrying. Do NOT mark the step done until you have real output.')
+            + (callsMade > 0
+              ? ` IMPORTANT: "no output" means no final SUMMARY — this worker DID execute ${callsMade} tool call(s) this turn, so real work (files, commits, installs) may exist. Read the blackboard and check the repo before treating the work itself as missing.`
+              : ''),
         } : {}),
         ...(proseOnly ? { execution_warning: `${target.name} made ZERO tool calls — the response above is a plan in prose, NOT executed work. No files changed, nothing ran. Re-delegate with an explicit instruction to EXECUTE with sandbox tools (shell/write_file) and report actual command output. Do NOT mark any step done based on this response.` } : {}),
       };

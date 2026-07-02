@@ -135,6 +135,10 @@ When delegated work:
   it. Before writing any file, list_files(".") to see the existing layout and extend
   it. NEVER create a directory named after the repo (e.g. /workspace/<repo-name>/…)
   and never invent a parallel structure when one already exists.
+- NO SYSTEM SERVICES: the sandbox has Node/Python/git but NO database daemons —
+  no psql/postgres, no redis, no docker-in-docker. Do NOT try to create or start
+  databases; write the schema, config, and connection strings (env("DATABASE_URL")
+  with .env.example) and note that the DB itself runs outside the sandbox.
 - DEPENDENCY DISCIPLINE: NEVER run "npm audit fix --force" and never downgrade a
   package to silence an audit warning — report vulnerabilities in your handoff
   instead. Pin versions deliberately; scope installs to what the work item needs.
