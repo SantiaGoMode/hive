@@ -94,8 +94,15 @@ module.exports = {
         userMessages.push({ role: 'user', content: message });
       }
 
+      // Analysis roles (BA/PM/designer) deliver text and small files — 20 tool
+      // rounds is pure fizzle budget for them; coding roles keep the full one.
+      const budgetRole = colonyContext?.roleByAgentId?.get?.(resolvedId);
+      const roleMaxRounds = budgetRole && !colonyModels.CODING_ROLES.has(budgetRole)
+        ? Math.min(maxRounds || 20, 8)
+        : maxRounds;
+
       const callsBefore = colonyContext?.toolCallsByAgent?.get?.(resolvedId) || 0;
-      const response = await runAgentOnce(target, userMessages, ollamaUrl, depth, ws, hivePath, null, maxRounds, signal, colonyContext);
+      const response = await runAgentOnce(target, userMessages, ollamaUrl, depth, ws, hivePath, null, roleMaxRounds, signal, colonyContext);
       const callsMade = (colonyContext?.toolCallsByAgent?.get?.(resolvedId) || 0) - callsBefore;
 
       // Append assistant reply to the thread so the next call has full context.
@@ -122,6 +129,15 @@ module.exports = {
       }
 
       const noOutput = response === '(no response)' || response === '(agent reached max tool rounds without a final answer)';
+      // Consecutive silent turns per worker: after two, retrying is a doom loop
+      // (observed: six identical re-delegations to a fizzling designer). The
+      // warning below flips from "retry" to "move on".
+      const silentCounts = colonyContext ? (colonyContext.noOutputCounts ||= new Map()) : null;
+      if (silentCounts) {
+        if (noOutput) silentCounts.set(resolvedId, (silentCounts.get(resolvedId) || 0) + 1);
+        else silentCounts.set(resolvedId, 0);
+      }
+      const silentTurns = silentCounts?.get(resolvedId) || 0;
 
       // Protocol fallback: weak models routinely END WITH TEXT ("BA handoff: …")
       // instead of calling the handoff tool, which leaves the ledger empty, blocks
@@ -216,7 +232,11 @@ module.exports = {
         response,
         ...(autoHandoff ? { auto_handoff: autoHandoff, note: `The worker did not call the handoff tool, so its ${autoHandoff.from}→${autoHandoff.to} handoff was auto-recorded from its response. The flow has advanced — delegate to the next role.` } : {}),
         ...(flowHint && !autoHandoff ? { flow_hint: flowHint } : {}),
-        ...(noOutput ? { warning: 'Worker produced no output. Retry with a simpler, more explicit task description, or verify the worker has the correct tools. Do NOT mark the step done until you have real output.' } : {}),
+        ...(noOutput ? {
+          warning: silentTurns >= 2
+            ? `${target.name} has produced no output ${silentTurns} times in a row — re-delegating to it AGAIN will fail the same way and is forbidden. Instead: mark its plan step blocked with a note, call report_workaround (issue: worker unresponsive), and continue the flow — delegate the NEXT role using the best available context.`
+            : 'Worker produced no output. Retry ONCE with a simpler, more explicit task description. If it happens again, mark the step blocked and move on — do NOT keep retrying. Do NOT mark the step done until you have real output.',
+        } : {}),
         ...(proseOnly ? { execution_warning: `${target.name} made ZERO tool calls — the response above is a plan in prose, NOT executed work. No files changed, nothing ran. Re-delegate with an explicit instruction to EXECUTE with sandbox tools (shell/write_file) and report actual command output. Do NOT mark any step done based on this response.` } : {}),
       };
     },

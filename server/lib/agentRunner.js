@@ -44,6 +44,14 @@ async function runAgentOnce(targetAgent, userMessages, ollamaUrl, depth, ws = nu
   // dozens of times) while allowing legit repeats whose results change
   // (e.g. re-running tests after editing files).
   const resultCache = new Map();
+  // One-shot recovery for the small-model fizzle: a round with no content and
+  // no tool calls (common with qwen3 after tool use) gets a single explicit
+  // "final answer now" nudge before we give up with '(no response)'.
+  let finalAnswerNudged = false;
+  // Consecutive failing/blocked tool results with no success in between. Small
+  // models ignore breaker errors and grind all their rounds rewording the same
+  // call — end the turn early instead.
+  let consecutiveFailures = 0;
   // Permission circuit-breaker: tools that have already returned a permission/
   // auth error this turn. On the first hit we tell the agent what to do; a second
   // hit on the same tool short-circuits so it can't loop on an unfixable error.
@@ -146,7 +154,19 @@ async function runAgentOnce(targetAgent, userMessages, ollamaUrl, depth, ws = nu
     messages.push({ role: 'assistant', content: msg.content || '', ...(msg.tool_calls?.length ? { tool_calls: msg.tool_calls } : {}) });
 
     if (!msg.tool_calls?.length) {
-      return msg.content || '(no response)';
+      if (msg.content) return msg.content;
+      // Empty round (no text, no tools). Give the model ONE explicit chance to
+      // produce its answer before we report silence — qwen-class models often
+      // fizzle exactly here after a run of tool calls.
+      if (!finalAnswerNudged) {
+        finalAnswerNudged = true;
+        messages.push({
+          role: 'user',
+          content: 'You produced no output. Write your FINAL ANSWER now as plain text — summarize what you did, the concrete deliverable, and your handoff. Do not call any tools.',
+        });
+        continue;
+      }
+      return '(no response)';
     }
 
     // Execute each tool call and append results
@@ -226,6 +246,14 @@ async function runAgentOnce(targetAgent, userMessages, ollamaUrl, depth, ws = nu
       }
 
       messages.push({ role: 'tool', content: JSON.stringify(result), tool_call_id: tc.id, name: toolName });
+
+      // Grinding detection: models that ignore breaker errors reword the same
+      // failing call for their whole round budget. Six failures with zero
+      // successes in between means the turn is unrecoverable — end it.
+      consecutiveFailures = (result?.error || failureText(result)) ? consecutiveFailures + 1 : 0;
+      if (consecutiveFailures >= 6) {
+        return '(worker turn halted: 6 consecutive tool calls failed or were blocked — the same approach keeps failing. Do not re-delegate the identical instruction; change the approach or mark the step blocked.)';
+      }
     }
   }
 

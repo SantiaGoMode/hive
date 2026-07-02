@@ -93,7 +93,16 @@ function seedRecipeWorkers(ctx) {
       }
     } catch (e) { logSwallowed('colonyRunner:sandboxCapabilities', e, { colonyId }); }
   }
+  const protocolDiscipline = `
+
+[Protocol discipline]
+Do your role's ACTUAL work first — protocol tools are bookkeeping, not work.
+Per turn: at most ONE blackboard_read, ONE blackboard_write (a single consolidated
+update), and ONE checkpoint at the very end. Re-posting the same status is failure,
+not progress. NEVER end your turn silently: finish with handoff() when your work is
+complete, or a plain-text answer stating exactly what you did and what remains.`;
   for (const workerConfig of workerConfigs) {
+    workerConfig.system_prompt += protocolDiscipline;
     if (memorySection) workerConfig.system_prompt += memorySection;
     const wantCats = mcpCategoriesForWorker(workerConfig);
     const matched = mcpServers.filter(s => s.categories.some(c => wantCats.includes(c)));
@@ -119,10 +128,11 @@ function seedRecipeWorkers(ctx) {
       try { staffDirectory.linkAssignedAgent(recipe.id, workerConfig.role_key, worker.id, workerConfig._staff_profile_id); } catch (e) { logSwallowed('colonyRunner:linkStaff', e, { agentId: worker.id }); }
     }
     // Coding roles get the colony's repo mounted as their sandbox workspace
-    // so they edit the real project. The PM gets it too — it maintains
-    // CHANGELOG/release notes and persists artifacts under docs/. Both need
-    // writes, so opt in explicitly; every other mount stays read-only.
-    if (row.repo_path && (colonyModels.CODING_ROLES.has(workerConfig.role_key) || workerConfig.role_key === 'project_manager')) {
+    // so they edit the real project. The PM and designer get it too — they
+    // persist record-keeping and spec artifacts under docs/ (file tools only).
+    // All need writes, so opt in explicitly; every other mount stays read-only.
+    const DOC_WRITER_ROLES = new Set(['project_manager', 'ui_ux_designer']);
+    if (row.repo_path && (colonyModels.CODING_ROLES.has(workerConfig.role_key) || DOC_WRITER_ROLES.has(workerConfig.role_key))) {
       try { sandbox.setAgentRepo(worker.id, row.repo_path, { writable: true }); } catch (e) { logSwallowed('colonyRunner:setAgentRepo', e, { agentId: worker.id }); }
     }
     // Coding roles need egress for npm/pip installs; the sandbox default is

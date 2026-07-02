@@ -153,6 +153,13 @@ module.exports = {
     },
     async handler({ results }, { colonyContext, callerAgentId }) {
       if (!colonyContext?.colonyId) return { error: 'report_acceptance is only available inside a Colony run' };
+      // Acceptance verdicts are QA's alone — a BA once recorded evidence-free
+      // "pass" verdicts for criteria nobody had executed.
+      const callerRole = colonyContext?.roleByAgentId?.get?.(callerAgentId);
+      const hasRoster = colonyContext?.roleByAgentId?.size > 0;
+      if (hasRoster && callerRole !== 'qa_engineer') {
+        return { error: `report_acceptance is the QA Engineer's tool — verdicts require executed checks with evidence. Your role ("${callerRole || 'unknown'}") must not record acceptance results; hand your findings to QA instead.` };
+      }
       if (!Array.isArray(results) || results.length === 0) return { error: 'results must be a non-empty array' };
       const normalized = results.map(r => ({
         criterion: String(r?.criterion || '').trim(),

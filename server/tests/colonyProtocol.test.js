@@ -180,6 +180,19 @@ describe('protocol tools', () => {
     assert.ok(workerTools.includes('handoff'));
   });
 
+  it('report_acceptance is QA-only when a roster exists', async () => {
+    const id = newDevColony();
+    const map = new Map([['ba', 'business_analyst'], ['qa', 'qa_engineer']]);
+    const denied = await executeTool('report_acceptance',
+      { results: [{ criterion: 'env replicated', status: 'pass', evidence: 'none' }] },
+      'ba', 'http://x', 0, null, null, null, 20, null, ctx(id, map));
+    assert.match(denied.error, /QA Engineer/);
+    const ok = await executeTool('report_acceptance',
+      { results: [{ criterion: 'env replicated', status: 'fail', evidence: 'npm test exited 1' }] },
+      'qa', 'http://x', 0, null, null, null, 20, null, ctx(id, map));
+    assert.equal(ok.success, true);
+  });
+
   it('sandbox_files exposes file tools but no execution tools (PM role)', () => {
     const { getToolDefinitions } = require('../lib/tools/registry');
     const pmTools = getToolDefinitions(['sandbox_files']).map(d => d.function.name);
