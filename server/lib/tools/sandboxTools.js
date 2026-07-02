@@ -24,6 +24,15 @@ module.exports = {
     },
     async handler({ command, timeout_seconds }, { callerAgentId }) {
       const sandbox = require('../sandbox');
+      // Hard policy, not a prompt suggestion: models ignore the prompt ban
+      // mid-frenzy and this command reliably destroys dependency trees
+      // (observed twice: force-downgraded next@15 to next@9 / react@16).
+      if (/npm\s+audit\s+fix\b[^|;&]*--force/.test(command)) {
+        return {
+          stdout: '', exitCode: 1,
+          stderr: 'BLOCKED: "npm audit fix --force" is disabled in Hive sandboxes — it up/downgrades major versions and destroys the dependency tree. Report the vulnerabilities in your handoff instead; do NOT attempt other workarounds to silence audit warnings.',
+        };
+      }
       const secs = Math.min(600, Math.max(5, Number(timeout_seconds) || 60));
       const { stdout, stderr, exitCode } = await sandbox.exec(callerAgentId, command, secs * 1000);
       const result = { stdout: stdout.slice(0, 8000), stderr: stderr.slice(0, 2000), exitCode };

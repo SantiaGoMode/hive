@@ -165,7 +165,12 @@ module.exports = {
             }
           }
           const outgoing = flow.filter(e => e.from === roleKey);
-          if (roleKey && outgoing.length === 1) {
+          // Only treat the response as an implicit handoff when it actually
+          // reads like one — this fallback once auto-advanced the flow off a
+          // response of "I don't know yet — let me check."
+          const looksLikeHandoff = /handoff/i.test(response)
+            && !/i don'?t know|let me check|cannot proceed|unable to/i.test(response.slice(0, 200));
+          if (roleKey && outgoing.length === 1 && looksLikeHandoff) {
             const edge = outgoing[0];
             const ledger = protocol.listHandoffs(colonyContext.colonyId);
             const alreadyRecorded = ledger.some(h =>

@@ -5,7 +5,9 @@ const { execFileSync } = require('child_process');
 const { logSwallowed } = require('../logSwallowed');
 
 function gitExec(args, cwd) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  // 64MB buffer: a run that (wrongly) staged 20k node_modules files produced
+  // enough push output to die with ENOBUFS at the 1MB default.
+  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }).trim();
 }
 
 function gitDefaultBranch(repoPath) {
@@ -41,14 +43,22 @@ function gitCheckoutBranch(repoPath, branchName) {
   }
 }
 
+// Bulk build artifacts that must never be committed by a colony run. Task
+// repos often lack a .gitignore — `git add -A` once staged 20k node_modules
+// files (4.3M lines) and the push died with ENOBUFS.
+const JUNK_PATH_RE = /(^|\/)(node_modules|\.next|dist|build|out|coverage|__pycache__|\.venv|venv|\.cache|\.turbo)(\/|$)|\.log$/;
+
 async function gitCommitAndPush(repoPath, branchName, message) {
   gitExec(['add', '-A'], repoPath);
-  // Secret hygiene: agents sometimes create .env files with credentials and
-  // they must never ride along into a pushed PR. Unstage any env files.
+  // Hygiene: unstage secrets (.env files) and bulk artifacts before committing.
   try {
     const staged = gitExec(['diff', '--cached', '--name-only'], repoPath).split('\n').filter(Boolean);
-    const envFiles = staged.filter(f => /(^|\/)\.env(\..+)?$/.test(f) && !/\.env\.example$/.test(f));
-    if (envFiles.length) gitExec(['reset', '--', ...envFiles], repoPath);
+    const unstage = staged.filter(f =>
+      (/(^|\/)\.env(\..+)?$/.test(f) && !/\.env\.example$/.test(f)) || JUNK_PATH_RE.test(f));
+    // Batch — there can be tens of thousands and argv is capped by ARG_MAX.
+    for (let i = 0; i < unstage.length; i += 500) {
+      gitExec(['reset', '--', ...unstage.slice(i, i + 500)], repoPath);
+    }
   } catch (e) { logSwallowed('colonyRunner:gitUnstageEnv', e); }
   // If nothing changed, skip the commit gracefully. git prints "nothing to
   // commit" to STDOUT, so check stdout too — checking only stderr/message

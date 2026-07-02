@@ -2,6 +2,24 @@
 const protocol = require('../colonyProtocol');
 const { agentLabel, resolveRoleKey } = require('./shared');
 
+// These envelopes embed a fresh id per call, which defeats the agent loop's
+// identical-result breaker — a blocked worker can alternate request_assistance /
+// report_progress with identical content forever (observed: 10 cycles in 2
+// minutes, all "waiting for assistance" that can never arrive). Dedupe by
+// content per agent and say plainly that no reply will come mid-turn.
+function dedupedAcp(colonyContext, callerAgentId, toolName, contentKey) {
+  const seen = (colonyContext.acpDedup ||= new Map());
+  const key = `${callerAgentId}:${toolName}`;
+  if (seen.get(key) === contentKey) {
+    return {
+      deduplicated: true,
+      message: `You already posted this exact ${toolName} — it is on the blackboard. Nobody replies during your turn: assistance is picked up AFTER you finish. Waiting is not an action. Do what you can without it, then END YOUR TURN with a plain-text answer describing the blocker and what you completed.`,
+    };
+  }
+  seen.set(key, contentKey);
+  return null;
+}
+
 module.exports = {
   request_assistance: {
     group: 'protocol',
@@ -23,11 +41,16 @@ module.exports = {
     },
     async handler({ topic, detail, to_role }, { colonyContext, callerAgentId }) {
       if (!colonyContext?.colonyId) return { error: 'request_assistance is only available inside a Colony run' };
+      const dup = dedupedAcp(colonyContext, callerAgentId, 'request_assistance', `${topic}|${detail || ''}`);
+      if (dup) return dup;
       const from = resolveRoleKey(colonyContext, callerAgentId) || 'agent';
       const author = agentLabel(colonyContext, callerAgentId);
       protocol.writeBlackboard(colonyContext.colonyId, author, 'assistance',
         `ASSISTANCE [${topic}]${to_role ? ` → ${to_role}` : ''}: ${detail || ''}`, { topic, to_role: to_role || null });
-      return protocol.acpEnvelope('assistance', { from, to: to_role || null, performative: 'request', content: { topic, detail } });
+      return {
+        ...protocol.acpEnvelope('assistance', { from, to: to_role || null, performative: 'request', content: { topic, detail } }),
+        note: 'Posted. Assistance is asynchronous — no reply will arrive during your turn. Continue with what you CAN do, then end your turn with a plain-text summary of the blocker.',
+      };
     },
   },
 
@@ -50,6 +73,8 @@ module.exports = {
     },
     async handler({ status, detail }, { colonyContext, callerAgentId }) {
       if (!colonyContext?.colonyId) return { error: 'report_progress is only available inside a Colony run' };
+      const dup = dedupedAcp(colonyContext, callerAgentId, 'report_progress', `${status}|${detail || ''}`);
+      if (dup) return dup;
       const from = resolveRoleKey(colonyContext, callerAgentId) || 'agent';
       const author = agentLabel(colonyContext, callerAgentId);
       protocol.writeBlackboard(colonyContext.colonyId, author, 'progress', `[${status}] ${detail || ''}`, { status });
