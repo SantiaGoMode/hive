@@ -180,6 +180,22 @@ describe('protocol tools', () => {
     assert.ok(workerTools.includes('handoff'));
   });
 
+  it('sandbox_files exposes file tools but no execution tools (PM role)', () => {
+    const { getToolDefinitions } = require('../lib/tools/registry');
+    const pmTools = getToolDefinitions(['sandbox_files']).map(d => d.function.name);
+    for (const t of ['write_file', 'read_file', 'list_files', 'move_file', 'delete_file']) {
+      assert.ok(pmTools.includes(t), `sandbox_files must include ${t}`);
+    }
+    for (const t of ['shell', 'run_python', 'install_package', 'start_server']) {
+      assert.ok(!pmTools.includes(t), `sandbox_files must NOT include ${t}`);
+    }
+    // The dev-team PM role must not carry the full sandbox group.
+    const { getColonyRecipe } = require('../lib/colonyRecipes');
+    const pm = getColonyRecipe('development_team').roles.find(r => r.key === 'project_manager');
+    assert.ok(!pm.tools.includes('sandbox'));
+    assert.ok(pm.tools.includes('sandbox_files'));
+  });
+
   it('rejects a handoff from an agent not on the worker roster (operator impersonation)', async () => {
     const id = newDevColony();
     // Roster exists, but the caller ("orch") is not on it — claiming a worker's

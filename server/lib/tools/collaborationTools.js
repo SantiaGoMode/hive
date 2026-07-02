@@ -3,6 +3,7 @@ const { readAgent } = require('../agentParser');
 const db = require('../../db');
 const protocol = require('../colonyProtocol');
 const { logSwallowed } = require('../logSwallowed');
+const colonyModels = require('../colonyModels');
 const { readShared, writeShared } = require('./shared');
 // Lazy to avoid a load-time cycle with agentRunner (which requires the registry).
 const runAgentOnce = (...a) => require('../agentRunner').runAgentOnce(...a);
@@ -93,7 +94,9 @@ module.exports = {
         userMessages.push({ role: 'user', content: message });
       }
 
+      const callsBefore = colonyContext?.toolCallsByAgent?.get?.(resolvedId) || 0;
       const response = await runAgentOnce(target, userMessages, ollamaUrl, depth, ws, hivePath, null, maxRounds, signal, colonyContext);
+      const callsMade = (colonyContext?.toolCallsByAgent?.get?.(resolvedId) || 0) - callsBefore;
 
       // Append assistant reply to the thread so the next call has full context.
       if (histories) {
@@ -172,8 +175,13 @@ module.exports = {
               const planRow = db.prepare('SELECT plan FROM colonies WHERE id=?').get(colonyContext.colonyId);
               if (planRow?.plan) {
                 const plan = JSON.parse(planRow.plan);
-                const step = (plan.steps || []).find(s => s.status === 'in_progress')
-                  || (plan.steps || []).find(s => s.status === 'pending');
+                // Same ownership scoping as the handoff tool: only complete the
+                // handing-off role's own step, or an unassigned in_progress one.
+                const steps = plan.steps || [];
+                const ownSteps = steps.filter(s => (s.assigned_to || null) === edge.from);
+                const step = ownSteps.find(s => s.status === 'in_progress')
+                  || ownSteps.find(s => s.status === 'pending')
+                  || steps.find(s => s.status === 'in_progress' && !s.assigned_to);
                 if (step) {
                   step.status = 'done';
                   step.note = `auto-completed: handoff ${edge.from}→${edge.to} accepted`;
@@ -194,6 +202,14 @@ module.exports = {
         } catch (e) { logSwallowed('agentTools:autoHandoff', e, { colonyId: colonyContext.colonyId }); }
       }
 
+      // A coding-role worker that "responds" without a single tool call has
+      // described work, not done it (typical of small coding models). Flag it
+      // so the operator re-delegates demanding execution instead of treating
+      // the prose as progress.
+      const workerRoleKey = colonyContext?.roleByAgentId?.get?.(resolvedId);
+      const proseOnly = !noOutput && callsMade === 0
+        && workerRoleKey && colonyModels.CODING_ROLES.has(workerRoleKey);
+
       return {
         agent_name: target.name,
         agent_id: resolvedId,
@@ -201,6 +217,7 @@ module.exports = {
         ...(autoHandoff ? { auto_handoff: autoHandoff, note: `The worker did not call the handoff tool, so its ${autoHandoff.from}→${autoHandoff.to} handoff was auto-recorded from its response. The flow has advanced — delegate to the next role.` } : {}),
         ...(flowHint && !autoHandoff ? { flow_hint: flowHint } : {}),
         ...(noOutput ? { warning: 'Worker produced no output. Retry with a simpler, more explicit task description, or verify the worker has the correct tools. Do NOT mark the step done until you have real output.' } : {}),
+        ...(proseOnly ? { execution_warning: `${target.name} made ZERO tool calls — the response above is a plan in prose, NOT executed work. No files changed, nothing ran. Re-delegate with an explicit instruction to EXECUTE with sandbox tools (shell/write_file) and report actual command output. Do NOT mark any step done based on this response.` } : {}),
       };
     },
   },

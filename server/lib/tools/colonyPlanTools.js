@@ -27,7 +27,7 @@ module.exports = {
                 properties: {
                   id: { type: 'string', description: 'Short unique id, e.g. "1", "2"' },
                   description: { type: 'string', description: 'One-sentence description of the step' },
-                  assigned_to: { type: 'string', description: 'Optional: name of the worker agent responsible' },
+                  assigned_to: { type: 'string', description: 'role_key of the role responsible (e.g. "software_developer"). Assign technical steps (env setup, installs, coding, config) ONLY to software_developer / qa_engineer / devops_engineer.' },
                 },
                 required: ['id', 'description'],
               },

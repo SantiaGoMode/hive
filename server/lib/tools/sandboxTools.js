@@ -189,7 +189,7 @@ module.exports = {
   },
 
   write_file: {
-    group: 'sandbox',
+    groups: ['sandbox', 'sandbox_files'],
     definition: {
       type: 'function',
       function: {
@@ -220,7 +220,7 @@ module.exports = {
   },
 
   read_file: {
-    group: 'sandbox',
+    groups: ['sandbox', 'sandbox_files'],
     definition: {
       type: 'function',
       function: {
@@ -249,7 +249,7 @@ module.exports = {
   },
 
   delete_file: {
-    group: 'sandbox',
+    groups: ['sandbox', 'sandbox_files'],
     definition: {
       type: 'function',
       function: {
@@ -278,7 +278,7 @@ module.exports = {
   },
 
   move_file: {
-    group: 'sandbox',
+    groups: ['sandbox', 'sandbox_files'],
     definition: {
       type: 'function',
       function: {
@@ -310,7 +310,7 @@ module.exports = {
   },
 
   list_files: {
-    group: 'sandbox',
+    groups: ['sandbox', 'sandbox_files'],
     definition: {
       type: 'function',
       function: {

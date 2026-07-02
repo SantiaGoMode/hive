@@ -37,6 +37,12 @@ function getToolDefinitions(enabledGroups = []) {
 
 // ── Execute a tool call ───────────────────────────────────────────────────────
 async function executeTool(name, args, callerAgentId, ollamaUrl, depth = 0, workspace = null, hivePath = null, ws = null, maxRounds = MAX_SUB_ROUNDS, signal = null, colonyContext = null) {
+  // Per-agent call counter — lets ask_agent detect a worker that "responded"
+  // with prose but executed nothing (common with small coding models).
+  if (colonyContext && callerAgentId) {
+    const counts = (colonyContext.toolCallsByAgent ||= new Map());
+    counts.set(callerAgentId, (counts.get(callerAgentId) || 0) + 1);
+  }
   // Route MCP tools first
   if (mcpManager.isMcpTool(name)) {
     try {

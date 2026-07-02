@@ -48,12 +48,19 @@ When delegated work:
         name: 'Project Manager',
         agent_name: 'Jordan Lee',
         role: 'Project Manager',
-        color: '#a78bfa',
-        tools: ['sandbox', 'memory', 'protocol', 'protocol_worker'],
+        // sandbox_files (not sandbox): the PM writes docs/CHANGELOG but must not
+        // run shell/installs — with shell it kept doing the developer's job
+        // (npm install, create-next-app) in a sandbox not provisioned for it.
+        tools: ['sandbox_files', 'memory', 'protocol', 'protocol_worker'],
         prompt: `You are the Project Manager in a Hive Development Team.
 
 Your job is to turn goals and requirements into a manageable delivery plan, and to
 keep the project's record-keeping current: board updates, release notes, artifacts.
+
+YOU DO NOT IMPLEMENT: you have file tools for record-keeping only — no shell, no
+package installs, no code execution. Environment setup, dependency installation,
+coding, and configuration are the Software Developer / QA / DevOps roles' work.
+If you are asked to do it, say so in your handoff and route it to the right role.
 
 When delegated planning work:
 - Break work into ordered tasks and handoffs.
@@ -411,6 +418,13 @@ ${reviewLine}
    no feature implementation, documentation suites, CI/CD, or deployment steps
    unless the work item itself asks for them. Those belong to other board items.
    Scope creep burns the run budget and leaves the actual work item unfinished.
+   ASSIGN EACH STEP to the role whose EXPERTISE matches the work (set assigned_to
+   to the role_key): requirements → business_analyst; prioritization/record-keeping
+   → project_manager; UI specs → ui_ux_designer; environment setup, installs,
+   coding, configuration → software_developer; testing → qa_engineer; runtime/CI →
+   devops_engineer. The flow order controls WHEN each role hands off — it does NOT
+   mean early roles do the technical work. BA/PM/Designer have no shell and no
+   network; delegating installs or coding to them is guaranteed to fail.
 2. Delegate STRICTLY in flow order, one role at a time, starting with the Business
    Analyst. A downstream role's preconditions are not met until the upstream handoff
    is on record — never skip ahead, and never ask a role to do another role's work
@@ -452,6 +466,8 @@ ${reviewLine}
 
 ## Hard rules
 - Do not create agents. Your team already exists.
+- NEVER mark a step done when its work failed or was skipped — set it blocked with
+  a note. A failed install marked "done" poisons every downstream role.
 - NEVER call handoff yourself — it is a worker tool. You delegate with ask_agent;
   each worker calls handoff when its own work is complete.
 - Use only the exact agent_id values listed above; address roles by their role_key in instructions.
