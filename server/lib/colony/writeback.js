@@ -39,7 +39,11 @@ function createPerformWriteback(ctx) {
     addEntry({ kind: 'writeback', message: `🔀 Committing and pushing colony work to branch "${colonyBranch}"…` });
     onEvent({ type: 'writeback', phase: 'push_start', branch: colonyBranch });
     try {
-      const commitMsg = `feat(colony): ${(goalSummary || row.goal || 'Colony completed').slice(0, 72)}\n\nColony ID: ${colonyId}`;
+      // First line only — board-item goals are multi-line and produce
+      // unreadable commit subjects / PR titles otherwise.
+      const goalLine = String(goalSummary || row.goal || 'Colony completed')
+        .split('\n').map(l => l.trim()).filter(l => l && !/^\[.*\]$/.test(l))[0] || 'Colony completed';
+      const commitMsg = `feat(colony): ${goalLine.slice(0, 72)}\n\nColony ID: ${colonyId}`;
       const pushRes = await gitCommitAndPush(row.repo_path, colonyBranch, commitMsg);
       if (!pushRes.pushed) {
         addEntry({ kind: 'writeback', message: '⚠️ Nothing to publish: after excluding secret files, the branch has no commits beyond the default branch. No push or PR.' });
@@ -65,10 +69,15 @@ function createPerformWriteback(ctx) {
         `> Verify the changes against the work item's acceptance criteria, then merge to \`main\` when satisfied.`,
       ].filter(l => l !== null).join('\n');
 
+      const titleLine = String(row.goal || 'Automated delivery')
+        .split('\n').map(l => l.trim()).filter(l => l && !/^\[.*\]$/.test(l))
+        .find(l => /^Title:\s*/i.test(l))?.replace(/^Title:\s*/i, '')
+        || String(row.goal || 'Automated delivery').split('\n').map(l => l.trim()).filter(l => l && !/^\[.*\]$/.test(l))[0]
+        || 'Automated delivery';
       const pr = await createDraftPR({
         owner: repoInfo.owner,
         repo: repoInfo.repo,
-        title: `[Colony] ${(row.goal || 'Automated delivery').slice(0, 72)}`,
+        title: `[Colony] ${titleLine.slice(0, 72)}`,
         body: prBody,
         head: colonyBranch,
         base: 'main',

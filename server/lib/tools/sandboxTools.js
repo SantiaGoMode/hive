@@ -38,11 +38,15 @@ module.exports = {
       const result = { stdout: stdout.slice(0, 8000), stderr: stderr.slice(0, 2000), exitCode };
       if (exitCode === 124) {
         // Turn a bare timeout into a diagnosis the model can act on. The most
-        // common causes: no network (downloads hang forever in a network=none
-        // sandbox), an interactive prompt, or a genuinely long install.
-        result.timeout_hint = sandbox.sandboxNetwork(callerAgentId) === 'none'
-          ? 'TIMED OUT — this sandbox has NO network access. Downloads/installs (npm, pip, npx create-*) can NEVER succeed here and retrying will not help. Hand this work to a coding role (software_developer, qa_engineer, devops_engineer) whose sandbox has network.'
-          : `TIMED OUT after ${secs}s. If the command legitimately needs longer (installs, builds), re-run once with timeout_seconds up to 600. If it may be waiting on an interactive prompt, add non-interactive flags (--yes, --no-input). Do not retry the identical command unchanged.`;
+        // common causes: a long-running server (never exits — use start_server),
+        // no network (downloads hang forever in a network=none sandbox), an
+        // interactive prompt, or a genuinely long install.
+        const looksLikeServer = /\b(npm run dev|yarn dev|pnpm dev|next dev|vite(\s|$)|nodemon|uvicorn|flask run|rails s|serve\b|http-server|npm start|node .*server)/.test(command);
+        result.timeout_hint = looksLikeServer
+          ? `TIMED OUT after ${secs}s — this looks like a LONG-RUNNING SERVER, which never exits, so shell will always time out on it (a run once stalled 5 minutes this way). Use start_server(command, port) instead: it launches in the background and returns the URL immediately.`
+          : sandbox.sandboxNetwork(callerAgentId) === 'none'
+            ? 'TIMED OUT — this sandbox has NO network access. Downloads/installs (npm, pip, npx create-*) can NEVER succeed here and retrying will not help. Hand this work to a coding role (software_developer, qa_engineer, devops_engineer) whose sandbox has network.'
+            : `TIMED OUT after ${secs}s. If the command legitimately needs longer (installs, builds), re-run once with timeout_seconds up to 600. If it may be waiting on an interactive prompt, add non-interactive flags (--yes, --no-input). Do not retry the identical command unchanged.`;
       }
       return result;
     },
