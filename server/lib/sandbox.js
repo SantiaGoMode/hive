@@ -179,17 +179,21 @@ function listWorkspaceFiles(agentId, directory = '.', options = {}) {
 
 // `docker info` can block for seconds when the daemon is slow, and this runs
 // inside request handlers — cache the probe so the event loop isn't repeatedly
-// frozen on it.
+// frozen on it. Sticky-true: under heavy load (Ollama pegging the machine) the
+// probe TIMES OUT while docker is perfectly healthy, and a transient false
+// failed agents' shell calls mid-run with "Docker is not available". Once
+// docker has been seen up, keep trusting it — a genuinely dead daemon surfaces
+// as a clear error on the actual `docker exec` instead.
 const DOCKER_PROBE_TTL = 5_000; // ms
-let _dockerProbe = { at: 0, ok: false };
+let _dockerProbe = { at: 0, ok: false, everOk: false };
 
 function isDockerAvailable() {
   const now = Date.now();
   if (now - _dockerProbe.at < DOCKER_PROBE_TTL) return _dockerProbe.ok;
   let ok;
-  try { execSync('docker info', { stdio: 'ignore', timeout: 5_000 }); ok = true; }
-  catch { ok = false; }
-  _dockerProbe = { at: now, ok };
+  try { execSync('docker info', { stdio: 'ignore', timeout: 10_000 }); ok = true; }
+  catch { ok = _dockerProbe.everOk; /* transient probe failure — trust history */ }
+  _dockerProbe = { at: now, ok, everOk: _dockerProbe.everOk || ok };
   return ok;
 }
 
