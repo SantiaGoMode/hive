@@ -66,7 +66,10 @@ describe('staff profile merge into colony workers', () => {
     assert.equal(dev.name, 'Dev Custom');
     assert.equal(dev.persona_role, 'Implementation Engineer');
     assert.equal(dev.model, 'launch-plan-model');
-    assert.deepEqual(dev.tools, ['memory']);
+    // Profile tools UNION with the recipe's — they can add but never strip the
+    // role's capability groups (a stale profile snapshot once removed every
+    // worker's handoff tool and gave the PM shell back).
+    assert.deepEqual(dev.tools, ['sandbox', 'memory', 'protocol', 'protocol_worker']);
     assert.match(dev.system_prompt, /custom implementation specialist/);
     assert.match(dev.system_prompt, /\[Staff Memory\]/);
   });

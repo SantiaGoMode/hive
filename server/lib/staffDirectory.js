@@ -86,26 +86,46 @@ const ROLE_PERSONALITIES = {
 function seedStaffProfiles() {
   const insert = db.prepare(`
     INSERT OR IGNORE INTO staff_profiles
-      (id, recipe_id, role_key, display_name, role, system_prompt, personality, skills, tools, avatar_color, chat_interval_minutes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 10)
+      (id, recipe_id, role_key, display_name, role, system_prompt, personality, skills, tools, avatar_color, chat_interval_minutes, seeded_prompt, seeded_tools)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 10, ?, ?)
+  `);
+  // Drift repair: profiles whose prompt/tools still equal what the seeder wrote
+  // (i.e. never user-edited) follow the CURRENT recipe definition. Without this,
+  // profiles seeded months ago silently overrode every recipe improvement —
+  // workers ran with stale prompts and stale tool grants.
+  const syncPrompt = db.prepare(`
+    UPDATE staff_profiles SET system_prompt=?, seeded_prompt=?, updated_at=unixepoch()
+    WHERE recipe_id=? AND role_key=? AND system_prompt = seeded_prompt AND system_prompt != ?
+  `);
+  const syncTools = db.prepare(`
+    UPDATE staff_profiles SET tools=?, seeded_tools=?, updated_at=unixepoch()
+    WHERE recipe_id=? AND role_key=? AND tools = seeded_tools AND tools != ?
   `);
 
   for (const summary of listColonyRecipes()) {
     const recipe = getColonyRecipe(summary.id);
     if (!Array.isArray(recipe.roles)) continue;
     for (const role of recipe.roles) {
+      const prompt = role.prompt || '';
+      const tools = JSON.stringify(role.tools || []);
       insert.run(
         v4(),
         recipe.id,
         role.key,
         role.agent_name || role.name,
         role.role || role.name,
-        role.prompt || '',
+        prompt,
         ROLE_PERSONALITIES[role.key] || '',
         JSON.stringify([role.role || role.name].filter(Boolean)),
-        JSON.stringify(role.tools || []),
+        tools,
         role.color || '#3b82f6',
+        prompt,
+        tools,
       );
+      try {
+        syncPrompt.run(prompt, prompt, recipe.id, role.key, prompt);
+        syncTools.run(tools, tools, recipe.id, role.key, tools);
+      } catch (e) { logSwallowed('staffDirectory:syncSeededProfile', e, { role: role.key }); }
     }
   }
 
@@ -345,7 +365,11 @@ function applyStaffProfilesToWorkerConfigs(recipeId, workerConfigs, modelPlan = 
     next._staff_profile_id = profile.id;
     if (profile.role) next.persona_role = profile.role;
     if (profile.avatar_color) next.avatar_color = profile.avatar_color;
-    if (profile.tools.length) next.tools = profile.tools;
+    // Union, never replace: the recipe's tool groups are the role's capability
+    // architecture (handoff lives in protocol_worker; PM is file-only by
+    // design). A profile may ADD tools but must not strip these — a stale
+    // profile snapshot once removed every worker's handoff tool.
+    if (profile.tools.length) next.tools = [...new Set([...(config.tools || []), ...profile.tools])];
     if (profile.model_preference && !(modelPlan && modelPlan[config.role_key])) {
       next.model = profile.model_preference;
     }

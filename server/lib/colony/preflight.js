@@ -131,6 +131,48 @@ async function runModelPreflightAndCheckout(ctx) {
   }
   addEntry({ kind: 'preflight', message: `Models ready (${modelsToCheck.length}) — tool calling supported.` });
 
+  // Warm the operator model BEFORE round 1 with a visible log entry. A cold
+  // 14b load under memory pressure takes minutes, and without this the run
+  // shows a silent "round" entry and looks stalled — users kill healthy runs.
+  const providers2 = require('../providers');
+  if (providers2.parseModel(operatorModel).provider === 'ollama') {
+    const name = stripProviderPrefix(operatorModel);
+    // Gate on /api/ps first (3s cap): skip when already loaded, and skip when
+    // the endpoint is unavailable (old Ollama, test fakes) — the warm-up is a
+    // UX nicety and must never hang a run or a test suite.
+    let needsLoad = false;
+    try {
+      const psRes = await fetch(`${normalizeOllamaUrl(ollamaUrl)}/api/ps`, { signal: AbortSignal.timeout(3000) });
+      if (psRes.ok) {
+        const ps = await psRes.json();
+        // Require the real /api/ps shape (models array). Test fakes answer
+        // every route with chat-shaped JSON — warming against one consumes a
+        // scripted model response and derails the run.
+        if (Array.isArray(ps.models)) {
+          needsLoad = !ps.models.some(m => m.name === name || m.name === `${name}:latest`);
+        }
+      }
+    } catch { /* ps unavailable — skip warm-up */ }
+    if (needsLoad) {
+      addEntry({ kind: 'preflight', message: `⏳ Loading operator model "${name}" into memory (large models can take minutes on first load)…` });
+      const startedAt = Date.now();
+      try {
+        const res = await fetch(`${normalizeOllamaUrl(ollamaUrl)}/api/generate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: name, prompt: 'ok', options: { num_predict: 1 }, stream: false }),
+          signal: AbortSignal.timeout(600_000),
+        });
+        const secs = Math.round((Date.now() - startedAt) / 1000);
+        addEntry({ kind: 'preflight', message: res.ok
+          ? `Operator model loaded in ${secs}s.`
+          : `⚠ Operator model warm-up returned HTTP ${res.status} after ${secs}s — continuing; the first round may be slow.` });
+      } catch (e) {
+        addEntry({ kind: 'preflight', message: `⚠ Operator model warm-up did not finish (${e.name === 'TimeoutError' ? 'timed out after 600s' : e.message}) — continuing; the first round may be slow.` });
+      }
+    }
+  }
+
   // ── Git write-back: checkout colony branch pre-flight ────────────────────
   state.githubWriteback = !!row.github_writeback;
   if (state.githubWriteback && row.repo_path) {

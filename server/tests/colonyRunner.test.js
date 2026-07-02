@@ -70,6 +70,15 @@ function startFakeOllama() {
           res.end(JSON.stringify({ capabilities: ['completion', 'tools'] }));
           return;
         }
+        // Real Ollama exposes /api/ps; preflight probes it to decide whether to
+        // warm the operator model. Report fake-model as loaded so the warm-up
+        // never fires — it would consume a scripted handler() call otherwise.
+        if (req.url === '/api/ps') {
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ models: [{ name: 'fake-model' }, { name: 'fake-model:latest' }] }));
+          return;
+        }
         try {
           const result = await fakeOllama.handler(req, parsed);
           if (result === null) return; // hang forever

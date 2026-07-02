@@ -145,6 +145,19 @@ const MIGRATIONS = [
       db.exec('CREATE INDEX IF NOT EXISTS idx_colonies_team ON colonies(team_id, created_at)');
     },
   },
+  {
+    version: 12,
+    name: 'staff_profiles seed-snapshot columns (prompt/tools drift detection)',
+    up(db) {
+      addColumn(db, 'staff_profiles', 'seeded_prompt', "TEXT NOT NULL DEFAULT ''");
+      addColumn(db, 'staff_profiles', 'seeded_tools', "TEXT NOT NULL DEFAULT '[]'");
+      // Existing rows: assume pristine (never user-edited) so the next seed
+      // pass refreshes them to the current recipe definitions. Stale seeded
+      // profiles silently overrode every recipe prompt/tool improvement.
+      db.exec("UPDATE staff_profiles SET seeded_prompt = system_prompt WHERE seeded_prompt = ''");
+      db.exec("UPDATE staff_profiles SET seeded_tools = tools WHERE seeded_tools = '[]'");
+    },
+  },
 ];
 
 const LATEST_VERSION = MIGRATIONS.reduce((max, m) => Math.max(max, m.version), 0);
