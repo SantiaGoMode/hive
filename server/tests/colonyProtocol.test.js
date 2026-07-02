@@ -222,6 +222,23 @@ describe('protocol tools', () => {
     assert.equal(protocol.listHandoffs(id).length, 0);
   });
 
+  it('dedupes a repeated identical handoff instead of stacking ledger entries', async () => {
+    const id = newDevColony();
+    const map = new Map([['ba', 'business_analyst']]);
+    const args = { to_role: 'project_manager', summary: 'rules validated', payload: {} };
+    const first = await executeTool('handoff', args, 'ba', 'http://x', 0, null, null, null, 20, null, ctx(id, map));
+    assert.equal(first.success, true);
+    const second = await executeTool('handoff', { ...args }, 'ba', 'http://x', 0, null, null, null, 20, null, ctx(id, map));
+    assert.equal(second.deduplicated, true);
+    assert.equal(second.handoff_id, first.handoff_id);
+    assert.equal(protocol.listHandoffs(id).length, 1);
+    // A rework handoff with a DIFFERENT summary still records.
+    const rework = await executeTool('handoff', { ...args, summary: 'fixed QA findings, re-handing off' }, 'ba', 'http://x', 0, null, null, null, 20, null, ctx(id, map));
+    assert.equal(rework.success, true);
+    assert.ok(!rework.deduplicated);
+    assert.equal(protocol.listHandoffs(id).length, 2);
+  });
+
   it('records under the registered role when from_role claims a different one', async () => {
     const id = newDevColony();
     const map = new Map([['ba', 'business_analyst']]);

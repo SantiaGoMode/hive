@@ -202,6 +202,26 @@ module.exports = {
         };
       }
 
+      // Idempotency: re-recording the same handoff with the same summary is a
+      // loop, not progress. handoff used to mint a fresh handoff_id every call,
+      // which defeated the identical-result breaker — a worker alternated
+      // report_progress ↔ handoff 15 times, stacking 15 "accepted" handoffs.
+      // (A re-handoff after rework carries a DIFFERENT summary and still passes.)
+      try {
+        const prior = protocol.listHandoffs(colonyContext.colonyId).find(h =>
+          h.from_agent === fromRole && h.to_agent === to_role &&
+          h.status !== 'rejected' &&
+          String(h.payload?.summary || '').trim() === String(summary || '').trim());
+        if (prior) {
+          return {
+            success: true,
+            deduplicated: true,
+            handoff_id: prior.id,
+            message: `This exact ${fromRole}→${to_role} handoff is ALREADY RECORDED (${prior.id}) and the flow has advanced. Your work here is COMPLETE — END YOUR TURN NOW with a plain-text summary of what you did. Do not call handoff or report_progress again.`,
+          };
+        }
+      } catch (e) { logSwallowed('protocolTools:handoffDedup', e, { colonyId: colonyContext.colonyId }); }
+
       // Rule of engagement: verify target + preconditions before acting.
       const check = protocol.checkPreconditions(colonyContext.colonyId, recipeId, fromRole, to_role);
       if (!check.ok) {
