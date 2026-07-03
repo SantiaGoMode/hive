@@ -182,8 +182,23 @@ function getModel(provider, modelId, settings = {}) {
   }
 }
 
+// Name-based fallback for old Ollama versions that don't report capabilities.
+// The live check below prefers the model's actual probed capabilities — this
+// regex once silently disabled thinking for every reasoning model not on the
+// list (gemma4 shipped with thinking support and streamed none of it).
 function supportsOllamaReasoning(modelId) {
-  return /qwen3|deepseek-r1|phi4-reasoning/i.test(modelId || '');
+  return /qwen3|deepseek-r1|phi4-reasoning|gemma4/i.test(modelId || '');
+}
+
+// Capability-first reasoning check: trust the cached /api/show probe when it
+// answers; fall back to the name heuristic when capabilities are unknown.
+async function ollamaModelCanThink(modelId) {
+  try {
+    const { getCapabilities } = require('./ollamaCapabilities');
+    const caps = await getCapabilities(modelId, ollamaBaseUrl());
+    if (Array.isArray(caps) && caps.length > 0) return caps.includes('thinking');
+  } catch { /* probe unavailable — fall back to the heuristic */ }
+  return supportsOllamaReasoning(modelId);
 }
 
 // Convert Hive tool definitions (OpenAI-style function defs from getToolDefinitions)
@@ -212,7 +227,7 @@ function toAiSdkTools(toolDefs) {
 async function* streamChat(modelString, { messages, tools, options = {}, signal } = {}) {
   const { provider, modelId } = parseModel(modelString);
   const modelSettings = {};
-  if (provider === 'ollama' && options.reasoning != null && supportsOllamaReasoning(modelId)) {
+  if (provider === 'ollama' && options.reasoning != null && await ollamaModelCanThink(modelId)) {
     modelSettings.think = !!options.reasoning;
   }
   const model = getModel(provider, modelId, { ...modelSettings, metadata: options.metadata, gatewayKey: options.gatewayKey, signal });
