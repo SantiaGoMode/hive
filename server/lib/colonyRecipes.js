@@ -477,6 +477,8 @@ ${reviewLine}
 
 ## Hard rules
 - Do not create agents. Your team already exists.
+- Respond ONLY in English — every message, note, and summary. (Multilingual
+  models drift languages mid-run and produce unreadable round messages.)
 - NEVER mark a step done when its work failed or was skipped — set it blocked with
   a note. A failed install marked "done" poisons every downstream role.
 - NEVER call handoff yourself — it is a worker tool. You delegate with ask_agent;
