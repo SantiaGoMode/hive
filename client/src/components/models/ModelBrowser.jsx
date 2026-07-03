@@ -1,13 +1,14 @@
 import { useState, useEffect } from 'react';
-import { Download, Trash2, HardDrive, RefreshCw, Plus, Cpu } from 'lucide-react';
+import { Download, Trash2, HardDrive, RefreshCw, Plus, Cpu, Search, Bot } from 'lucide-react';
 import { api, getHiveAuthToken } from '../../lib/api';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Badge } from '../ui/Badge';
-import { formatBytes, formatDate } from '../../lib/utils';
+import { formatBytes } from '../../lib/utils';
 import { toast } from '../../stores/toastStore';
 import { DeleteConfirm } from '../agents/DeleteConfirm';
 import { localModelBudgetGb, recommendedOllamaModels, stretchModelBudgetGb } from '../../lib/ollamaRecommendations';
+import { capabilityBadges, groupModelsByTier } from '../../lib/modelClassification';
 import { readSSEStream } from '../../lib/streamParser';
 
 function PullProgress({ name, onDone }) {
@@ -61,6 +62,7 @@ export function ModelBrowser({ onPullComplete }) {
   const [pulling, setPulling] = useState([]);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [systemStatus, setSystemStatus] = useState(null);
+  const [modelSearch, setModelSearch] = useState('');
 
   const load = () => {
     setLoading(true);
@@ -188,12 +190,23 @@ export function ModelBrowser({ onPullComplete }) {
         ))}
       </div>
 
-      {/* Installed models */}
-      <div className="flex items-center justify-between">
+      {/* Installed models — grouped by what they can actually do */}
+      <div className="flex items-center justify-between gap-3">
         <h3 className="text-sm font-semibold text-gray-300">Installed Models ({models.length})</h3>
-        <Button size="icon" variant="ghost" onClick={load} disabled={loading} title="Refresh">
-          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-        </Button>
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <Search size={13} className="absolute left-2.5 top-2 text-gray-600" />
+            <input
+              value={modelSearch}
+              onChange={e => setModelSearch(e.target.value)}
+              placeholder="Filter models"
+              className="w-44 bg-gray-800 border border-gray-700 rounded-lg pl-7 pr-2 py-1.5 text-xs text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-600"
+            />
+          </div>
+          <Button size="icon" variant="ghost" onClick={load} disabled={loading} title="Refresh">
+            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+          </Button>
+        </div>
       </div>
 
       {loading ? (
@@ -205,26 +218,43 @@ export function ModelBrowser({ onPullComplete }) {
           <p className="text-xs mt-1">Pull a model above to get started</p>
         </div>
       ) : (
-        <div className="flex flex-col gap-2">
-          {models.map(model => (
-            <div key={model.name} className="flex items-center gap-4 p-4 bg-gray-900 border border-gray-800 rounded-xl hover:border-gray-700 transition-colors">
-              <div className="w-10 h-10 bg-gray-800 rounded-lg flex items-center justify-center">
-                <HardDrive size={18} className="text-gray-400" />
+        <div className="flex flex-col gap-4">
+          {groupModelsByTier(models, modelSearch).map(group => (
+            <div key={group.tier}>
+              <div className="flex items-baseline gap-2 mb-1.5">
+                <h4 className={`text-xs font-semibold uppercase tracking-wide ${group.tier === 'agent-ready' ? 'text-green-400' : group.tier === 'tools-light' ? 'text-yellow-400' : 'text-gray-500'}`}>
+                  {group.tier === 'agent-ready' && <Bot size={11} className="inline mr-1 -mt-0.5" />}
+                  {group.label} ({group.models.length})
+                </h4>
+                <span className="text-xs text-gray-600">{group.description}</span>
               </div>
-              <div className="flex-1 min-w-0">
-                <p className="font-mono text-sm font-medium text-gray-200 truncate">{model.name}</p>
-                <div className="flex items-center gap-2 mt-1 flex-wrap">
-                  {model.size && <Badge color="gray">{formatBytes(model.size)}</Badge>}
-                  {model.details?.quantization_level && <Badge color="purple">{model.details.quantization_level}</Badge>}
-                  {model.details?.parameter_size && <Badge color="blue">{model.details.parameter_size}</Badge>}
-                  {model.modified_at && <span className="text-xs text-gray-600">{formatDate(new Date(model.modified_at).getTime())}</span>}
-                </div>
+              <div className="flex flex-col gap-1.5">
+                {group.models.map(model => (
+                  <div key={model.name} className="flex items-center gap-3 px-3 py-2 bg-gray-900 border border-gray-800 rounded-lg hover:border-gray-700 transition-colors">
+                    <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
+                      <span className="font-mono text-sm text-gray-200 truncate">{model.name}</span>
+                      {model.details?.parameter_size && <Badge color="blue">{model.details.parameter_size}</Badge>}
+                      {capabilityBadges(model).map(b => (
+                        <span key={b.key} title={b.hint}>
+                          <Badge color={b.color}>{b.label}</Badge>
+                        </span>
+                      ))}
+                    </div>
+                    <span className="text-xs text-gray-600 shrink-0">
+                      {model.size ? formatBytes(model.size) : ''}
+                      {model.details?.quantization_level ? ` · ${model.details.quantization_level}` : ''}
+                    </span>
+                    <Button size="icon" variant="ghost" onClick={() => setDeleteTarget(model)} title="Delete model">
+                      <Trash2 size={14} className="text-red-400" />
+                    </Button>
+                  </div>
+                ))}
               </div>
-              <Button size="icon" variant="ghost" onClick={() => setDeleteTarget(model)} title="Delete model">
-                <Trash2 size={14} className="text-red-400" />
-              </Button>
             </div>
           ))}
+          {groupModelsByTier(models, modelSearch).length === 0 && (
+            <p className="text-xs text-gray-600 text-center py-4">No models match "{modelSearch}"</p>
+          )}
         </div>
       )}
 

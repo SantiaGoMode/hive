@@ -6,7 +6,16 @@ router.get('/models', async (req, res) => {
   try {
     const r = await fetch(ollamaApiUrl('tags'));
     const data = await r.json();
-    res.json(data.models || []);
+    const models = data.models || [];
+    // Annotate with capabilities (tools/thinking/vision/…) via cached /api/show
+    // probes so the UI can say which models can actually drive agents.
+    const { getCapabilities } = require('../lib/providers/ollamaCapabilities');
+    const base = ollamaApiUrl('tags').replace(/\/api\/tags$/, '');
+    const annotated = await Promise.all(models.map(async m => ({
+      ...m,
+      capabilities: await getCapabilities(m.name, base),
+    })));
+    res.json(annotated);
   } catch (e) {
     res.status(503).json({ error: 'Ollama not reachable', detail: e.message });
   }
