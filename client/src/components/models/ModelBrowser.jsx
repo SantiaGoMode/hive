@@ -11,10 +11,11 @@ import { RECOMMENDATION_FAMILIES, filterRecommendations, localModelBudgetGb, rec
 import { capabilityBadges, groupModelsByTier } from '../../lib/modelClassification';
 import { readSSEStream } from '../../lib/streamParser';
 
-function PullProgress({ name, onDone }) {
+function PullProgress({ name, onDone, onDismiss }) {
   const [progress, setProgress] = useState('');
   const [pct, setPct] = useState(0);
   const [done, setDone] = useState(false);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -29,11 +30,17 @@ function PullProgress({ name, onDone }) {
       signal: ctrl.signal,
     }).then(async res => {
       for await (const data of readSSEStream(res, { signal: ctrl.signal })) {
+        // Ollama reports failures (unknown tag, registry 412 "needs a newer
+        // Ollama", …) as an error line — swallowing it left the card saying
+        // "Pulling" forever with no explanation.
+        if (data.error) { setError(String(data.error)); return; }
         if (data.status) setProgress(data.status);
         if (data.completed && data.total) setPct(Math.round(data.completed / data.total * 100));
         if (data.status === 'success' || data.status === 'done') { setDone(true); onDone(); }
       }
-    }).catch(() => {});
+      // Stream ended without success or an explicit error — treat as failed.
+      setDone(prev => { if (!prev) setError('Pull ended without completing — check the model tag and Ollama logs.'); return prev; });
+    }).catch(e => { if (e.name !== 'AbortError') setError(e.message); });
     return () => ctrl.abort();
   }, [name]);
 
@@ -41,9 +48,21 @@ function PullProgress({ name, onDone }) {
     <div className="mt-3 p-3 bg-gray-800 rounded-lg text-sm">
       <div className="flex items-center justify-between mb-2">
         <span className="text-gray-300 font-mono text-xs">{name}</span>
-        {done ? <Badge color="green">Done</Badge> : <Badge color="blue">Pulling</Badge>}
+        {error ? <Badge color="red">Failed</Badge> : done ? <Badge color="green">Done</Badge> : <Badge color="blue">Pulling</Badge>}
       </div>
-      {!done && (
+      {error ? (
+        <div className="flex items-start justify-between gap-3">
+          <p className="text-xs text-red-300 whitespace-pre-wrap flex-1">
+            {error}
+            {/newer version of ollama/i.test(error) && (
+              <span className="block mt-1 text-gray-400">
+                Your Ollama is outdated — upgrade it (e.g. <code className="bg-gray-900 px-1 rounded">brew upgrade ollama</code>), restart <code className="bg-gray-900 px-1 rounded">ollama serve</code>, then retry.
+              </span>
+            )}
+          </p>
+          <button onClick={onDismiss} className="text-xs text-gray-500 hover:text-gray-300 shrink-0">Dismiss</button>
+        </div>
+      ) : !done && (
         <>
           <div className="w-full bg-gray-700 rounded-full h-1.5 mb-1">
             <div className="bg-blue-500 h-1.5 rounded-full transition-all" style={{ width: `${pct}%` }} />
@@ -229,7 +248,12 @@ export function ModelBrowser({ onPullComplete }) {
         </div>
         <p className="text-xs text-gray-600 mt-2">Custom pulls are not filtered; use this for exact Ollama tags you already know your machine can run.</p>
         {pulling.map(name => (
-          <PullProgress key={name} name={name} onDone={() => { load(); setPulling(prev => prev.filter(n => n !== name)); onPullComplete?.(name); }} />
+          <PullProgress
+            key={name}
+            name={name}
+            onDone={() => { load(); setPulling(prev => prev.filter(n => n !== name)); onPullComplete?.(name); }}
+            onDismiss={() => setPulling(prev => prev.filter(n => n !== name))}
+          />
         ))}
       </div>
 
