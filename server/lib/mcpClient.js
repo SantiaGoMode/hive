@@ -40,6 +40,22 @@ function maskEnvForStatus(env = {}, secretKeys = []) {
 
 // ── Stdio transport ────────────────────────────────────────────────────────────
 
+// Servers that scope access to directories (e.g. server-filesystem) resolve
+// RELATIVE paths against their own process cwd. Spawned from the Hive server
+// dir, "." resolved to Hive's repo — outside the allowed root — so every
+// relative path an agent passed was auto-denied. Spawning with cwd set to the
+// first directory argument makes relative paths resolve inside the sandbox
+// root instead. Servers without a directory arg are unaffected.
+function inferCwdFromArgs(args) {
+  const fs = require('fs');
+  for (const a of Array.isArray(args) ? args : []) {
+    try {
+      if (typeof a === 'string' && a.startsWith('/') && fs.statSync(a).isDirectory()) return a;
+    } catch { /* not an existing dir — keep looking */ }
+  }
+  return undefined;
+}
+
 class StdioMcpConnection {
   constructor(command, args, env) {
     this.command   = command;
@@ -56,6 +72,7 @@ class StdioMcpConnection {
     return new Promise((resolve, reject) => {
       this.proc = spawn(this.command, this.args, {
         env:   this.env,
+        cwd:   inferCwdFromArgs(this.args),
         stdio: ['pipe', 'pipe', 'pipe'],
       });
 
