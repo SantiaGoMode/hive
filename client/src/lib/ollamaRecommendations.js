@@ -83,14 +83,19 @@ export function stretchModelBudgetGb(memory) {
   return Math.max(6, Math.floor(totalGb * 0.92));
 }
 
+// Every curated model with a fit classification — nothing is silently hidden.
+// A hard budget cutoff used to drop 27B+ models entirely (and when memory
+// detection failed, the tiny fallback budget hid everything above ~16 GB with
+// no explanation). fit: 'comfortable' | 'stretch' | 'over'.
 export function recommendedOllamaModels(memory, installedModels = []) {
   const comfortableGb = localModelBudgetGb(memory);
   const stretchGb = stretchModelBudgetGb(memory);
   const installed = new Set((installedModels || []).map(m => String(m.name || m).replace(/^ollama\//, '')));
   return OLLAMA_RECOMMENDATIONS
-    .filter(model => model.estimatedRamGb <= stretchGb)
     .map(model => {
-      const fit = model.estimatedRamGb <= comfortableGb ? 'comfortable' : 'stretch';
+      const fit = model.estimatedRamGb <= comfortableGb ? 'comfortable'
+        : model.estimatedRamGb <= stretchGb ? 'stretch'
+        : 'over';
       return {
         ...model,
         fit,
@@ -100,8 +105,24 @@ export function recommendedOllamaModels(memory, installedModels = []) {
     })
     .sort((a, b) => {
       if (a.installed !== b.installed) return a.installed ? 1 : -1;
-      if (a.fit !== b.fit) return a.fit === 'comfortable' ? -1 : 1;
+      const fitRank = { comfortable: 0, stretch: 1, over: 2 };
+      if (a.fit !== b.fit) return fitRank[a.fit] - fitRank[b.fit];
       if (a.family !== b.family) return a.family.localeCompare(b.family);
       return a.estimatedRamGb - b.estimatedRamGb;
     });
+}
+
+export const RECOMMENDATION_FAMILIES = ['All', ...new Set(OLLAMA_RECOMMENDATIONS.map(m => m.family))];
+
+// Search + family filter + sort for the recommendations grid.
+// sort: 'fit' (default) | 'size-asc' | 'size-desc' | 'name'
+export function filterRecommendations(recs, { query = '', family = 'All', sort = 'fit' } = {}) {
+  const q = String(query || '').trim().toLowerCase();
+  let out = (recs || []).filter(m =>
+    (family === 'All' || m.family === family)
+    && (!q || `${m.name} ${m.title} ${m.description}`.toLowerCase().includes(q)));
+  if (sort === 'size-asc') out = [...out].sort((a, b) => a.estimatedRamGb - b.estimatedRamGb);
+  else if (sort === 'size-desc') out = [...out].sort((a, b) => b.estimatedRamGb - a.estimatedRamGb);
+  else if (sort === 'name') out = [...out].sort((a, b) => a.name.localeCompare(b.name));
+  return out;
 }

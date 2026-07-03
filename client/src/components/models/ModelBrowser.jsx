@@ -7,7 +7,7 @@ import { Badge } from '../ui/Badge';
 import { formatBytes } from '../../lib/utils';
 import { toast } from '../../stores/toastStore';
 import { DeleteConfirm } from '../agents/DeleteConfirm';
-import { localModelBudgetGb, recommendedOllamaModels, stretchModelBudgetGb } from '../../lib/ollamaRecommendations';
+import { RECOMMENDATION_FAMILIES, filterRecommendations, localModelBudgetGb, recommendedOllamaModels, stretchModelBudgetGb } from '../../lib/ollamaRecommendations';
 import { capabilityBadges, groupModelsByTier } from '../../lib/modelClassification';
 import { readSSEStream } from '../../lib/streamParser';
 
@@ -63,6 +63,9 @@ export function ModelBrowser({ onPullComplete }) {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [systemStatus, setSystemStatus] = useState(null);
   const [modelSearch, setModelSearch] = useState('');
+  const [recQuery, setRecQuery] = useState('');
+  const [recFamily, setRecFamily] = useState('All');
+  const [recSort, setRecSort] = useState('fit');
 
   const load = () => {
     setLoading(true);
@@ -91,7 +94,10 @@ export function ModelBrowser({ onPullComplete }) {
     } catch (e) { toast.error(e.message); }
   };
 
-  const recommended = recommendedOllamaModels(systemStatus?.memory, models);
+  const recommended = filterRecommendations(
+    recommendedOllamaModels(systemStatus?.memory, models),
+    { query: recQuery, family: recFamily, sort: recSort },
+  );
   const pullingSet = new Set(pulling);
   const budgetGb = localModelBudgetGb(systemStatus?.memory);
   const stretchGb = stretchModelBudgetGb(systemStatus?.memory);
@@ -120,10 +126,10 @@ export function ModelBrowser({ onPullComplete }) {
         <div className="flex items-center justify-between gap-3">
           <div>
             <h3 className="text-sm font-semibold text-gray-200 flex items-center gap-2">
-              <Cpu size={14} /> Recommended for This System
+              <Cpu size={14} /> Curated Local Models
             </h3>
             <p className="text-xs text-gray-500 mt-1">
-              Showing curated Ollama models up to a {stretchGb} GB stretch budget; {budgetGb} GB and under are marked comfortable.
+              All curated models, labeled by fit: comfortable ≤ {budgetGb} GB, stretch ≤ {stretchGb} GB, larger marked over budget.
             </p>
           </div>
           <Button size="icon" variant="ghost" onClick={load} disabled={loading} title="Refresh recommendations">
@@ -131,8 +137,43 @@ export function ModelBrowser({ onPullComplete }) {
           </Button>
         </div>
 
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative">
+            <Search size={13} className="absolute left-2.5 top-2 text-gray-600" />
+            <input
+              value={recQuery}
+              onChange={e => setRecQuery(e.target.value)}
+              placeholder="Search catalog"
+              className="w-44 bg-gray-800 border border-gray-700 rounded-lg pl-7 pr-2 py-1.5 text-xs text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-600"
+            />
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {RECOMMENDATION_FAMILIES.map(f => (
+              <button
+                key={f}
+                type="button"
+                onClick={() => setRecFamily(f)}
+                className={`text-xs rounded-md px-2 py-1 border transition-colors ${recFamily === f ? 'border-blue-500/50 bg-blue-500/10 text-blue-300' : 'border-gray-800 text-gray-500 hover:border-gray-700'}`}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
+          <select
+            value={recSort}
+            onChange={e => setRecSort(e.target.value)}
+            className="ml-auto bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            title="Sort catalog"
+          >
+            <option value="fit">Sort: best fit</option>
+            <option value="size-asc">Sort: smallest first</option>
+            <option value="size-desc">Sort: largest first</option>
+            <option value="name">Sort: name</option>
+          </select>
+        </div>
+
         {recommended.length === 0 ? (
-          <p className="text-xs text-gray-600 italic">No curated local models fit the detected system budget.</p>
+          <p className="text-xs text-gray-600 italic">No curated models match the current filter.</p>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
             {recommended.map(model => {
@@ -145,7 +186,9 @@ export function ModelBrowser({ onPullComplete }) {
                       <p className="text-xs font-mono text-gray-500 truncate">{model.name}</p>
                     </div>
                     <div className="flex gap-1 shrink-0">
-                      <Badge color={model.fit === 'stretch' ? 'yellow' : 'blue'}>{model.fit === 'stretch' ? 'Stretch' : model.sizeLabel}</Badge>
+                      <Badge color={model.fit === 'over' ? 'red' : model.fit === 'stretch' ? 'yellow' : 'blue'}>
+                        {model.fit === 'over' ? 'Over budget' : model.fit === 'stretch' ? 'Stretch' : model.sizeLabel}
+                      </Badge>
                       {model.installed && <Badge color="green">Installed</Badge>}
                     </div>
                   </div>

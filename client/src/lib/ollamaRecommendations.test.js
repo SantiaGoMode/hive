@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { localModelBudgetGb, recommendedOllamaModels, stretchModelBudgetGb } from './ollamaRecommendations';
+import { filterRecommendations, localModelBudgetGb, recommendedOllamaModels, stretchModelBudgetGb } from './ollamaRecommendations';
 
 const gb = (n) => n * 1024 ** 3;
 
@@ -11,14 +11,28 @@ describe('ollama local model recommendations', () => {
     expect(stretchModelBudgetGb({ total: gb(32) })).toBe(29);
   });
 
-  it('filters out models that exceed the current system budget', () => {
-    const names = recommendedOllamaModels({ total: gb(16) }).map(m => m.name);
+  it('shows over-budget models with fit "over" instead of hiding them', () => {
+    const recs = recommendedOllamaModels({ total: gb(16) });
+    const names = recs.map(m => m.name);
     expect(names).toContain('llama3.2:3b');
     expect(names).toContain('qwen2.5:7b');
     expect(names).toContain('qwen2.5-coder:14b');
-    expect(names).toContain('codellama:13b');
-    expect(names).not.toContain('qwen2.5-coder:32b');
-    expect(names).not.toContain('llama3.3:70b');
+    // Big models are no longer silently dropped — they're labeled.
+    expect(recs.find(m => m.name === 'qwen2.5-coder:32b').fit).toBe('over');
+    expect(recs.find(m => m.name === 'gemma3:27b').fit).toBe('over');
+    // Over-budget sorts after comfortable/stretch.
+    const fitOrder = recs.filter(m => !m.installed).map(m => m.fit);
+    expect(fitOrder.indexOf('over')).toBeGreaterThan(fitOrder.lastIndexOf('comfortable'));
+  });
+
+  it('filters by family, query, and sorts by size', () => {
+    const recs = recommendedOllamaModels({ total: gb(38) });
+    const coding = filterRecommendations(recs, { family: 'Coding' });
+    expect(coding.every(m => m.family === 'Coding')).toBe(true);
+    const q = filterRecommendations(recs, { query: 'gemma3:27' });
+    expect(q.map(m => m.name)).toContain('gemma3:27b');
+    const desc = filterRecommendations(recs, { sort: 'size-desc' });
+    expect(desc[0].estimatedRamGb).toBeGreaterThanOrEqual(desc[desc.length - 1].estimatedRamGb);
   });
 
   it('includes relevant high-memory coding models on larger systems', () => {
