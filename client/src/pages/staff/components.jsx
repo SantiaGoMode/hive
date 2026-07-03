@@ -402,7 +402,73 @@ export function StaffPerformanceTab({ selected, drilledMetric, setDrilledMetric 
                         </div>
                       </div>
                     )}
+                    <RunScorecard rows={selected.run_scorecard} />
                   </div>
+  );
+}
+
+// Per-run outcomes table — the "is this staff member improving?" view.
+const SCORECARD_STATUS_DOT = { done: 'bg-green-500', stopped: 'bg-yellow-500', error: 'bg-red-500', running: 'bg-blue-500' };
+
+function RunScorecard({ rows }) {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  return (
+    <div className="rounded-lg border border-gray-800 bg-gray-950/30 p-3">
+      <p className="text-xs font-medium text-gray-400 mb-2">
+        Run scorecard <span className="text-gray-600">— per-run outcomes, most recent first</span>
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-gray-600 border-b border-gray-800">
+              <th className="text-left font-medium py-1.5 pr-3">Run</th>
+              <th className="text-left font-medium py-1.5 pr-3">Steps</th>
+              <th className="text-left font-medium py-1.5 pr-3" title="Accepted / rejected handoffs by this role">Handoffs</th>
+              <th className="text-right font-medium py-1.5 pr-3" title="Tool calls this role made">Calls</th>
+              <th className="text-right font-medium py-1.5 pr-3" title="Files written / shell commands — real-work signals">Files·Shell</th>
+              <th className="text-right font-medium py-1.5 pr-3" title="Failed tool results">Errors</th>
+              <th className="text-right font-medium py-1.5 pr-3" title="Duplicate/identical-result/halt guard trips">Breakers</th>
+              <th className="text-right font-medium py-1.5" title="Turns ending with no output / halted / max rounds">Silent</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(r => (
+              <tr key={r.run_id} className="border-b border-gray-800/50 last:border-0 text-gray-300">
+                <td className="py-1.5 pr-3 whitespace-nowrap">
+                  <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${SCORECARD_STATUS_DOT[r.run_status] || 'bg-gray-600'}`} title={r.run_status} />
+                  <Link
+                    to={r.team_id ? `/colony/${r.team_id}/run/${r.run_id}` : '/colony'}
+                    className="text-blue-400 hover:text-blue-300 font-mono"
+                    title={`${r.run_status} · ${new Date(r.created_at * 1000).toLocaleString()}`}
+                  >
+                    {r.run_id.slice(0, 8)}
+                  </Link>
+                  <span className="text-gray-600 ml-1.5">{new Date(r.created_at * 1000).toLocaleDateString()}</span>
+                </td>
+                <td className="py-1.5 pr-3">
+                  {r.steps_assigned === 0 ? <span className="text-gray-600">—</span> : (
+                    <span title={`${r.steps_done} done / ${r.steps_blocked} blocked / ${r.steps_assigned} assigned`}>
+                      <span className={r.steps_done === r.steps_assigned ? 'text-green-400' : ''}>{r.steps_done}</span>
+                      <span className="text-gray-600">/{r.steps_assigned}</span>
+                      {r.steps_blocked > 0 && <span className="text-red-400 ml-1">({r.steps_blocked} blocked)</span>}
+                    </span>
+                  )}
+                </td>
+                <td className="py-1.5 pr-3">
+                  <span className="text-green-400">{r.handoffs_accepted}</span>
+                  {r.handoffs_rejected > 0 && <span className="text-red-400"> / {r.handoffs_rejected} rej</span>}
+                </td>
+                <td className="py-1.5 pr-3 text-right">{r.tool_calls}</td>
+                <td className="py-1.5 pr-3 text-right text-gray-400">{r.files_written}·{r.shell_commands}</td>
+                <td className={`py-1.5 pr-3 text-right ${r.tool_errors > 0 ? 'text-amber-400' : 'text-gray-600'}`}>{r.tool_errors}</td>
+                <td className={`py-1.5 pr-3 text-right ${r.breaker_trips > 0 ? 'text-red-400' : 'text-gray-600'}`}>{r.breaker_trips}</td>
+                <td className={`py-1.5 text-right ${r.silent_turns > 0 ? 'text-red-400' : 'text-gray-600'}`}>{r.silent_turns}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 

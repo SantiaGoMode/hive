@@ -248,3 +248,49 @@ describe('effective config and reset-to-recipe', () => {
     staff.deleteProfile(custom.id);
   });
 });
+
+describe('per-run scorecard', () => {
+  it('builds one row per crewed run with step, handoff, and work stats', () => {
+    const dev = staff.listProfiles().find(p => p.role_key === 'software_developer' && p.recipe_id === 'development_team');
+    const log = JSON.stringify([
+      { kind: 'agent_ready', agent: { name: dev.display_name, role_key: 'software_developer' } },
+      { kind: 'tool_call', agent: dev.display_name, tool: 'write_file', args: {} },
+      { kind: 'tool_call', agent: dev.display_name, tool: 'shell', args: {} },
+      { kind: 'tool_result', agent: dev.display_name, result: { error: 'HALTED: repeated failing calls' } },
+      { kind: 'tool_result', agent: 'Ari Morgan', result: { agent_name: dev.display_name, response: '(no response)' } },
+    ]);
+    const plan = JSON.stringify({ steps: [
+      { id: '1', assigned_to: 'software_developer', status: 'done' },
+      { id: '2', assigned_to: 'software_developer', status: 'blocked' },
+      { id: '3', assigned_to: 'qa_engineer', status: 'pending' },
+    ] });
+    db.prepare('INSERT INTO colonies (id, goal, model, status, recipe_id, plan, log) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run('colony-score-1', 'Goal', 'm', 'stopped', 'development_team', plan, log);
+    db.prepare('INSERT INTO colony_handoffs (id, colony_id, from_agent, to_agent, payload, status, protocol_status) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run('h1', 'colony-score-1', 'software_developer', 'qa_engineer', JSON.stringify({ summary: 'done' }), 'accepted', 'ok');
+    db.prepare('INSERT INTO colony_handoffs (id, colony_id, from_agent, to_agent, payload, status, protocol_status) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run('h2', 'colony-score-1', 'software_developer', 'qa_engineer', JSON.stringify({ summary: 'done' }), 'accepted', 'ok'); // duplicate — must dedupe
+
+    const rows = staff.profileRunScorecard(dev);
+    const row = rows.find(r => r.run_id === 'colony-score-1');
+    assert.ok(row, 'crewed run must appear in the scorecard');
+    assert.equal(row.steps_assigned, 2);
+    assert.equal(row.steps_done, 1);
+    assert.equal(row.steps_blocked, 1);
+    assert.equal(row.handoffs_accepted, 1); // deduped
+    assert.equal(row.files_written, 1);
+    assert.equal(row.shell_commands, 1);
+    assert.equal(row.breaker_trips, 1);
+    assert.equal(row.silent_turns, 1);
+  });
+
+  it('excludes runs the role did not crew', () => {
+    const ba = staff.listProfiles().find(p => p.role_key === 'business_analyst' && p.recipe_id === 'development_team');
+    db.prepare('INSERT INTO colonies (id, goal, model, status, recipe_id, log) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('colony-score-2', 'Goal', 'm', 'done', 'development_team', JSON.stringify([
+        { kind: 'agent_ready', agent: { name: 'Someone Else', role_key: 'qa_engineer' } },
+      ]));
+    const rows = staff.profileRunScorecard(ba);
+    assert.ok(!rows.some(r => r.run_id === 'colony-score-2'));
+  });
+});

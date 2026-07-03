@@ -786,6 +786,67 @@ function profileRunContext(profile, limit = 8) {
     }));
 }
 
+// Per-run scorecard: what this role actually did and how it ended, one row per
+// recent run it crewed — answers "is this staff member improving across runs?"
+// with step outcomes, handoffs, real-work counts, and failure signals.
+function profileRunScorecard(profile, limit = 15) {
+  const colonies = db.prepare('SELECT id, team_id, recipe_id, status, created_at, plan, log FROM colonies ORDER BY created_at DESC LIMIT 60').all();
+  const rows = [];
+  for (const colony of colonies) {
+    if (rows.length >= limit) break;
+    if (profile.recipe_id && colony.recipe_id && colony.recipe_id !== profile.recipe_id) continue;
+    const log = safeParse(colony.log, []);
+    const participated = log.some(e =>
+      (e.kind === 'agent_ready' && (e.agent?.role_key === profile.role_key || e.agent?.name === profile.display_name))
+      || roleMatchesProfile(profile, e.agent));
+    if (!participated) continue;
+
+    const stats = { tool_calls: 0, tool_errors: 0, breaker_trips: 0, files_written: 0, shell_commands: 0, silent_turns: 0 };
+    for (const e of log) {
+      if (roleMatchesProfile(profile, e.agent)) {
+        if (e.kind === 'tool_call') {
+          stats.tool_calls++;
+          if (e.tool === 'write_file') stats.files_written++;
+          if (e.tool === 'shell' || e.tool === 'run_python') stats.shell_commands++;
+        }
+        if (e.kind === 'tool_result' && e.result?.error) {
+          stats.tool_errors++;
+          if (/Duplicate call detected|HALTED|IDENTICAL result/i.test(String(e.result.error))) stats.breaker_trips++;
+        }
+      }
+      // Silent turns surface on the operator side: ask_agent results naming
+      // this worker with a no-output/halted marker as the response.
+      if (e.kind === 'tool_result' && e.result?.agent_name && roleMatchesProfile(profile, e.result.agent_name)) {
+        const resp = String(e.result.response || '');
+        if (/^\((no response|agent reached max tool rounds|worker turn halted)/.test(resp)) stats.silent_turns++;
+      }
+    }
+
+    const plan = safeParse(colony.plan, null);
+    const own = (plan?.steps || []).filter(s => (s.assigned_to || null) === profile.role_key);
+    const handoffs = db.prepare('SELECT * FROM colony_handoffs WHERE colony_id=? AND from_agent=?').all(colony.id, profile.role_key);
+    const acceptedKeys = new Set(
+      handoffs
+        .filter(h => h.status !== 'rejected' && h.protocol_status === 'ok')
+        .map(h => `${h.to_agent}|${String(safeParse(h.payload, {})?.summary || '').trim()}`),
+    );
+
+    rows.push({
+      run_id: colony.id,
+      team_id: colony.team_id || null,
+      run_status: colony.status,
+      created_at: colony.created_at,
+      steps_assigned: own.length,
+      steps_done: own.filter(s => s.status === 'done').length,
+      steps_blocked: own.filter(s => s.status === 'blocked').length,
+      handoffs_accepted: acceptedKeys.size,
+      handoffs_rejected: handoffs.filter(h => h.status === 'rejected' || h.protocol_status !== 'ok').length,
+      ...stats,
+    });
+  }
+  return rows;
+}
+
 function profileBundle(id) {
   const profile = getProfile(id);
   if (!profile) return null;
@@ -796,6 +857,7 @@ function profileBundle(id) {
     suggestions: listSuggestions(profile.id),
     interactions: profileInteractions(profile),
     runs: profileRunContext(profile),
+    run_scorecard: profileRunScorecard(profile),
   };
 }
 
@@ -995,6 +1057,7 @@ module.exports = {
   profileMetricDetails,
   profileEffectiveConfig,
   resetProfileToRecipe,
+  profileRunScorecard,
   linkAssignedAgent,
   profileInteractions,
   profileBundle,
