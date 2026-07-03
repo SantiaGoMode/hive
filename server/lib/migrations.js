@@ -158,6 +158,11 @@ const MIGRATIONS = [
       db.exec("UPDATE staff_profiles SET seeded_tools = tools WHERE seeded_tools = '[]'");
     },
   },
+  {
+    version: 13,
+    name: 'agents.reasoning (per-agent chat thinking toggle)',
+    up(db) { addColumn(db, 'agents', 'reasoning', 'INTEGER DEFAULT 0'); },
+  },
 ];
 
 const LATEST_VERSION = MIGRATIONS.reduce((max, m) => Math.max(max, m.version), 0);

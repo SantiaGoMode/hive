@@ -90,6 +90,24 @@ describe('ChatWindow streaming state machine', () => {
     expect(screen.getByPlaceholderText('Message…').disabled).toBe(false);
   });
 
+  it('keeps thinking chunks out of the answer and shows a reasoning disclosure', async () => {
+    render(<ChatWindow agent={AGENT} />);
+    const ws = await sendMessage('why?');
+
+    await act(async () => {
+      ws.serverSend({ type: 'chunk', content: 'pondering the question', kind: 'thinking' });
+      ws.serverSend({ type: 'chunk', content: 'The answer is 42.' });
+      ws.serverSend({ type: 'done' });
+    });
+
+    // Answer text must not contain the reasoning.
+    expect(screen.getByText('The answer is 42.')).toBeTruthy();
+    expect(screen.queryByText(/pondering the question.*The answer/)).toBeNull();
+    // Reasoning is behind a collapsible disclosure on the final message.
+    expect(screen.getByText('Reasoning')).toBeTruthy();
+    expect(screen.getByText('pondering the question')).toBeTruthy();
+  });
+
   it('survives a malformed frame without wedging the input (finding #4)', async () => {
     render(<ChatWindow agent={AGENT} />);
     const ws = await sendMessage('hi');

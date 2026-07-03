@@ -117,7 +117,7 @@ export function AgentEditor({ open, onClose, agent, initialValues }) {
   const DEFAULTS = {
     name: '', persona_name: '', persona_role: '', description: '', avatar_color: '#3b82f6',
     model: '', temperature: 0.7, max_tokens: 4096, context_length: 8192,
-    system_prompt: '', tools: [],
+    system_prompt: '', tools: [], reasoning: false,
   };
 
   const [form, setForm] = useState(DEFAULTS);
@@ -365,6 +365,21 @@ export function AgentEditor({ open, onClose, agent, initialValues }) {
                 onChange={e => set('temperature', parseFloat(e.target.value))}
                 className="w-full accent-blue-500" />
               <div className="flex justify-between text-xs text-gray-500 mt-1"><span>Precise</span><span>Creative</span></div>
+            </div>
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
+              <div>
+                <p className="text-sm font-medium text-gray-300">Show reasoning</p>
+                <p className="text-xs text-gray-600 mt-0.5">Stream the model's thinking in chat. Only applies to models with the Reasoning capability (see Models page) — others ignore it.</p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={!!form.reasoning}
+                onClick={() => set('reasoning', !form.reasoning)}
+                className={`relative w-10 h-6 rounded-full flex-shrink-0 transition-colors ${form.reasoning ? 'bg-purple-600' : 'bg-gray-700'}`}
+              >
+                <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${form.reasoning ? 'right-0.5' : 'left-0.5'}`} />
+              </button>
             </div>
             <AdvancedDisclosure
               id="agent-model-advanced"

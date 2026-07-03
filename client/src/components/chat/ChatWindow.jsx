@@ -157,6 +157,12 @@ function MessageBubble({ msg, agentName, agentColor }) {
         <div className="w-8 h-8 rounded-lg bg-gray-700 flex items-center justify-center text-xs font-semibold flex-shrink-0 mt-0.5">U</div>
       )}
       <div className={cn('max-w-[80%] flex flex-col gap-1', isUser && 'items-end')}>
+        {msg.thinking && (
+          <details className="rounded-lg border border-purple-800/40 bg-purple-950/15 px-3 py-1.5 text-xs">
+            <summary className="cursor-pointer text-purple-300/90 select-none">Reasoning</summary>
+            <p className="mt-1.5 text-gray-400 italic whitespace-pre-wrap max-h-60 overflow-y-auto">{msg.thinking}</p>
+          </details>
+        )}
         {msg.content && (
           <div className={cn(
             'rounded-2xl px-4 py-2.5 text-sm',
@@ -253,6 +259,7 @@ export function ChatWindow({ agent, initialMessages, initialSessionId, onSession
   const [input, setInput]                 = useState('');
   const [phase, setPhase]                 = useState('idle');
   const [streamingText, setStreamingText] = useState('');
+  const [streamingThinking, setStreamingThinking] = useState('');
   const [liveTools, setLiveTools]         = useState([]);
   const [sessionId, setSessionId]         = useState(initialSessionId || null);
   const [attachments, setAttachments]     = useState([]);
@@ -271,6 +278,7 @@ export function ChatWindow({ agent, initialMessages, initialSessionId, onSession
     setMessages(initialMessages || []);
     setSessionId(initialSessionId || null);
     setStreamingText('');
+    setStreamingThinking('');
     setLiveTools([]);
     setPhase('idle');
     setSessionSaveError(null);
@@ -291,16 +299,18 @@ export function ChatWindow({ agent, initialMessages, initialSessionId, onSession
     onMessagesChange?.(messages);
   }, [messages]);
 
-  const commitStreamingText = useCallback((text, tools, truncated = false) => {
+  const commitStreamingText = useCallback((text, tools, truncated = false, thinking = '') => {
     if (!text && !tools?.length) return;
     setMessages(prev => [...prev, {
       role: 'assistant',
       content: text,
       toolEvents: tools?.length ? [...tools] : undefined,
+      ...(thinking ? { thinking } : {}),
       truncated,
       timestamp: Date.now(),
     }]);
     setStreamingText('');
+    setStreamingThinking('');
     setLiveTools([]);
     liveToolsRef.current = [];
   }, []);
@@ -347,6 +357,7 @@ export function ChatWindow({ agent, initialMessages, initialSessionId, onSession
 
     let currentText = '';
     let currentTools = [];
+    let currentThinking = '';
     // Text accumulated across all partial rounds (before tool calls).
     // We DON'T commit at done_partial — instead we keep showing it in the
     // streaming bubble during tool execution and fold it into the final commit.
@@ -376,7 +387,7 @@ export function ChatWindow({ agent, initialMessages, initialSessionId, onSession
     const finalize = () => {
       finished = true;
       const finalText = [priorText, currentText].filter(Boolean).join('\n\n');
-      commitStreamingText(finalText, currentTools);
+      commitStreamingText(finalText, currentTools, false, currentThinking);
       setPhase('idle');
       disconnect();
     };
@@ -391,6 +402,14 @@ export function ChatWindow({ agent, initialMessages, initialSessionId, onSession
       }
 
       if (data.type === 'chunk') {
+        // Reasoning deltas stream on the same channel with kind:'thinking' —
+        // they must not be mixed into the answer text.
+        if (data.kind === 'thinking') {
+          currentThinking += data.content;
+          setStreamingThinking(currentThinking);
+          setPhase('streaming');
+          return;
+        }
         currentText += data.content;
         // Show prior text + current round text together so the bubble never blanks out
         const display = priorText ? priorText + '\n\n' + currentText : currentText;
@@ -459,7 +478,7 @@ export function ChatWindow({ agent, initialMessages, initialSessionId, onSession
         finished = true;
         // Combine prior-round text with final-round text into one commit
         const finalText = [priorText, currentText].filter(Boolean).join('\n\n');
-        commitStreamingText(finalText, currentTools, data.truncated);
+        commitStreamingText(finalText, currentTools, data.truncated, currentThinking);
         if (data.sessionId) {
           setSessionId(data.sessionId);
           onSessionSaved?.(data.sessionId);
@@ -541,8 +560,19 @@ export function ChatWindow({ agent, initialMessages, initialSessionId, onSession
           <MessageBubble key={i} msg={msg} agentName={agent.name} agentColor={agent.avatar_color} />
         ))}
 
+        {/* Live model reasoning (when the agent's reasoning toggle is on) */}
+        {(phase === 'streaming' || phase === 'tools') && streamingThinking && (
+          <div className="flex gap-3">
+            <AgentAvatar name={agent.name} color={agent.avatar_color} size={32} />
+            <div className="max-w-[80%] rounded-2xl rounded-tl-sm border border-purple-800/40 bg-purple-950/20 px-4 py-2.5">
+              <p className="text-xs font-medium text-purple-300 mb-1">Reasoning…</p>
+              <p className="text-xs text-gray-400 italic whitespace-pre-wrap max-h-40 overflow-y-auto">{streamingThinking}</p>
+            </div>
+          </div>
+        )}
+
         {/* Live streaming assistant bubble — visible during both streaming and tools phases */}
-        {(phase === 'streaming' || phase === 'tools') && !streamingText && (
+        {(phase === 'streaming' || phase === 'tools') && !streamingText && !streamingThinking && (
           <ThinkingIndicator agentName={agent.name} agentColor={agent.avatar_color} />
         )}
         {(phase === 'streaming' || phase === 'tools') && streamingText && (

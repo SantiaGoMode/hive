@@ -91,6 +91,9 @@ async function runChatLoop(ws, agentId, clientMessages, model, sessionId, deps =
     // Always ensure num_ctx is large enough to fit the requested output plus
     // a generous input budget (4k tokens for system prompt + conversation history).
     num_ctx: Math.max(numCtx, numPredict + 4096),
+    // Per-agent reasoning toggle: streams the model's thinking channel when the
+    // model supports it (capability-checked in the provider layer).
+    ...(agent?.reasoning ? { reasoning: true } : {}),
     // Spend attribution for gateway calls (logged per request).
     metadata: { agent_id: agentId, agent_name: agent?.name || agentId, session: sessionId || '', source: 'chat' },
   };

@@ -45,6 +45,7 @@ const agentFields = {
   tools: z.array(z.string().max(200)).max(100),
   system_prompt: z.string().max(200_000),
   ephemeral: z.union([z.boolean(), z.number().int().min(0).max(1)]),
+  reasoning: z.union([z.boolean(), z.number().int().min(0).max(1)]),
   gateway_budget_usd: z.union([z.coerce.number().min(0), z.literal(''), z.null()]),
 };
 

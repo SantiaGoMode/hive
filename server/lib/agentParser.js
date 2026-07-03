@@ -35,6 +35,7 @@ function rowToAgent(row) {
     system_prompt:  row.system_prompt || '',
     workspace:      row.workspace || agentWorkspace(row.id),
     ephemeral:      !!row.ephemeral,
+    reasoning:      !!row.reasoning,
     gateway_budget_usd: row.gateway_budget_usd ?? null,
     gateway_key:    row.gateway_key || '',
     last_active:    row.last_active ? new Date(row.last_active * 1000).toISOString() : null,
@@ -61,8 +62,8 @@ function writeAgent(id, data) {
     fs.mkdirSync(path.join(workspace, 'sessions'), { recursive: true });
 
     db.prepare(`
-      INSERT INTO agents (id, name, persona_name, persona_role, model, description, avatar_color, temperature, max_tokens, context_length, tools, system_prompt, workspace, ephemeral, gateway_budget_usd)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO agents (id, name, persona_name, persona_role, model, description, avatar_color, temperature, max_tokens, context_length, tools, system_prompt, workspace, ephemeral, gateway_budget_usd, reasoning)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       newId_,
       data.name || 'Agent',
@@ -79,6 +80,7 @@ function writeAgent(id, data) {
       workspace,
       data.ephemeral ? 1 : 0,
       (data.gateway_budget_usd != null && data.gateway_budget_usd !== '') ? Number(data.gateway_budget_usd) : null,
+      data.reasoning ? 1 : 0,
     );
 
     return readAgent(newId_);
@@ -100,7 +102,7 @@ function writeAgent(id, data) {
       UPDATE agents
       SET name=?, persona_name=?, persona_role=?, model=?, description=?, avatar_color=?,
           temperature=?, max_tokens=?, context_length=?, tools=?, system_prompt=?,
-          gateway_budget_usd=?, gateway_key=?, updated_at=unixepoch()
+          gateway_budget_usd=?, gateway_key=?, reasoning=?, updated_at=unixepoch()
       WHERE id=?
     `).run(
       data.name           ?? existing.name,
@@ -116,6 +118,7 @@ function writeAgent(id, data) {
       data.system_prompt  ?? existing.system_prompt,
       newBudget,
       nextKey,
+      (data.reasoning === undefined ? existing.reasoning : !!data.reasoning) ? 1 : 0,
       id,
     );
 
