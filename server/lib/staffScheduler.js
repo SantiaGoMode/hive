@@ -239,9 +239,14 @@ async function tick() {
         // repeated identical error just extends the backoff without re-spamming.
         const shouldPost = recordFailure(profile.id, e.message, now);
         if (shouldPost) {
+          // "model not found" is a configuration problem, not a transient one —
+          // tell the user where to fix it instead of just echoing the error.
+          const hint = /not found/i.test(String(e.message))
+            ? ` Fix: open Staff → ${profile.display_name} → Skills & Tools and set the Chat model to an installed model (or pull the missing one with ollama).`
+            : '';
           staff.addChatMessage({
             authorType: 'system',
-            content: `Could not generate ${profile.display_name}'s scheduled staff message: ${e.message}`,
+            content: `Could not generate ${profile.display_name}'s scheduled staff message: ${e.message}${hint}`,
             mentions: [],
             triggerType: 'interval',
           });
