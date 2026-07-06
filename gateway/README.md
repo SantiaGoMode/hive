@@ -8,7 +8,7 @@ talks to it with a revocable, localhost-scoped key, so neither Hive nor the agen
 it runs can ever exfiltrate the real provider keys.
 
 ```
-env / vault ──inject real keys──▶ LiteLLM container (127.0.0.1:4000) ──▶ providers
+env / secret store ──inject real keys──▶ LiteLLM container (127.0.0.1:4000) ──▶ providers
                                           ▲
                   Hive + agents ──gateway key (sk-hive-gateway)──┘
 ```
@@ -20,21 +20,19 @@ env / vault ──inject real keys──▶ LiteLLM container (127.0.0.1:4000) �
 
 ## Start
 
-Real keys are injected into the container env at launch — from a secrets vault like
-[scrt4](https://github.com/llmsecrets/llm-secrets) if you use one (shown below), or as
-plain environment variables. Either way they never touch Hive's process or DB.
-`docker compose up -d` is natively detached, so this returns immediately:
+Real keys are injected into the container env at launch from your shell, OS
+secret store, or deployment environment. They never touch Hive's process or DB.
+The wrapper starts Docker Compose in the background and returns immediately:
 
 ```bash
-scrt4 run 'OPENAI_API_KEY=$env[OPENAI_API_KEY] \
-  ANTHROPIC_API_KEY=$env[ANTHROPIC_API_KEY] \
-  GEMINI_API_KEY=$env[GEMINI_API_KEY] \
-  gateway/run-gateway.sh'
+OPENAI_API_KEY="$OPENAI_API_KEY" \
+ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+GEMINI_API_KEY="$GEMINI_API_KEY" \
+gateway/run-gateway.sh
 ```
 
 Run that from the repository root. From another directory, use `cd /path/to/hive &&`
-before the `scrt4 run ...` command; `run-gateway.sh` resolves the compose file from its
-own location.
+before the command; `run-gateway.sh` resolves the compose file from its own location.
 
 - **logs:** `docker logs -f hive-llm-gateway`
 - **stop:** `./gateway/stop-gateway.sh`
@@ -44,19 +42,19 @@ own location.
 
 The containers already use `restart: unless-stopped`, so they will come back after Docker
 starts as long as they were previously running. For a fresh login or reboot where the
-gateway is not already up, use your OS login/startup mechanism to run the same scrt4
-command from the repo root:
+gateway is not already up, use your OS login/startup mechanism to run the same command
+from the repo root with provider keys available in that launch environment:
 
 ```bash
-cd /path/to/hive && scrt4 run 'OPENAI_API_KEY=$env[OPENAI_API_KEY] \
-  ANTHROPIC_API_KEY=$env[ANTHROPIC_API_KEY] \
-  GEMINI_API_KEY=$env[GEMINI_API_KEY] \
-  gateway/run-gateway.sh'
+cd /path/to/hive && OPENAI_API_KEY="$OPENAI_API_KEY" \
+  ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+  GEMINI_API_KEY="$GEMINI_API_KEY" \
+  gateway/run-gateway.sh
 ```
 
 For macOS, a small LaunchAgent or login item can call a wrapper script that contains the
 command above. Keep the wrapper outside the repo if it contains local paths, and keep
-secrets in scrt4 rather than in the wrapper.
+real secrets in the OS secret store or launch environment rather than in the repo.
 
 ## Point Hive at it
 
@@ -118,20 +116,19 @@ exist. **Spend is only logged for authenticated requests** — i.e. it activates
 key is on (spend attributes to a key/user), so the steps below are required, not optional, to
 get cost visibility.
 
-### Activate (one vault step + relaunch)
-1. Add a master key to the vault (you do this — the value never passes through the assistant):
-   ```
-   ! scrt4 add LITELLM_MASTER_KEY=sk-<random>
-   ```
+### Activate (one secret + relaunch)
+1. Generate a master key and expose it as `LITELLM_MASTER_KEY` in the environment that
+   launches the gateway. Keep the value in your password manager, OS secret store, or
+   deployment secret store.
 2. Uncomment `master_key: os.environ/LITELLM_MASTER_KEY` in `litellm.config.yaml`.
 3. Relaunch the gateway with the key injected:
    ```
-   scrt4 run 'OPENAI_API_KEY=$env[OPENAI_API_KEY] ANTHROPIC_API_KEY=$env[ANTHROPIC_API_KEY] \
-     GEMINI_API_KEY=$env[GEMINI_API_KEY] LITELLM_MASTER_KEY=$env[LITELLM_MASTER_KEY] \
-     gateway/run-gateway.sh'
+   OPENAI_API_KEY="$OPENAI_API_KEY" ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+     GEMINI_API_KEY="$GEMINI_API_KEY" LITELLM_MASTER_KEY="$LITELLM_MASTER_KEY" \
+     gateway/run-gateway.sh
    ```
 4. Give Hive the key too (else it gets 401 once auth is on) — add to the `run-dev.sh` launch:
-   `LLM_GATEWAY_KEY=$env[LITELLM_MASTER_KEY]`. Hive reads it via `gatewayConfig()`.
+   `LLM_GATEWAY_KEY="$LITELLM_MASTER_KEY"`. Hive reads it via `gatewayConfig()`.
 
 Inspect spend: `docker exec hive-llm-gateway-db psql -U litellm -d litellm -c 'SELECT model, total_tokens, spend FROM "LiteLLM_SpendLogs" ORDER BY "startTime" DESC LIMIT 10;'`
 or LiteLLM's `/spend/logs` and `/global/spend/report` endpoints.
@@ -169,4 +166,4 @@ agent's gateway key. Heavier (key lifecycle); the metadata layer above gives vis
 - **Egress filtering** on the agent sandbox so agent code can only reach the gateway — then a
   leaked gateway key can't phone home.
 - **Auto-start**: containers use `restart: unless-stopped`; for boot persistence, launch from
-  your scrt4 session at login.
+  your login environment after provider keys are available.

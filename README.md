@@ -82,10 +82,10 @@ Hive is organized as a monorepo:
 - **Authentication**: Gated by `HIVE_AUTH_TOKEN`. A random token is generated on first boot for UI authentication.
 - **Rate Limiting**: Bounded rate limiters on mutating requests and concurrent webhook runs.
 
-### Optional Hardening: Gateway + Secrets Vault
+### Optional Hardening: Gateway + Environment-Backed Secrets
 For enterprise-grade security, you can isolate API keys completely:
 1. **LiteLLM Gateway**: Runs in Docker (bound to `127.0.0.1`), holding the real provider keys. Hive connects via a revocable `LLM_GATEWAY_KEY`. Provides failover and spend limits.
-2. **Secrets Vault**: Store references (like `env:NAME`) in Hive, and launch processes via a vault (e.g., [scrt4](https://github.com/llmsecrets/llm-secrets)) so values only exist in memory.
+2. **Environment References**: Store references (like `env:NAME`) in Hive, and inject the real values from your shell, OS secret store, or deployment environment at launch.
 
 ---
 

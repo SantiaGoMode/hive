@@ -13,6 +13,9 @@ const http = require('http');
 const HIVE_HOME = process.env.HIVE_HOME || path.join(os.homedir(), '.hive');
 const LOG_PATH = path.join(HIVE_HOME, 'desktop.log');
 const MAX_RESTARTS = 3;
+const APP_NAME = 'Hive';
+
+app.setName(APP_NAME);
 
 let serverProc = null;
 let mainWindow = null;
@@ -189,7 +192,7 @@ function buildMenu() {
   const updateItem = { label: 'Check for Updates…', click: checkForUpdates };
   const template = [
     ...(isMac ? [{
-      label: app.name,
+      label: APP_NAME,
       submenu: [
         { role: 'about' },
         updateItem,

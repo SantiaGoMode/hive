@@ -21,7 +21,9 @@
 //   LOG_SWALLOWED                 set to '0' to silence swallowed-error logs — read in logSwallowed.js
 //   LLM_GATEWAY_URL / LLM_GATEWAY_KEY   LiteLLM gateway — resolved in providers/index.js gatewayConfig()
 // Secrets (env wins over DB setting; resolved in secrets.js / providers):
-//   ANTHROPIC_API_KEY · OPENAI_API_KEY · GEMINI_API_KEY · BRAVE_API_KEY · NGROK_AUTHTOKEN
+//   ANTHROPIC_API_KEY · OPENAI_API_KEY · GEMINI_API_KEY · NGROK_AUTHTOKEN
+// MCP server env references can point at any env var, for example BRAVE_API_KEY
+// when the Brave Search MCP preset is configured with env:BRAVE_API_KEY.
 //   GITHUB_TOKEN / GITHUB_PERSONAL_ACCESS_TOKEN / GH_TOKEN — resolved by githubToken() below
 
 const { execFileSync } = require('child_process');

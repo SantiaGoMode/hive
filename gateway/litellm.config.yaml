@@ -9,8 +9,8 @@
 #      router_settings.fallbacks. Hive can ask for an alias instead of a concrete model
 #      to get automatic provider failover.
 #
-# Real keys are read from the CONTAINER environment (os.environ/...), injected by scrt4
-# at `docker compose up`. They are never written into this file.
+# Real keys are read from the CONTAINER environment (os.environ/...), forwarded from
+# the launch environment at `docker compose up`. They are never written into this file.
 #
 # NOTE: after editing this file, reload with `docker compose -f gateway/docker-compose.yml
 # restart` (restart preserves the injected env; `up -d` won't reload a changed mount, and
@@ -88,6 +88,6 @@ router_settings:
 
 general_settings:
   # Auth on: every request needs a key (the master key, or a virtual key minted
-  # from it). Injected from the scrt4 vault at launch — never stored in this file.
+  # from it). Injected at launch, never stored in this file.
   master_key: os.environ/LITELLM_MASTER_KEY
   store_model_in_db: false

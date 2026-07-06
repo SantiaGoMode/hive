@@ -37,3 +37,6 @@ win:
   target: [nsis]
 publish:
   provider: github
+  owner: SantiaGoMode
+  repo: hive
+  channel: latest

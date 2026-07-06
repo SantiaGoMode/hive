@@ -11,6 +11,16 @@ import { api } from '../../lib/api';
 import { Button } from '../../components/ui/Button';
 import { formatDate } from '../../lib/utils';
 import { mergeToolEntries } from '../../lib/colonyUtils';
+import {
+  STATUS_DOT,
+  STATUS_TEXT,
+  fmtDuration,
+  formatSummaryMarkdown,
+  parseBoardGoal,
+  prettyToolName,
+  runLabel,
+  ts,
+} from './helpers';
 
 // Links in deliverables, artifacts, and parsed goal text are LLM-controlled;
 // only render them as real anchors when they're http(s). A prompt-injected
@@ -55,34 +65,6 @@ export function AgentMarkdown({ children }) {
       }}>{text}</ReactMarkdown>
     </div>
   );
-}
-
-// Local models emit run summaries as one long line: "**Mission Complete** - did
-// x - did y **Next Steps**: - z". Restructure into real markdown: section
-// headers on their own lines and " - " runs as bullet lists.
-function formatSummaryMarkdown(text) {
-  let t = String(text || '').trim();
-  if (!t) return t;
-  if (!t.includes('\n')) {
-    t = t
-      .replace(/\s*\*\*([^*]+?)\*\*:?\s*(?=-\s|$)/g, '\n\n**$1**\n\n')   // sections followed by lists
-      .replace(/\s-\s(?=[A-Z`*\d])/g, '\n- ');                            // " - item" → bullet
-  }
-  return t.trim();
-}
-
-// MCP tool names arrive as "<serverId>__tool_name" (e.g. "mpy8ho05arrw__create_directory").
-// Strip the opaque server-id prefix for display.
-function prettyToolName(name) {
-  return String(name || '').replace(/^[a-z0-9]{6,}__/i, '');
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function ts(entry) {
-  if (!entry.ts) return null;
-  const d = new Date(entry.ts);
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
 // ── Badges + UI atoms ─────────────────────────────────────────────────────────
@@ -543,33 +525,6 @@ function LogEntry({ entry, agentColorMap }) {
 }
 
 // ── Colony live/replay view ────────────────────────────────────────────────────
-
-// Parse the machine-generated "[Connected Repo Board Item]" goal blob into
-// structured fields so it can be rendered as a formatted card instead of a
-// wall of raw text.
-function parseBoardGoal(goal) {
-  const text = String(goal || '').trim();
-  if (!/^\[Connected Repo Board Item\]/.test(text)) return null;
-  const lines = text.split('\n').slice(1);
-  const fields = {};
-  let descStart = -1;
-  for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(/^([A-Za-z][A-Za-z ]*?):\s*(.*)$/);
-    if (m && /^description$/i.test(m[1])) { descStart = i; break; }
-    if (m) fields[m[1]] = m[2];
-  }
-  let description = '';
-  let criteria = [];
-  if (descStart !== -1) {
-    const rest = lines.slice(descStart).join('\n').replace(/^Description:\s*/i, '');
-    const parts = rest.split(/\n\s*Acceptance Criteria\s*\n?/i);
-    description = parts[0].trim();
-    if (parts[1]) {
-      criteria = parts[1].split('\n').map(s => s.replace(/^[-*[\]\s]+/, '').trim()).filter(Boolean);
-    }
-  }
-  return { fields, description, criteria };
-}
 
 // Work item details rendered as a full-width band under the page title: chips
 // inline, description/criteria behind a one-line expandable row.
@@ -1673,24 +1628,6 @@ function DirectionInput({ colonyId, disabled }) {
 //   /colony                      → colony cards
 //   /colony/:teamId              → colony page
 //   /colony/:teamId/run/:runId   → run page (live view / replay)
-
-const STATUS_DOT = { running: 'bg-blue-400 animate-pulse', done: 'bg-green-400', stopped: 'bg-gray-600', awaiting_tasks: 'bg-amber-400', error: 'bg-red-400' };
-const STATUS_TEXT = { running: 'text-blue-400', done: 'text-green-400', stopped: 'text-gray-500', awaiting_tasks: 'text-amber-300', error: 'text-red-400' };
-
-function runLabel(run) {
-  const item = parseBoardGoal(run.goal);
-  const title = item
-    ? `${item.fields.Number ? `${item.fields.Number} · ` : ''}${item.fields.Title || 'Work item'}`
-    : String(run.goal || '').split('\n')[0];
-  return title.slice(0, 90);
-}
-
-function fmtDuration(secs) {
-  if (secs == null) return '—';
-  if (secs < 60) return `${secs}s`;
-  if (secs < 3600) return `${Math.round(secs / 60)}m`;
-  return `${(secs / 3600).toFixed(1)}h`;
-}
 
 // Create / edit a colony. Issues and tasks are deliberately NOT selected here —
 // they're picked from the colony page when launching a run. Only the team

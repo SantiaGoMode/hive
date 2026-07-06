@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # spawn-detached.sh NAME -- CMD [ARGS...]
 #
-# Launch a long-running CMD detached so a `scrt4 run` wrapper can return exit 0
-# within scrt4's hardcoded ~10s CLI->daemon timeout, while CMD keeps running.
-# Without this, `scrt4 run '<long-running cmd>'` prints "scrt4 run failed:" and
-# exits 1 even though the daemon keeps the process alive.
+# Launch a long-running CMD detached so wrappers, login items, and terminal
+# sessions can return quickly while CMD keeps running.
 #
 # macOS has no `setsid`, so we enable bash monitor mode (`set -m`) to put the
 # background job in its OWN process group (PGID == the job's PID). That lets

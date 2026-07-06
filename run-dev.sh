@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Launch the Hive dev server (server + client via `npm run dev`) DETACHED. The
-# server keeps running after this script returns exit 0 — which also lets it be
-# started through secret-injecting wrappers with short CLI timeouts (e.g.
-# `scrt4 run '<env prefixes> /path/to/run-dev.sh'`).
+# server keeps running after this script returns exit 0, which lets login items
+# or secret-injecting launch wrappers hand off quickly while Hive stays running.
 #
 #   start:  ./run-dev.sh
 #   logs:   tail -f ~/.hive/hive-dev.log

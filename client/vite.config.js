@@ -25,7 +25,7 @@ function manualChunks(id) {
     return 'vendor-react';
   }
 
-  if (id.includes('/node_modules/react-markdown/') || id.includes('/node_modules/js-yaml/')) {
+  if (id.includes('/node_modules/react-markdown/')) {
     return 'vendor-content';
   }
 

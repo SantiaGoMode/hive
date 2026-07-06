@@ -2,12 +2,12 @@
 #
 # - Bound to 127.0.0.1 ONLY (never reachable off-box).
 # - Real provider keys arrive as container env, forwarded from the `docker
-#   compose up` process env, which scrt4 populates from the vault at launch.
+#   compose up` process env provided by your shell, OS secret store, or launcher.
 #   They are never stored in this file, the host DB, or Hive's process.
 # - Postgres backs spend tracking, budgets, and virtual-key management. The DB
 #   is NOT published to the host (only reachable inside the compose network),
 #   so its local-only credentials below are not a real secret.
-# - `up -d` is natively detached → returns inside scrt4's ~10s CLI window.
+# - `up -d` is natively detached and returns after the compose stack starts.
 services:
   litellm:
     image: ghcr.io/berriai/litellm:main-stable
@@ -18,11 +18,11 @@ services:
     volumes:
       - ./litellm.config.yaml:/app/config.yaml:ro
     command: ["--config", "/app/config.yaml", "--host", "0.0.0.0", "--port", "4000", "--num_workers", "1"]
-    environment:                        # pass-through from the (scrt4-injected) launch env
+    environment:                        # pass-through from the launch env
       - OPENAI_API_KEY
       - ANTHROPIC_API_KEY
       - GEMINI_API_KEY
-      - LITELLM_MASTER_KEY              # from vault; enables auth + virtual keys + budgets
+      - LITELLM_MASTER_KEY              # enables auth + virtual keys + budgets
       - DATABASE_URL=postgresql://litellm:litellm@postgres:5432/litellm
     depends_on:
       postgres:

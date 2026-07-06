@@ -3,6 +3,12 @@
   "version": "1.0.0",
   "description": "Hive desktop app — Electron shell around the Hive server + client",
   "main": "main.js",
+  "author": "Cris Santiago",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SantiaGoMode/hive.git",
+    "directory": "desktop"
+  },
   "private": true,
   "scripts": {
     "dev": "electron .",
