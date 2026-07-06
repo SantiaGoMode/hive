@@ -85,6 +85,22 @@ function commentBody(payload) {
     || '';
 }
 
+// GitHub stamps every comment/review with the author's relationship to the repo.
+// Only these may trigger a run: a comment trigger otherwise lets ANY external
+// user launch an autonomous, push-capable colony on the owner's repo, with the
+// owner's token and a writable mount. The comment token ("@hive") is public and
+// is NOT an authorization signal — anyone can type it.
+const TRUSTED_COMMENT_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+
+function commentAuthorAssociation(payload) {
+  return String(
+    payload?.comment?.author_association
+    || payload?.review?.author_association
+    || payload?.discussion?.author_association
+    || '',
+  ).toUpperCase();
+}
+
 function sourceUrl(payload) {
   return payload?.comment?.html_url
     || payload?.issue?.html_url
@@ -156,6 +172,11 @@ function configMatchesEvent(config, event) {
     if (token && !String(commentBody(payload)).toLowerCase().includes(token.toLowerCase())) {
       return { ok: false, reason: 'comment_token_missing', kind };
     }
+    // Authorization gate: the token above is public, so it can't be trusted.
+    // Only repo owners/members/collaborators may launch a run from a comment.
+    if (!TRUSTED_COMMENT_ASSOCIATIONS.has(commentAuthorAssociation(payload))) {
+      return { ok: false, reason: 'comment_author_untrusted', kind };
+    }
   }
 
   return { ok: true, kind };
@@ -205,6 +226,9 @@ function processWebhookEvent(event, opts = {}) {
       repoPath: row.repo_path || null,
       boardCard,
       cloudEnabled: !!row.cloud_enabled,
+      // Inherit the source colony's write-back setting — without this every
+      // triggered issue→PR run silently degrades to no push/PR.
+      githubWriteback: !!row.github_writeback,
       modelPlan,
       trigger,
       // Triggered follow-up runs stay inside the same colony as their source run.

@@ -1,17 +1,31 @@
 // Extracted from PipelinesPage (#23).
 import { useState } from 'react';
-import { Play, CheckCircle, XCircle, Loader, Clock, ArrowDown, Copy, Check, GitMerge } from 'lucide-react';
+import { Play, CheckCircle, XCircle, Loader, Clock, GitMerge, Brain, ChevronRight } from 'lucide-react';
+import { CopyButton } from '../../components/ui/CopyButton';
+import { MarkdownContent } from '../../components/MarkdownContent';
 
-export function CopyBtn({ text }) {
-  const [copied, setCopied] = useState(false);
+// Collapsible reasoning block for steps whose agent has "Show reasoning" on.
+function ThinkingDisclosure({ thinking }) {
+  const [open, setOpen] = useState(false);
+  if (!thinking) return null;
   return (
-    <button
-      onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
-      className="p-1 text-gray-500 hover:text-gray-300 rounded transition-colors"
-      title="Copy"
-    >
-      {copied ? <Check size={12} className="text-green-400" /> : <Copy size={12} />}
-    </button>
+    <div className="mb-2">
+      <button
+        type="button"
+        onClick={() => setOpen(v => !v)}
+        aria-expanded={open}
+        className="flex items-center gap-1.5 text-xs text-purple-400/80 hover:text-purple-300 transition-colors"
+      >
+        <Brain size={11} />
+        Reasoning
+        <ChevronRight size={11} className={`transition-transform ${open ? 'rotate-90' : ''}`} />
+      </button>
+      {open && (
+        <div className="mt-1.5 p-2 rounded border border-purple-800/30 bg-purple-500/5 text-xs text-gray-400 whitespace-pre-wrap max-h-64 overflow-y-auto">
+          {thinking}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -53,22 +67,15 @@ export function StepCard({ entry, onRetry }) {
       )}
       {isDone && (
         <div className="relative group">
-          <p className="text-sm text-gray-300 whitespace-pre-wrap pr-6">{entry.output}</p>
+          <ThinkingDisclosure thinking={entry.thinking} />
+          <div className="text-sm text-gray-300 pr-6">
+            <MarkdownContent>{entry.output || ''}</MarkdownContent>
+          </div>
           <div className="absolute top-0 right-0 opacity-0 group-hover:opacity-100 transition-opacity">
-            <CopyBtn text={entry.output} />
+            <CopyButton text={entry.output} />
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-// Groups steps by their group index and renders sequential/parallel accordingly
-export function StepTrace({ entry, index }) {
-  return (
-    <div className="flex flex-col gap-2">
-      {index > 0 && <div className="flex justify-center"><ArrowDown size={14} className="text-gray-700" /></div>}
-      <StepCard entry={entry} />
     </div>
   );
 }

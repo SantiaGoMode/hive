@@ -35,6 +35,18 @@ const { updateColonyMemoryAfterRun } = require('./memory');
 // dropped writes above 200KB; that was a footgun because the UI would just
 // stop updating from the DB mid-run with no error.
 const LOG_MAX_ENTRIES = 1000;
+// Coalesce log persistence. addEntry used to persistLog() (a full JSON.stringify
+// of up to LOG_MAX_ENTRIES) on EVERY entry — O(N²) over a run, which stuttered
+// SSE late in long runs. We throttle instead: the first entry (and any after a
+// quiet gap) persists immediately so a refresh right after launch still sees it;
+// bursts within the window collapse into one trailing write. Terminal points
+// call flush() directly, so nothing is lost on completion.
+const LOG_FLUSH_INTERVAL_MS = 400;
+// Wall-clock safety cap for a run, enforced INSIDE runColony so every launch
+// path gets it — POST, bootstrap-accept, and webhook triggers alike (the POST
+// route's own timer only covered POST). A stuck model or a worker in an infinite
+// tool loop otherwise pins resources and a triggered-run semaphore slot forever.
+const COLONY_MAX_DURATION_MS = 30 * 60 * 1000; // 30 minutes
 // Safety caps — prevent runaway resource use.
 // MAX_WORKERS_PER_COLONY: hard cap on agents the orchestrator can spawn.
 //   The orchestrator prompt already suggests 2–4, but a buggy model can loop
@@ -91,13 +103,27 @@ async function runColony(colonyId, onEventArg, signal) {
     }
   };
 
-  // Persist log to DB immediately on every entry — avoids data loss on refresh/crash.
+  // Persist log to DB. flush() is the immediate write (used at terminal points);
+  // scheduleFlush() throttles bursts so we don't re-stringify the whole log on
+  // every entry. See LOG_FLUSH_INTERVAL_MS.
+  let flushTimer = null;
+  let lastFlushAt = 0;
   const flush = () => {
+    if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
     if (!logDirty) return;
     try {
       persistLog(colonyId, logEntries.slice(-LOG_MAX_ENTRIES));
     } catch (e) { logSwallowed('colonyRunner:persistLog', e, { colonyId }); }
     logDirty = false;
+    lastFlushAt = Date.now();
+  };
+  const scheduleFlush = () => {
+    if (!logDirty || flushTimer) return;
+    const sinceLast = Date.now() - lastFlushAt;
+    // Leading edge: first entry (lastFlushAt=0) and any after a quiet gap write
+    // now; otherwise defer to the end of the current window.
+    if (sinceLast >= LOG_FLUSH_INTERVAL_MS) flush();
+    else flushTimer = setTimeout(() => { flushTimer = null; flush(); }, LOG_FLUSH_INTERVAL_MS - sinceLast);
   };
 
   const addEntry = (entry) => {
@@ -105,8 +131,15 @@ async function runColony(colonyId, onEventArg, signal) {
     logEntries.push(e);
     logDirty = true;
     onEvent({ type: 'log_entry', entry: e });
-    flush();
+    scheduleFlush();
   };
+
+  // Wall-clock backstop (see COLONY_MAX_DURATION_MS). Cleared in finally.
+  const runTimeout = setTimeout(() => {
+    try { addEntry({ kind: 'error', message: `Colony exceeded the wall-clock limit of ${Math.round(COLONY_MAX_DURATION_MS / 60000)} minutes and was aborted.` }); }
+    catch (e) { logSwallowed('colonyRunner:timeout', e, { colonyId }); }
+    try { ac.abort(); } catch {} /* abort is best-effort */
+  }, COLONY_MAX_DURATION_MS);
 
   // Mutable run state shared with the event handler (sets goalSummary on
   // mark_goal_achieved) and the writeback closure (reads row/githubWriteback/
@@ -300,8 +333,12 @@ async function runColony(colonyId, onEventArg, signal) {
         },
       );
 
-      addEntry({ kind: 'message', agent: 'Orchestrator', content: response });
-      onEvent({ type: 'orchestrator_message', content: response, round: outer + 1 });
+      // Label orchestrator turns with the orchestrator's actual name (Ari Morgan)
+      // so the log shows ONE orchestrator identity — her thinking/tool events
+      // already stream under her name, and a hardcoded "Orchestrator" here made
+      // it look like a second, separate orchestrator in the timeline.
+      addEntry({ kind: 'message', agent: orch.name, content: response });
+      onEvent({ type: 'orchestrator_message', agent: orch.name, content: response, round: outer + 1 });
 
       if (signal?.aborted) break;
 
@@ -387,12 +424,23 @@ async function runColony(colonyId, onEventArg, signal) {
       onEvent({ type: 'done', status: 'stopped' });
     } else {
       db.prepare("UPDATE colonies SET status='error', updated_at=unixepoch() WHERE id=?").run(colonyId);
+      // An error (commonly the "orchestrator stalled" throw) usually fires AFTER
+      // workers committed real work to the colony branch. Publish it the same way
+      // the stopped path does, rather than stranding it uncommitted/unpushed.
+      try { await performWriteback('error'); } catch (e2) { logSwallowed('colonyRunner:writeback', e2, { colonyId }); }
+      let errorOutcome = null;
+      try { errorOutcome = emitVerifiedOutcome({ colonyId, row: state.row, state, colonyBranch, addEntry }); } catch (e2) { logSwallowed('colonyRunner:verifiedOutcome', e2, { colonyId }); }
+      try { await updateColonyMemoryAfterRun(colonyId, state.row, state.goalSummary, 'error', addEntry, errorOutcome); } catch (e2) { logSwallowed('colonyRunner:memoryUpdate', e2, { colonyId }); }
       cleanupSandboxContainers();
       addEntry({ kind: 'error', message: e.message });
       flush();
       onEvent({ type: 'error', message: e.message });
     }
   } finally {
+    // Stop the wall-clock timer and persist any entries still pending in the
+    // throttle window before we detach.
+    clearTimeout(runTimeout);
+    flush();
     // Deregister this run so stopColonyRun() no longer finds it, and detach
     // the external-signal listener to avoid leaks on long-lived signals.
     runningColonies.delete(colonyId);
@@ -411,4 +459,5 @@ module.exports = {
   isColonyRunning,
   activeRunCount,
   runningColonies,
+  COLONY_MAX_DURATION_MS,
 };

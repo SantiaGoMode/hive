@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Square, Copy, Check, ChevronDown, ChevronUp, Wrench, CheckCircle, XCircle, Loader, Paperclip, X, Image, FileText, Zap, AlertTriangle } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import { Button } from '../ui/Button';
 import { AgentAvatar } from '../agents/AgentAvatar';
+import { MarkdownContent } from '../MarkdownContent';
 import { cn, formatDate } from '../../lib/utils';
 import { chatSendState } from '../../lib/frontendRegression';
 import { toast } from '../../stores/toastStore';
@@ -171,15 +171,7 @@ function MessageBubble({ msg, agentName, agentColor }) {
             {isUser ? (
               <p className="whitespace-pre-wrap">{msg.content}</p>
             ) : (
-              <div className="prose prose-invert prose-sm max-w-none">
-                <ReactMarkdown components={{
-                  code({ inline, children }) {
-                    return inline
-                      ? <code className="bg-gray-900 px-1 py-0.5 rounded text-blue-300 font-mono text-xs">{children}</code>
-                      : <pre className="bg-gray-900 rounded-lg p-3 overflow-auto my-2"><code className="font-mono text-xs text-gray-300">{children}</code></pre>;
-                  },
-                }}>{msg.content}</ReactMarkdown>
-              </div>
+              <MarkdownContent>{msg.content}</MarkdownContent>
             )}
           </div>
         )}

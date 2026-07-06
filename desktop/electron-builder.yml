@@ -1,0 +1,39 @@
+# Packaging config. The app asar holds only the tiny shell (main/preload);
+# the server tree ships as extraResources OUTSIDE asar because it spawns
+# child processes and reads files (Dockerfile.sandbox, skills seeds) by path.
+appId: ai.hive.desktop
+productName: Hive
+directories:
+  output: dist
+files:
+  - main.js
+  - preload.js
+  - package.json
+extraResources:
+  - from: staging/server
+    to: server
+  - from: staging/node_modules
+    to: node_modules
+  - from: staging/package.json
+    to: package.json
+  - from: staging/client/dist
+    to: client/dist
+  - from: staging/gateway
+    to: gateway
+asar: true
+npmRebuild: false # staging is already Electron-ABI; don't touch desktop deps
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+linux:
+  target: [AppImage, deb]
+  category: Development
+  maintainer: Hive
+win:
+  target: [nsis]
+publish:
+  provider: github

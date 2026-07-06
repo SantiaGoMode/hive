@@ -60,7 +60,7 @@ can see and contribute to the Blackboard.
 ## Worker model: ${model}
 ## Sandbox (for workers with tools: ["sandbox"])
 Python 3.11 (flask, numpy, pandas, requests, pytest), Node.js 20, git, curl, sqlite3.
-Write files with write_file. Run code with run_python or run_bash. Ports 3000/5000/8000/8080 forwarded.
+Write files with write_file. Run code with run_python or shell. Ports 3000/5000/8000/8080 forwarded.
 Do NOT install Jenkins, Docker, databases — unavailable.`;
 }
 

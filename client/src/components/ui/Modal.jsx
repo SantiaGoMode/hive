@@ -69,9 +69,9 @@ export function Modal({ open, onClose, title, children, size = 'md', closeLabel 
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className={cn('relative w-full bg-gray-900 border border-gray-700 rounded-xl shadow-2xl outline-none', sizes[size])}
+        className={cn('relative w-full max-h-[calc(100vh-2rem)] bg-gray-900 border border-gray-700 rounded-xl shadow-2xl outline-none flex flex-col', sizes[size])}
       >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700 flex-shrink-0">
           <h2 id={titleId} className="text-lg font-semibold text-gray-100">{title}</h2>
           <button
             type="button"
@@ -83,7 +83,7 @@ export function Modal({ open, onClose, title, children, size = 'md', closeLabel 
             <X size={18} />
           </button>
         </div>
-        <div className="p-6">{children}</div>
+        <div className="p-6 overflow-y-auto min-h-0">{children}</div>
       </div>
     </div>
   );

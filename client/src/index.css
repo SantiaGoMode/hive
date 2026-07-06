@@ -69,6 +69,7 @@ html.light ::-webkit-scrollbar-thumb { background: #cbd5e1; }
 
 /* ── Structural hardcoded hex backgrounds ───────────────────────────────────── */
 html.light .bg-\[\#0f1117\] { background-color: #e8edf5; }
+html.light .bg-\[\#0f1117\]\/60 { background-color: rgba(255 255 255 / 0.75); }
 html.light .bg-\[\#1a1d27\] { background-color: #ffffff; }
 
 /* ── Solid gray backgrounds ────────────────────────────────────────────────── */
@@ -80,17 +81,24 @@ html.light .bg-gray-600 { background-color: #cbd5e1; }
 html.light .bg-gray-400 { background-color: #94a3b8; }
 
 /* ── Opacity-modified backgrounds ──────────────────────────────────────────── */
-html.light .bg-gray-900\/40 { background-color: rgba(240 244 248 / 0.8); }
-html.light .bg-gray-900\/50 { background-color: #f0f4f8; }
-html.light .bg-gray-900\/60 { background-color: #f0f4f8; }
-html.light .bg-gray-800\/30 { background-color: rgba(240 244 248 / 0.9); }
-html.light .bg-gray-800\/40 { background-color: rgba(255 255 255 / 0.7); }
-html.light .bg-gray-800\/50 { background-color: rgba(255 255 255 / 0.8); }
+html.light .bg-gray-950\/30 { background-color: rgba(255 255 255 / 0.72); }
+html.light .bg-gray-950\/40 { background-color: rgba(255 255 255 / 0.82); }
+html.light .bg-gray-950\/50 { background-color: rgba(255 255 255 / 0.9); }
+html.light .bg-gray-950\/60 { background-color: rgba(255 255 255 / 0.94); }
+html.light .bg-gray-900\/20 { background-color: rgba(255 255 255 / 0.58); }
+html.light .bg-gray-900\/30 { background-color: rgba(255 255 255 / 0.68); }
+html.light .bg-gray-900\/40 { background-color: rgba(255 255 255 / 0.78); }
+html.light .bg-gray-900\/50 { background-color: rgba(255 255 255 / 0.86); }
+html.light .bg-gray-900\/60 { background-color: rgba(255 255 255 / 0.92); }
+html.light .bg-gray-800\/30 { background-color: rgba(255 255 255 / 0.72); }
+html.light .bg-gray-800\/40 { background-color: rgba(255 255 255 / 0.82); }
+html.light .bg-gray-800\/50 { background-color: rgba(255 255 255 / 0.9); }
 html.light .bg-gray-800\/60 { background-color: #ffffff; }
 html.light .bg-gray-800\/80 { background-color: #ffffff; }
 html.light .bg-gray-700\/50 { background-color: rgba(226 232 240 / 0.7); }
 
 /* ── Text ────────────────────────────────────────────────────────────────────── */
+html.light .text-gray-50 { color: #020617; }
 html.light .text-gray-100 { color: #0f172a; }
 html.light .text-gray-200 { color: #1e293b; }
 html.light .text-gray-300 { color: #334155; }

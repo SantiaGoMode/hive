@@ -1,26 +1,14 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Plus, Trash2, Webhook, RefreshCw, Activity, Filter, Play, FileJson, Clock, Check, Copy, Zap } from 'lucide-react';
+import { Plus, Trash2, Webhook, RefreshCw, Activity, Filter, Play, FileJson, Clock, Zap } from 'lucide-react';
 import { api } from '../lib/api';
 import { Button } from '../components/ui/Button';
 import { Input, Textarea } from '../components/ui/Input';
 import { Modal } from '../components/ui/Modal';
 import { toast } from '../stores/toastStore';
+import { CopyButton } from '../components/ui/CopyButton';
 // Import RunModal from its own module — going through the PipelinesPage
 // re-export pulls the whole PipelinesPage graph into this chunk.
 import { RunModal } from '../features/pipelines/RunModal';
-
-function CopyBtn({ text }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <button
-      onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
-      className="p-1 text-gray-500 hover:text-gray-300 rounded transition-colors"
-      title="Copy"
-    >
-      {copied ? <Check size={12} className="text-green-400" /> : <Copy size={12} />}
-    </button>
-  );
-}
 
 function parseSpec(webhook) {
   if (!webhook || !webhook.context_spec) return [];
@@ -417,7 +405,7 @@ export default function WebhooksPage() {
                   <p className="text-xs text-gray-500 font-medium mb-1 uppercase tracking-wider">Endpoint URL</p>
                   <p className="text-sm font-mono text-gray-300 truncate select-all">{endpointUrl}</p>
                 </div>
-                <CopyBtn text={endpointUrl} />
+                <CopyButton text={endpointUrl} />
               </div>
             </div>
 

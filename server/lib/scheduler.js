@@ -30,6 +30,32 @@ function runSchedule(schedule) {
     return;
   }
   lifecycle.heartbeat('scheduler', { schedule_id: schedule.id, event: 'run' });
+
+  // Pipeline target: run the whole pipeline with the schedule's prompt as
+  // input and store its final output. Required lazily — the module graph
+  // scheduler → pipelineRunner → agentTools → registry would otherwise load
+  // this module before its exports exist.
+  if (schedule.pipeline_id) {
+    const { runPipelineById } = require('./pipelineRunner');
+    running.add(schedule.id);
+    runPipelineById(schedule.pipeline_id, schedule.prompt, { hivePath: getSettings().hivePath })
+      .then(({ final_output }) => {
+        db.prepare(
+          'UPDATE scheduled_runs SET last_run=unixepoch(), last_output=?, last_error=NULL, run_count=run_count+1 WHERE id=?',
+        ).run(final_output, schedule.id);
+      })
+      .catch((err) => {
+        lifecycle.recordError('scheduler', err);
+        db.prepare(
+          'UPDATE scheduled_runs SET last_run=unixepoch(), last_error=?, run_count=run_count+1 WHERE id=?',
+        ).run(err.message, schedule.id);
+      })
+      .finally(() => {
+        running.delete(schedule.id);
+      });
+    return;
+  }
+
   const agent = readAgent(schedule.agent_id);
   if (!agent) {
     db.prepare('UPDATE scheduled_runs SET last_run=unixepoch(), last_error=? WHERE id=?')
@@ -53,7 +79,10 @@ function runSchedule(schedule) {
   } catch (e) { logSwallowed('scheduler:parseTools', e, { scheduleId: schedule.id }); }
 
   running.add(schedule.id);
-  runAgentOnce(agent, [{ role: 'user', content: schedule.prompt }], ollamaUrl, 0, null, hivePath, toolsOverride)
+  // Context labels gateway spend as 'schedule'; runAgentOnce also honors the
+  // agent's own reasoning toggle on this path.
+  const runCtx = { source: 'schedule' };
+  runAgentOnce(agent, [{ role: 'user', content: schedule.prompt }], ollamaUrl, 0, null, hivePath, toolsOverride, undefined, null, runCtx)
     .then((output) => {
       db.prepare(
         'UPDATE scheduled_runs SET last_run=unixepoch(), last_output=?, last_error=NULL, run_count=run_count+1 WHERE id=?',

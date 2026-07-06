@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Launch the Hive dev server (server + client via `npm run dev`) DETACHED, so it
-# can be started through `scrt4 run` without tripping scrt4's ~10s CLI timeout.
-# The server keeps running after this script returns exit 0.
+# Launch the Hive dev server (server + client via `npm run dev`) DETACHED. The
+# server keeps running after this script returns exit 0 — which also lets it be
+# started through secret-injecting wrappers with short CLI timeouts (e.g.
+# `scrt4 run '<env prefixes> /path/to/run-dev.sh'`).
 #
-#   start:  scrt4 run '<env prefixes> /path/to/run-dev.sh'
+#   start:  ./run-dev.sh
 #   logs:   tail -f ~/.hive/hive-dev.log
 #   stop:   ./stop-dev.sh
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"

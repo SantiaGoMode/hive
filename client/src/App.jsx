@@ -1,10 +1,12 @@
 import { lazy, Suspense, useEffect } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { Layout } from './components/ui/Layout';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { Toaster } from './components/ui/Toast';
 import { AuthGate } from './components/ui/AuthGate';
 import { useThemeStore } from './stores/themeStore';
+import { api } from './lib/api';
+import { needsSetup } from './lib/setupWizard';
 
 const lazyNamed = (loader, exportName) => lazy(() => (
   loader().then(module => ({ default: module[exportName] }))
@@ -20,6 +22,29 @@ const ColonyPage = lazy(() => import('./pages/ColonyPage'));
 const StaffPage = lazy(() => import('./pages/StaffPage'));
 const SkillsPage = lazy(() => import('./pages/SkillsPage'));
 const WebhooksPage = lazy(() => import('./pages/WebhooksPage'));
+const SetupPage = lazyNamed(() => import('./pages/SetupPage'), 'SetupPage');
+
+// Fresh installs (wizard never completed, zero agents) get routed to /setup
+// once per app load. Errors are ignored — an unauthenticated fetch just means
+// the AuthGate is about to take over.
+function FirstRunRedirect() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  useEffect(() => {
+    if (location.pathname === '/setup') return;
+    let cancelled = false;
+    Promise.all([api.getAgents(), api.getSetupStatus()])
+      .then(([agents, setupStatus]) => {
+        if (!cancelled && needsSetup({ setupStatus, agents })) {
+          navigate('/setup', { replace: true });
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return null;
+}
 
 function RouteFallback() {
   return (
@@ -51,10 +76,12 @@ export default function App() {
               <Route path="/skills" element={<SkillsPage />} />
               <Route path="/webhooks" element={<WebhooksPage />} />
               <Route path="/settings" element={<SettingsPage />} />
+              <Route path="/setup" element={<SetupPage />} />
             </Routes>
           </Suspense>
         </ErrorBoundary>
       </Layout>
+      <FirstRunRedirect />
       <Toaster />
       <AuthGate />
     </BrowserRouter>

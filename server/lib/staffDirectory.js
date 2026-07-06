@@ -1,10 +1,15 @@
 const db = require('../db');
 const { v4 } = require('./uuid');
 const { listColonyRecipes, getColonyRecipe } = require('./colonyRecipes');
+const { readAgent, writeAgent } = require('./agentParser');
 const { logSwallowed } = require('./logSwallowed');
 
 function safeParse(value, fallback) {
   try { return value ? JSON.parse(value) : fallback; } catch { return fallback; }
+}
+
+function uniqueStrings(values) {
+  return [...new Set((Array.isArray(values) ? values : []).map(v => String(v || '').trim()).filter(Boolean))];
 }
 
 function norm(value) {
@@ -266,36 +271,9 @@ function updateProfile(id, data) {
   return getProfile(id);
 }
 
-// Render assigned skills into a prompt section. Skills defined in the catalog
-// contribute their full body (description, instructions, templates); names with
-// no catalog entry are listed as plain bullet points.
-function renderSkillsBlock(skillNames) {
-  if (!Array.isArray(skillNames) || !skillNames.length) return '';
-  const rows = db.prepare(
-    `SELECT * FROM skills WHERE name IN (${skillNames.map(() => '?').join(',')})`
-  ).all(...skillNames);
-  const byName = new Map(rows.map(r => [r.name, r]));
-
-  const parts = [];
-  for (const name of skillNames) {
-    const skill = byName.get(name);
-    if (!skill) { parts.push(`- ${name}`); continue; }
-    const section = [`### ${skill.name}`];
-    if (skill.description) section.push(skill.description.trim());
-    if (skill.instructions?.trim()) section.push(skill.instructions.trim());
-    let templates = [];
-    try { templates = JSON.parse(skill.templates || '[]'); } catch (e) { logSwallowed('staffDirectory:parseTemplates', e, { skill: skill.name }); }
-    for (const t of Array.isArray(templates) ? templates : []) {
-      if (!t?.content?.trim()) continue;
-      const title = t.title ? `**Template: ${t.title}**` : '**Template**';
-      section.push(t.type === 'code'
-        ? `${title}\n\`\`\`\n${t.content.trim()}\n\`\`\``
-        : `${title}\n${t.content.trim()}`);
-    }
-    parts.push(section.join('\n\n'));
-  }
-  return parts.join('\n\n');
-}
+// Prompt rendering for assigned skills lives in skillsBlock.js — shared with
+// per-agent skills (systemPrompt.js) so the two features can't drift.
+const { renderSkillsBlock } = require('./skillsBlock');
 
 function splitMissionSuffix(systemPrompt) {
   const marker = '\n\n---\n[Colony Mission]';
@@ -393,6 +371,95 @@ function applyStaffProfilesToWorkerConfigs(recipeId, workerConfigs, modelPlan = 
     if (extra.length) next.system_prompt += `\n\n---\n${extra.join('\n\n')}\n---`;
     return next;
   });
+}
+
+function staffPromptForAgent(profile, effective) {
+  const basePrompt = profile.system_prompt || effective?.recipe_prompt || '';
+  const extra = [];
+  if (profile.personality.trim()) extra.push(`[Personality]\n${profile.personality.trim()}`);
+  if (profile.skills.length) extra.push(`[Staff Skills]\n${renderSkillsBlock(profile.skills)}`);
+  if (profile.memory.trim()) extra.push(`[Staff Memory]\n${profile.memory.trim()}`);
+  return [
+    basePrompt,
+    extra.length ? `---\n${extra.join('\n\n')}\n---` : '',
+  ].filter(Boolean).join('\n\n');
+}
+
+function hasOwn(obj, key) {
+  return Object.prototype.hasOwnProperty.call(obj || {}, key);
+}
+
+function clampNumber(value, min, max, { int = false } = {}) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return undefined;
+  const clamped = Math.max(min, Math.min(max, n));
+  return int ? Math.round(clamped) : clamped;
+}
+
+function runtimeAgentOverrides(overrides = {}) {
+  const runtime = {};
+  if (hasOwn(overrides, 'temperature')) {
+    const temperature = clampNumber(overrides.temperature, 0, 2);
+    if (temperature !== undefined) runtime.temperature = temperature;
+  }
+  if (hasOwn(overrides, 'max_tokens')) {
+    const maxTokens = clampNumber(overrides.max_tokens, 1, 1_000_000, { int: true });
+    if (maxTokens !== undefined) runtime.max_tokens = maxTokens;
+  }
+  if (hasOwn(overrides, 'context_length')) {
+    const contextLength = clampNumber(overrides.context_length, 1, 10_000_000, { int: true });
+    if (contextLength !== undefined) runtime.context_length = contextLength;
+  }
+  if (hasOwn(overrides, 'reasoning')) runtime.reasoning = !!overrides.reasoning;
+  if (hasOwn(overrides, 'gateway_budget_usd')) {
+    if (overrides.gateway_budget_usd == null || overrides.gateway_budget_usd === '') {
+      runtime.gateway_budget_usd = null;
+    } else {
+      const budget = clampNumber(overrides.gateway_budget_usd, 0, Number.MAX_SAFE_INTEGER);
+      if (budget !== undefined) runtime.gateway_budget_usd = budget;
+    }
+  }
+  return runtime;
+}
+
+function agentConfigFromProfile(profile, overrides = {}, existing = null) {
+  const effective = profileEffectiveConfig(profile.id);
+  const effectiveTools = uniqueStrings((effective?.effective_tools || []).map(t => t.tool));
+  const tools = effectiveTools.length ? effectiveTools : uniqueStrings(profile.tools);
+  const model = String(overrides.model || '').trim()
+    || profile.model_preference
+    || existing?.model
+    || profile.chat_model
+    || '';
+  return {
+    name: profile.display_name || 'Staff Agent',
+    persona_name: profile.display_name || '',
+    persona_role: profile.role || '',
+    model,
+    description: `Staff profile: ${profile.display_name || profile.role || 'Staff'} (${profile.recipe_id}/${profile.role_key})`,
+    avatar_color: profile.avatar_color || '#3b82f6',
+    tools,
+    system_prompt: staffPromptForAgent(profile, effective),
+    ephemeral: false,
+    ...runtimeAgentOverrides(overrides),
+  };
+}
+
+function createAgentFromProfile(profileId, overrides = {}) {
+  const profile = getProfile(profileId);
+  if (!profile) return null;
+  const existing = profile.assigned_agent_id ? readAgent(profile.assigned_agent_id) : null;
+  const shouldUpdate = existing && !existing.ephemeral;
+  const config = agentConfigFromProfile(profile, overrides, shouldUpdate ? existing : null);
+  const agent = shouldUpdate
+    ? writeAgent(existing.id, { ...existing, ...config })
+    : writeAgent(null, config);
+  linkAssignedAgent(profile.recipe_id, profile.role_key, agent.id, profile.id);
+  return {
+    created: !shouldUpdate,
+    agent,
+    profile: getProfile(profile.id),
+  };
 }
 
 // What this profile ACTUALLY injects into a colony run: the current recipe
@@ -1049,6 +1116,8 @@ module.exports = {
   appendProfileMemory,
   selectProfileForRole,
   applyStaffProfilesToWorkerConfigs,
+  agentConfigFromProfile,
+  createAgentFromProfile,
   syncSuggestionsFromEvidence,
   listSuggestions,
   applySuggestion,

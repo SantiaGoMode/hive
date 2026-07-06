@@ -8,7 +8,9 @@ import { Modal } from '../../components/ui/Modal';
 import { toast } from '../../stores/toastStore';
 import { readSSEStream } from '../../lib/streamParser';
 import { groupStepEntries, getPrevOutputForRetry } from '../../components/pipelines/pipelineRunUtils';
-import { CopyBtn, StepCard, ParallelGroupTrace } from './runViews';
+import { StepCard, ParallelGroupTrace } from './runViews';
+import { CopyButton } from '../../components/ui/CopyButton';
+import { MarkdownContent } from '../../components/MarkdownContent';
 
 export function RunModal({ open, onClose, pipeline, initialInput = '' }) {
   const [input, setInput] = useState(initialInput);
@@ -67,7 +69,7 @@ export function RunModal({ open, onClose, pipeline, initialInput = '' }) {
 
       for await (const evt of readSSEStream(res, { signal: ctrl.signal })) {
         if (evt.type === 'step_done') {
-          setSteps(s => s.map(e => e.step === stepIndex ? { ...e, status: 'done', output: evt.output, duration_ms: evt.duration_ms } : e));
+          setSteps(s => s.map(e => e.step === stepIndex ? { ...e, status: 'done', output: evt.output, thinking: evt.thinking, duration_ms: evt.duration_ms } : e));
         } else if (evt.type === 'step_error') {
           setRunState('failed');
           setRunError(evt.error || 'Step failed');
@@ -119,7 +121,7 @@ export function RunModal({ open, onClose, pipeline, initialInput = '' }) {
           setRunState('running');
           setSteps(s => [...s, { status: 'pending', label: evt.label, agent_name: evt.agent_name, step: evt.step, group: evt.group }]);
         } else if (evt.type === 'step_done') {
-          setSteps(s => s.map(e => e.step === evt.step ? { ...e, status: 'done', output: evt.output, duration_ms: evt.duration_ms } : e));
+          setSteps(s => s.map(e => e.step === evt.step ? { ...e, status: 'done', output: evt.output, thinking: evt.thinking, duration_ms: evt.duration_ms } : e));
         } else if (evt.type === 'step_error') {
           setRunState('failed');
           setRunError(evt.error || 'Step failed');
@@ -230,10 +232,12 @@ export function RunModal({ open, onClose, pipeline, initialInput = '' }) {
                     <p className="text-xs text-blue-400 font-semibold">Final Output</p>
                     <div className="flex items-center gap-2">
                       {totalMs && <span className="text-xs text-gray-600 flex items-center gap-1"><Clock size={10} />{(totalMs/1000).toFixed(1)}s total</span>}
-                      <CopyBtn text={finalOutput} />
+                      <CopyButton text={finalOutput} />
                     </div>
                   </div>
-                  <p className="text-sm text-gray-200 whitespace-pre-wrap">{finalOutput}</p>
+                  <div className="text-sm text-gray-200">
+                    <MarkdownContent>{finalOutput}</MarkdownContent>
+                  </div>
                 </div>
               </>
             )}

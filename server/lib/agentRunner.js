@@ -13,6 +13,11 @@ const { buildSystemPrompt } = require('./systemPrompt');
 
 async function runAgentOnce(targetAgent, userMessages, ollamaUrl, depth, ws = null, hivePath = null, toolsOverride = null, maxRounds = MAX_SUB_ROUNDS, signal = null, colonyContext = null) {
   const agentName = targetAgent.name || targetAgent.id;
+  const modelOptions = {
+    ...(targetAgent.temperature != null ? { temperature: targetAgent.temperature } : {}),
+    ...(targetAgent.max_tokens != null ? { num_predict: targetAgent.max_tokens } : {}),
+    ...(targetAgent.context_length != null ? { num_ctx: targetAgent.context_length } : {}),
+  };
 
   // Build target's system prompt with identity + memory. The identity + user-prompt
   // + memory scaffold is shared with the WebSocket chat loop via buildSystemPrompt;
@@ -90,9 +95,12 @@ async function runAgentOnce(targetAgent, userMessages, ollamaUrl, depth, ws = nu
         messages,
         tools: targetTools,
         options: {
+          ...modelOptions,
+          // Colony's per-agent reasoning map wins; otherwise honor the agent's
+          // own "Show reasoning" toggle so pipelines/schedules respect it too.
           ...(colonyContext?.reasoningByAgentId?.has?.(targetAgent.id)
             ? { reasoning: colonyContext.reasoningByAgentId.get(targetAgent.id) }
-            : {}),
+            : (targetAgent.reasoning ? { reasoning: true } : {})),
           // Spend attribution (gateway logs this per request).
           metadata: {
             agent_id: targetAgent.id,
@@ -101,7 +109,8 @@ async function runAgentOnce(targetAgent, userMessages, ollamaUrl, depth, ws = nu
             ...(colonyContext?.roleByAgentId?.get?.(targetAgent.id)
               ? { role: colonyContext.roleByAgentId.get(targetAgent.id) }
               : {}),
-            source: colonyContext ? 'colony' : (depth > 0 ? 'sub_agent' : 'agent'),
+            source: colonyContext?.source
+              || (colonyContext ? 'colony' : (depth > 0 ? 'sub_agent' : 'agent')),
           },
           // Per-agent virtual key (budget enforcement) when minted; else shared key.
           gatewayKey: agentGatewayKey || undefined,
@@ -133,6 +142,13 @@ async function runAgentOnce(targetAgent, userMessages, ollamaUrl, depth, ws = nu
       }
     }
 
+    // Strip leaked harmony control tokens (e.g. gemma4-mlx emitting a raw
+    // "<|channel>thought" as its whole reasoning) from the accumulated text
+    // before it is persisted, streamed as a final thinking event, or returned.
+    acc.content = providers.sanitizeModelText(acc.content);
+    acc.thinking = providers.sanitizeModelText(acc.thinking);
+    if (providers.isBlankReasoning(acc.thinking)) acc.thinking = '';
+
     // If the model didn't emit proper tool_calls but wrote JSON tool descriptions
     // in its text (common with llama3.1, mistral, and other 7-8B models), parse
     // them out and execute them as if they were real tool calls.
@@ -149,6 +165,11 @@ async function runAgentOnce(targetAgent, userMessages, ollamaUrl, depth, ws = nu
 
     if (acc.thinking && ws && ws.readyState === ws.OPEN) {
       ws.send(JSON.stringify({ type: 'thinking', subAgent: agentName, content: acc.thinking }));
+    }
+    // Non-WebSocket callers (pipelines, schedules) capture reasoning via hook —
+    // without it the accumulated thinking was silently discarded.
+    if (acc.thinking && typeof colonyContext?.onThinking === 'function') {
+      try { colonyContext.onThinking(acc.thinking); } catch (e) { logSwallowed('agentRunner:onThinking', e); }
     }
 
     messages.push({ role: 'assistant', content: msg.content || '', ...(msg.tool_calls?.length ? { tool_calls: msg.tool_calls } : {}) });

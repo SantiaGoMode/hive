@@ -17,11 +17,13 @@ export function validatePipelineDraft({ name, steps, agents, availableModelIds =
     const errors = {};
     const agent = step.agent_id ? agentById.get(String(step.agent_id)) : null;
 
+    // The step's optional model override takes precedence over the agent's own.
+    const effectiveModel = step.model || agent?.model;
     if (!step.agent_id) errors.agent = 'Choose an agent for this step.';
     else if (!agent) errors.agent = 'This saved agent is no longer available.';
-    else if (!agent.model) errors.model = 'Selected agent has no model assigned.';
-    else if (availableModelIds && availableModelIds.size > 0 && !availableModelIds.has(agent.model)) {
-      errors.model = `Model "${agent.model}" is not currently available.`;
+    else if (!effectiveModel) errors.model = 'Selected agent has no model assigned.';
+    else if (availableModelIds && availableModelIds.size > 0 && !availableModelIds.has(effectiveModel)) {
+      errors.model = `Model "${effectiveModel}" is not currently available.`;
     }
 
     if (!step.prompt?.trim()) errors.prompt = 'Add a prompt template.';

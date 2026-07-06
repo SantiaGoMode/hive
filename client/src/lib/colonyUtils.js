@@ -15,7 +15,7 @@ export function sseToEntries(event, agentNameMap, now = Date.now()) {
     return entries;
   }
   if (event.type === 'orchestrator_message') {
-    entries.push({ type: 'message', agent: 'Orchestrator', content: event.content, ts: now });
+    entries.push({ type: 'message', agent: event.agent || 'Orchestrator', content: event.content, ts: now });
     return entries;
   }
   if (event.type === 'handoff' && event.handoff) {
@@ -103,6 +103,8 @@ export function dbLogToEntries(dbLog, agentColorMap) {
     if (e.kind === 'sandbox_cleanup') return { type: 'system', message: e.message, ts: e.ts };
     if (e.kind === 'done') return { type: 'done', status: e.status, ts: e.ts };
     if (e.kind === 'error') return { type: 'error', content: e.message, ts: e.ts };
+    // Blockers are surfaced in the amber panel (derived separately), not the log stream.
+    if (e.kind === 'blocker') return null;
     return null;
   }).filter(Boolean);
 }

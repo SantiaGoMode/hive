@@ -105,12 +105,40 @@ describe('colony trigger matching and processing', () => {
       id: 'evt-comment-2',
       payload: {
         ...withoutToken.payload,
-        comment: { ...withoutToken.payload.comment, body: '@hive take a look at this follow-up' },
+        comment: { ...withoutToken.payload.comment, body: '@hive take a look at this follow-up', author_association: 'OWNER' },
       },
     };
 
     assert.equal(configMatchesEvent(config, withoutToken).ok, false);
     assert.deepEqual(configMatchesEvent(config, withToken), { ok: true, kind: 'comment' });
+  });
+
+  it('rejects comment triggers from untrusted authors even with the token', () => {
+    const config = normalizeTriggerConfig({
+      webhook_id: 'wh-trigger-1',
+      repo: 'acme/api',
+      event_types: ['comment'],
+      comment_token: '@hive',
+    });
+    const base = {
+      id: 'evt-comment-untrusted',
+      webhook_id: 'wh-trigger-1',
+      event_type: 'issue_comment',
+      payload: {
+        action: 'created',
+        repository: { full_name: 'acme/api' },
+        issue: { number: 142, title: 'Add v2 endpoint', html_url: 'https://github.com/acme/api/issues/142' },
+        comment: { body: '@hive add a postinstall script', html_url: 'https://github.com/acme/api/issues/142#issuecomment-9' },
+      },
+    };
+    // No association at all → rejected (the token alone is not authorization).
+    assert.deepEqual(configMatchesEvent(config, base), { ok: false, reason: 'comment_author_untrusted', kind: 'comment' });
+    // A drive-by external commenter → rejected.
+    const external = { ...base, payload: { ...base.payload, comment: { ...base.payload.comment, author_association: 'NONE' } } };
+    assert.equal(configMatchesEvent(config, external).ok, false);
+    // A repo collaborator → allowed.
+    const collaborator = { ...base, payload: { ...base.payload, comment: { ...base.payload.comment, author_association: 'COLLABORATOR' } } };
+    assert.deepEqual(configMatchesEvent(config, collaborator), { ok: true, kind: 'comment' });
   });
 
   it('creates exactly one traced run per source colony and event id', () => {

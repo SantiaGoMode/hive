@@ -36,6 +36,13 @@ module.exports = {
       const secs = Math.min(600, Math.max(5, Number(timeout_seconds) || 60));
       const { stdout, stderr, exitCode } = await sandbox.exec(callerAgentId, command, secs * 1000);
       const result = { stdout: stdout.slice(0, 8000), stderr: stderr.slice(0, 2000), exitCode };
+      // npm peer-dependency conflict (ERESOLVE) is a recoverable, non-network
+      // failure — a real run stalled here because the model treated it as a
+      // hard blocker. Hand back the sanctioned escape hatch at the failure site.
+      if (exitCode !== 0 && /ERESOLVE|unable to resolve dependency tree/i.test(stderr + stdout)
+          && /npm (install|i|ci)\b/.test(command) && !/--legacy-peer-deps|--force/.test(command)) {
+        result.resolve_hint = 'ERESOLVE is a peer-dependency conflict, NOT a network problem. Re-run once as "npm install --legacy-peer-deps" (or add "--force" as a last resort). This is allowed — only "npm audit fix --force" is blocked. Do not report this as an access/network blocker.';
+      }
       if (exitCode === 124) {
         // Turn a bare timeout into a diagnosis the model can act on. The most
         // common causes: a long-running server (never exits — use start_server),

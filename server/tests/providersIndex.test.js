@@ -301,3 +301,28 @@ describe('streamChat abort race', () => {
     await assert.rejects(() => next, (e) => e.name === 'AbortError');
   });
 });
+
+describe('sanitizeModelText / isBlankReasoning (harmony control-token leak)', () => {
+  const { sanitizeModelText, isBlankReasoning } = providers;
+
+  it('drops a malformed "<|channel>thought" marker to empty', () => {
+    assert.equal(sanitizeModelText('<|channel>thought').trim(), '');
+    assert.equal(isBlankReasoning('<|channel>thought'), true);
+  });
+
+  it('strips a well-formed channel preamble but keeps the reasoning text', () => {
+    const out = sanitizeModelText('<|channel|>analysis<|message|>The user wants X.<|end|>');
+    assert.equal(out.trim(), 'The user wants X.');
+    assert.equal(isBlankReasoning('<|channel|>analysis<|message|>The user wants X.'), false);
+  });
+
+  it('treats a bare channel name as blank reasoning', () => {
+    assert.equal(isBlankReasoning('analysis'), true);
+    assert.equal(isBlankReasoning('  final '), true);
+  });
+
+  it('leaves ordinary text untouched', () => {
+    assert.equal(sanitizeModelText('Delegating to the Business Analyst first.'), 'Delegating to the Business Analyst first.');
+    assert.equal(isBlankReasoning('Delegating to the Business Analyst first.'), false);
+  });
+});

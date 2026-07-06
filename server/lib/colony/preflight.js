@@ -51,7 +51,9 @@ async function preflightColony(model, ollamaUrl) {
   // 1. Ollama reachable?
   let tagsRes;
   try {
-    tagsRes = await fetch(`${normalizedOllamaUrl}/api/tags`);
+    // Bounded — a hung Ollama socket must not pin the run (and a triggered-run
+    // semaphore slot) waiting on /api/tags forever.
+    tagsRes = await fetch(`${normalizedOllamaUrl}/api/tags`, { signal: AbortSignal.timeout(10000) });
   } catch (e) {
     const code = e.cause?.code;
     if (code === 'ECONNREFUSED') {
@@ -185,7 +187,10 @@ async function runModelPreflightAndCheckout(ctx) {
       const msg = `Failed to checkout git branch "${colonyBranch}": ${gitErr.message}\n\nTo fix: open a terminal, navigate to ${row.repo_path}, run "git checkout -b ${colonyBranch}", then click "Retry" in the colony panel.`;
       addEntry({ kind: 'preflight', message: `⚠️ ${msg}` });
       protocol.writeBlackboard(colonyId, 'system', 'blocker', msg, { action_required: 'fix_git_branch', branch: colonyBranch, repo_path: row.repo_path });
-      onEvent({ type: 'blocker', blocker: { message: msg, action: 'fix_git_branch', branch: colonyBranch } });
+      const blocker = { message: msg, action: 'fix_git_branch', branch: colonyBranch };
+      // Persist the structured blocker too, so it reappears in the panel on refresh/replay.
+      addEntry({ kind: 'blocker', blocker });
+      onEvent({ type: 'blocker', blocker });
     }
   }
 

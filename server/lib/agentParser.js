@@ -32,6 +32,7 @@ function rowToAgent(row) {
     max_tokens:     row.max_tokens ?? 4096,
     context_length: row.context_length ?? 8192,
     tools:          JSON.parse(row.tools || '[]'),
+    skills:         JSON.parse(row.skills || '[]'),
     system_prompt:  row.system_prompt || '',
     workspace:      row.workspace || agentWorkspace(row.id),
     ephemeral:      !!row.ephemeral,
@@ -62,8 +63,8 @@ function writeAgent(id, data) {
     fs.mkdirSync(path.join(workspace, 'sessions'), { recursive: true });
 
     db.prepare(`
-      INSERT INTO agents (id, name, persona_name, persona_role, model, description, avatar_color, temperature, max_tokens, context_length, tools, system_prompt, workspace, ephemeral, gateway_budget_usd, reasoning)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO agents (id, name, persona_name, persona_role, model, description, avatar_color, temperature, max_tokens, context_length, tools, skills, system_prompt, workspace, ephemeral, gateway_budget_usd, reasoning)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       newId_,
       data.name || 'Agent',
@@ -76,6 +77,7 @@ function writeAgent(id, data) {
       data.max_tokens ?? 4096,
       data.context_length ?? 8192,
       JSON.stringify(data.tools || []),
+      JSON.stringify(data.skills || []),
       data.system_prompt || '',
       workspace,
       data.ephemeral ? 1 : 0,
@@ -101,7 +103,7 @@ function writeAgent(id, data) {
     db.prepare(`
       UPDATE agents
       SET name=?, persona_name=?, persona_role=?, model=?, description=?, avatar_color=?,
-          temperature=?, max_tokens=?, context_length=?, tools=?, system_prompt=?,
+          temperature=?, max_tokens=?, context_length=?, tools=?, skills=?, system_prompt=?,
           gateway_budget_usd=?, gateway_key=?, reasoning=?, updated_at=unixepoch()
       WHERE id=?
     `).run(
@@ -115,6 +117,7 @@ function writeAgent(id, data) {
       data.max_tokens     ?? existing.max_tokens,
       data.context_length ?? existing.context_length,
       JSON.stringify(data.tools ?? existing.tools),
+      JSON.stringify(data.skills ?? existing.skills),
       data.system_prompt  ?? existing.system_prompt,
       newBudget,
       nextKey,

@@ -20,7 +20,7 @@
 // validation, and SSE behavior are preserved. Logic was moved, not rewritten.
 const express = require('express');
 const router = express.Router();
-const { deleteColony } = require('../../lib/colonyRunner');
+const { deleteColony, stopColonyRun, isColonyRunning } = require('../../lib/colonyRunner');
 const { activeRuns } = require('./shared');
 
 require('./meta')(router);
@@ -30,11 +30,23 @@ require('./lifecycle')(router);
 require('./protocol')(router);
 
 // DELETE /api/colony/:id — declared last, as in the original router.
-router.delete('/:id', (req, res) => {
-  const ac = activeRuns.get(req.params.id);
-  if (ac) { ac.abort(); activeRuns.delete(req.params.id); }
+router.delete('/:id', async (req, res) => {
+  const id = req.params.id;
+  // activeRuns only tracks POST-launched runs; bootstrap-accept and webhook
+  // triggers enter the runner registry instead. stopColonyRun reaches that
+  // registry, so runs from EVERY launch path are aborted — not just POST ones.
+  const ac = activeRuns.get(id);
+  if (ac) { ac.abort(); activeRuns.delete(id); }
+  stopColonyRun(id);
+  // Wait for the run's own teardown (sandbox-container cleanup reads agent_ids
+  // from the DB row) before deleting that row — deleting it first strands the
+  // containers. Bounded so a wedged run can't block the delete forever.
+  const deadline = Date.now() + 5000;
+  while (isColonyRunning(id) && Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 100));
+  }
   try {
-    deleteColony(req.params.id);
+    deleteColony(id);
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });

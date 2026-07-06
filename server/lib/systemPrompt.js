@@ -19,7 +19,17 @@
 // blackboard and tool-catalogue guidance stay in websocket.js) is deliberately left
 // to the caller so both sites keep producing exactly the prompt they produce today.
 
+const { renderSkillsBlock } = require('./skillsBlock');
+
 const DEFAULT_USER_PROMPT = 'Be helpful, direct, and concise.';
+
+// Per-agent skills from the catalog (agents.skills), rendered for every
+// surface that goes through this scaffold: chat, pipelines, schedules,
+// sub-agents. Staff-profile skills are injected separately by staffDirectory.
+function skillsSection(agent) {
+  const block = renderSkillsBlock(agent?.skills);
+  return block ? `\n\n---\n[Skills]\n${block}\n---` : '';
+}
 
 // Build the identity + memory system-prompt scaffold for `agent`.
 //   agent    — parsed agent object ({ name, id, system_prompt, workspace, ... }).
@@ -51,7 +61,7 @@ function buildSystemPrompt(agent, { mode = 'chat', agentId = null, memory = '' }
       ? `\n\n---\n[Your memory from previous sessions]\n${memory}\n---`
       : '';
 
-    return identityAnchor + (userPrompt || DEFAULT_USER_PROMPT) + memoryBlock;
+    return identityAnchor + (userPrompt || DEFAULT_USER_PROMPT) + skillsSection(agent) + memoryBlock;
   }
 
   // mode === 'agent'
@@ -64,7 +74,7 @@ function buildSystemPrompt(agent, { mode = 'chat', agentId = null, memory = '' }
     ? `\n\n---\n[Memory from previous sessions]\n${memory}\n---`
     : '';
 
-  return identityAnchor + (userPrompt || DEFAULT_USER_PROMPT) + memoryBlock;
+  return identityAnchor + (userPrompt || DEFAULT_USER_PROMPT) + skillsSection(agent) + memoryBlock;
 }
 
 module.exports = { buildSystemPrompt, DEFAULT_USER_PROMPT };

@@ -9,10 +9,42 @@ const { runMigrations } = require('./lib/migrations');
 // real ~/.hive/hive.db. Without this, a crashed test run could strand state
 // (e.g. a test ollama_url port) in the production DB.
 const HIVE_DIR = process.env.HIVE_HOME || path.join(os.homedir(), '.hive');
-if (!fs.existsSync(HIVE_DIR)) fs.mkdirSync(HIVE_DIR, { recursive: true });
 
 const DB_PATH = process.env.HIVE_DB_PATH || path.join(HIVE_DIR, 'hive.db');
+
+// Hard guard: a test process must NEVER open the real production DB. The
+// canonical runner ("npm test") preloads server/tests/setup.js via --import,
+// which repoints HIVE_DB_PATH at a temp file. But running a single file with a
+// bare `node --test <file>` skips that preload and silently opens ~/.hive/hive.db
+// — that is how a fake-Ollama test port once leaked into real settings and broke
+// live runs. Detect the test context (Node's runner sets NODE_TEST_CONTEXT;
+// Vitest sets VITEST) and fail loudly rather than corrupt user state.
+const IS_TEST = !!process.env.NODE_TEST_CONTEXT || !!process.env.VITEST || process.env.NODE_ENV === 'test';
+const PROD_DB_PATH = path.join(os.homedir(), '.hive', 'hive.db');
+if (IS_TEST && path.resolve(DB_PATH) === path.resolve(PROD_DB_PATH)) {
+  throw new Error(
+    `Refusing to open the production Hive DB (${PROD_DB_PATH}) from a test process. ` +
+    `Run the suite with "npm test", or add "--import ./server/tests/setup.js" to your ` +
+    `node --test command so HIVE_DB_PATH points at a throwaway file.`,
+  );
+}
+
+if (!fs.existsSync(HIVE_DIR)) fs.mkdirSync(HIVE_DIR, { recursive: true, mode: 0o700 });
+
 const db = new Database(DB_PATH);
+
+// Raw API keys may live in app_settings, so restrict the data dir and DB to
+// the owning user (same convention as gh/aws CLI config). chmod also fixes
+// perms on installs created before this guard; it is a no-op on Windows.
+try {
+  fs.chmodSync(HIVE_DIR, 0o700);
+  fs.chmodSync(DB_PATH, 0o600);
+  for (const suffix of ['-wal', '-shm']) {
+    if (fs.existsSync(DB_PATH + suffix)) fs.chmodSync(DB_PATH + suffix, 0o600);
+  }
+} catch (e) {
+  logSwallowed('db:permissions', e);
+}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS agents (

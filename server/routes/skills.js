@@ -100,27 +100,39 @@ router.delete('/:id', (req, res) => {
 // Built-in entries include the individual functions each group exposes, in the
 // same shape MCP servers report (tool_names + per-function detail).
 
-const BUILT_IN_TOOLS = [
-  { value: 'sandbox', label: 'Sandbox', description: 'File workspace, run Python/Bash, write files' },
-  { value: 'web_search', label: 'Web Search', description: 'Search the web and fetch pages' },
-  { value: 'memory', label: 'Memory', description: 'Persist notes and recall across sessions' },
-  { value: 'protocol', label: 'Protocol', description: 'Colony blackboard, handoffs, and coordination' },
-  { value: 'colony_tools', label: 'Colony Tools', description: 'Colony management tools (operator-level)' },
-  { value: 'agent_tools', label: 'Agent Tools', description: 'Delegate to and ask other agents' },
-];
+// Labels/descriptions for the registry groups. The group list itself comes
+// from builtInToolCatalog() so new tool modules can never silently drift out
+// of this endpoint again (that's how the `github` group went missing).
+const GROUP_META = {
+  sandbox: { label: 'Sandbox', description: 'File workspace, run Python/Bash, write files' },
+  web_search: { label: 'Web Search', description: 'Built-in Ollama web search/fetch; requires ollama signin' },
+  memory: { label: 'Memory', description: 'Persist notes and recall across sessions' },
+  protocol: { label: 'Protocol', description: 'Colony blackboard, handoffs, and coordination' },
+  colony_tools: { label: 'Colony Tools', description: 'Colony management tools (operator-level)' },
+  agent_tools: { label: 'Agent Tools', description: 'Delegate to and ask other agents' },
+  github: { label: 'GitHub', description: 'Issues, PRs, comments, and repo reads via the GitHub API' },
+};
+
+// Worker-internal groups that only make sense when the runtime injects them.
+const INTERNAL_GROUPS = new Set(['delegation', 'protocol_worker', 'sandbox_files']);
 
 router.get('/tool-options', (req, res) => {
   const catalog = builtInToolCatalog();
-  const builtin = BUILT_IN_TOOLS.map(t => {
-    const functions = catalog[t.value] || [];
-    return {
-      ...t,
-      kind: 'builtin',
-      connected: true,
-      tool_names: functions.map(f => f.name),
-      functions,
-    };
-  });
+  const builtin = Object.keys(catalog)
+    .filter(group => !INTERNAL_GROUPS.has(group))
+    .sort((a, b) => (GROUP_META[a] ? 0 : 1) - (GROUP_META[b] ? 0 : 1) || a.localeCompare(b))
+    .map(group => {
+      const functions = catalog[group];
+      const meta = GROUP_META[group] || { label: group, description: '' };
+      return {
+        value: group,
+        ...meta,
+        kind: 'builtin',
+        connected: true,
+        tool_names: functions.map(f => f.name),
+        functions,
+      };
+    });
   const mcp = mcpManager.getStatus().map(s => ({
     value: `mcp:${s.id}`,
     label: s.name,

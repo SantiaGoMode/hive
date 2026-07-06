@@ -1,4 +1,4 @@
-import { Input, Select } from './Input';
+import { Select } from './Input';
 import {
   orderedModelGroups, modelGroupHeading, modelOptionLabel, modelBadge,
 } from '../../lib/modelLabels';
@@ -14,8 +14,7 @@ import {
 //   label        select label (default "Model")
 //   placeholder  text for the empty "" option (default "— Select a model —"; pass null to omit)
 //   showBadge    show the parsed badge for the current value beneath the select
-//   allowCustom  show an adjacent free-text input for a custom id
-//   hint         optional node rendered between the select/badge and the custom input
+//   hint         optional node rendered below the select/badge
 // Any extra props (disabled, className, ...) pass through to the underlying <Select>.
 export function ModelSelect({
   value,
@@ -24,9 +23,6 @@ export function ModelSelect({
   label = 'Model',
   placeholder = '— Select a model —',
   showBadge = false,
-  allowCustom = false,
-  customLabel = 'Custom model id (optional)',
-  customPlaceholder = 'e.g. anthropic/claude-sonnet-4-6 or llama3.1:8b',
   hint = null,
   ...selectProps
 }) {
@@ -57,15 +53,6 @@ export function ModelSelect({
       )}
 
       {hint}
-
-      {allowCustom && (
-        <Input
-          label={customLabel}
-          value={value}
-          onChange={e => onChange(e.target.value)}
-          placeholder={customPlaceholder}
-        />
-      )}
     </div>
   );
 }

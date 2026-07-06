@@ -6,26 +6,28 @@ import {
   Link2, GitBranch, ExternalLink, ArrowLeft, X, BarChart3, Package,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { api } from '../../lib/api';
 import { Button } from '../../components/ui/Button';
 import { formatDate } from '../../lib/utils';
 import { mergeToolEntries } from '../../lib/colonyUtils';
+
+// Links in deliverables, artifacts, and parsed goal text are LLM-controlled;
+// only render them as real anchors when they're http(s). A prompt-injected
+// "javascript:" URL would otherwise execute in the app origin on click.
+const isSafeUrl = (u) => /^https?:\/\//i.test(String(u || ''));
 
 // Markdown renderer for agent messages — models emit **bold**, lists, and code
 // fences which previously rendered as raw text. Elements are styled explicitly
 // (NOT via `prose` — the Tailwind typography plugin isn't installed, so prose
 // classes silently do nothing and lists lose their bullets).
 export function AgentMarkdown({ children }) {
-  // Linkify bare URLs — without remark-gfm, plain "https://…" text is NOT
-  // autolinked by ReactMarkdown. Wrap them as [url](url), skipping URLs that
-  // are already part of a markdown link (preceded by "](").
-  const text = String(children ?? '').replace(
-    /(^|[\s])((https?:\/\/)[^\s)\]>"']+)/g,
-    (m, pre, url) => `${pre}[${url}](${url})`,
-  );
+  // remark-gfm autolinks bare URLs, and renders tables/strikethrough — no need
+  // for the old hand-rolled linkify pass (which corrupted URLs inside code).
+  const text = String(children ?? '');
   return (
     <div className="max-w-none [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-      <ReactMarkdown components={{
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
         p: ({ children: kids }) => <p className="my-1.5 leading-relaxed">{kids}</p>,
         ul: ({ children: kids }) => <ul className="my-1.5 ml-1 pl-4 list-disc space-y-1 marker:text-gray-600">{kids}</ul>,
         ol: ({ children: kids }) => <ol className="my-1.5 ml-1 pl-4 list-decimal space-y-1 marker:text-gray-600">{kids}</ol>,
@@ -40,10 +42,15 @@ export function AgentMarkdown({ children }) {
         table: ({ children: kids }) => <table className="my-1.5 text-xs border-collapse">{kids}</table>,
         th: ({ children: kids }) => <th className="border border-gray-800 px-2 py-1 text-left font-medium">{kids}</th>,
         td: ({ children: kids }) => <td className="border border-gray-800 px-2 py-1">{kids}</td>,
-        code({ inline, children: kids }) {
-          return inline
-            ? <code className="bg-gray-900 px-1 py-0.5 rounded text-blue-300 font-mono text-xs">{kids}</code>
-            : <pre className="bg-gray-900 rounded-lg p-3 overflow-auto my-2"><code className="font-mono text-xs text-gray-300">{kids}</code></pre>;
+        // react-markdown v10 dropped the `inline` prop; detect block code by its
+        // language-* className or an embedded newline, and style the <pre> wrapper
+        // separately so blocks aren't rendered nested inside a default <pre>.
+        pre: ({ children: kids }) => <pre className="bg-gray-900 rounded-lg p-3 overflow-auto my-2">{kids}</pre>,
+        code({ className, children: kids }) {
+          const isBlock = /language-/.test(className || '') || String(kids).includes('\n');
+          return isBlock
+            ? <code className="font-mono text-xs text-gray-300">{kids}</code>
+            : <code className="bg-gray-900 px-1 py-0.5 rounded text-blue-300 font-mono text-xs">{kids}</code>;
         },
       }}>{text}</ReactMarkdown>
     </div>
@@ -605,7 +612,7 @@ function WorkItemHeader({ goal, acceptance = null }) {
         {chips.map((c, i) => (
           <span key={i} className="rounded border border-gray-800 bg-gray-950/40 px-1.5 py-0.5 text-xs text-gray-500">{c}</span>
         ))}
-        {fields.URL && (
+        {fields.URL && isSafeUrl(fields.URL) && (
           <a href={fields.URL} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs text-blue-300 hover:underline">
             <ExternalLink size={10} /> {fields.Number || 'open'}
           </a>
@@ -1445,7 +1452,9 @@ export function ColonyLiveView({ colony, log, agentColorMap, running, streamingB
                 <div className="flex flex-wrap items-center gap-1.5">
                   <ShieldCheck size={11} className="text-green-500/70" />
                   {colony.deliverable.links.map((l, i) => (
-                    <a key={i} href={l} target="_blank" rel="noreferrer" className="text-xs text-blue-300 hover:underline truncate max-w-xs">{l}</a>
+                    isSafeUrl(l)
+                      ? <a key={i} href={l} target="_blank" rel="noreferrer" className="text-xs text-blue-300 hover:underline truncate max-w-xs">{l}</a>
+                      : <span key={i} className="text-xs text-gray-400 truncate max-w-xs">{l}</span>
                   ))}
                 </div>
               )}
@@ -2032,9 +2041,13 @@ export function ArtifactsPanel({ artifacts, onOpenArtifact }) {
             {a.links?.length > 0 && (
               <div className="flex flex-wrap items-center gap-1.5">
                 {a.links.map((l, i) => (
-                  <a key={i} href={l} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs text-blue-300 hover:underline truncate max-w-xs">
-                    <ExternalLink size={10} className="flex-shrink-0" /> {l}
-                  </a>
+                  isSafeUrl(l)
+                    ? <a key={i} href={l} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs text-blue-300 hover:underline truncate max-w-xs">
+                        <ExternalLink size={10} className="flex-shrink-0" /> {l}
+                      </a>
+                    : <span key={i} className="flex items-center gap-1 text-xs text-gray-400 truncate max-w-xs">
+                        <ExternalLink size={10} className="flex-shrink-0" /> {l}
+                      </span>
                 ))}
               </div>
             )}

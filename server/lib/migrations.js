@@ -163,6 +163,16 @@ const MIGRATIONS = [
     name: 'agents.reasoning (per-agent chat thinking toggle)',
     up(db) { addColumn(db, 'agents', 'reasoning', 'INTEGER DEFAULT 0'); },
   },
+  {
+    version: 14,
+    name: 'agents.skills (per-agent skill assignments from the catalog)',
+    up(db) { addColumn(db, 'agents', 'skills', "TEXT DEFAULT '[]'"); },
+  },
+  {
+    version: 15,
+    name: 'scheduled_runs.pipeline_id (schedules can target a pipeline instead of an agent)',
+    up(db) { addColumn(db, 'scheduled_runs', 'pipeline_id', 'TEXT'); },
+  },
 ];
 
 const LATEST_VERSION = MIGRATIONS.reduce((max, m) => Math.max(max, m.version), 0);

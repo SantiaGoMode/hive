@@ -4,6 +4,7 @@ const db = require('../db');
 const staff = require('../lib/staffDirectory');
 const staffScheduler = require('../lib/staffScheduler');
 const { buildRecipeWorkerConfigs } = require('../lib/colonyRecipes');
+const { readAgent } = require('../lib/agentParser');
 
 beforeEach(() => {
   db.prepare('DELETE FROM staff_chat_messages').run();
@@ -114,6 +115,61 @@ describe('staff profile merge into colony workers', () => {
 
     const refreshed = staff.listProfiles().find(p => p.id === developer.id);
     assert.equal(refreshed.assigned_agent_id, 'agent-dev-old');
+  });
+
+  it('creates and syncs durable agents from staff profiles', () => {
+    const custom = staff.createProfile({
+      display_name: 'Jordan Vale',
+      role: 'Research Analyst',
+      recipe_id: 'custom',
+      system_prompt: 'Validate claims before summarizing.',
+      personality: 'Crisp and source-driven.',
+      skills: ['source review'],
+      tools: ['web_search'],
+      model_preference: 'anthropic/test-model',
+      avatar_color: '#123456',
+    });
+
+    const created = staff.createAgentFromProfile(custom.id, {
+      name: 'Wrong Name',
+      persona_role: 'Wrong Role',
+      avatar_color: '#ffffff',
+      tools: ['sandbox'],
+      system_prompt: 'Wrong prompt.',
+      model: 'openai/runtime-model',
+      temperature: 1.25,
+      max_tokens: 2048,
+      context_length: 32768,
+      reasoning: true,
+    });
+    assert.equal(created.created, true);
+    assert.equal(created.agent.name, 'Jordan Vale');
+    assert.equal(created.agent.persona_name, 'Jordan Vale');
+    assert.equal(created.agent.persona_role, 'Research Analyst');
+    assert.equal(created.agent.model, 'openai/runtime-model');
+    assert.equal(created.agent.avatar_color, '#123456');
+    assert.equal(created.agent.temperature, 1.25);
+    assert.equal(created.agent.max_tokens, 2048);
+    assert.equal(created.agent.context_length, 32768);
+    assert.equal(created.agent.reasoning, true);
+    assert.equal(created.agent.ephemeral, false);
+    assert.deepEqual(created.agent.tools, ['web_search']);
+    assert.match(created.agent.system_prompt, /Validate claims/);
+    assert.match(created.agent.system_prompt, /\[Personality\]/);
+    assert.match(created.agent.system_prompt, /\[Staff Skills\]/);
+    assert.equal(staff.getProfile(custom.id).assigned_agent_id, created.agent.id);
+
+    staff.updateProfile(custom.id, {
+      display_name: 'Jordan Sync',
+      system_prompt: 'Updated staff prompt.',
+      tools: ['memory'],
+    });
+    const synced = staff.createAgentFromProfile(custom.id);
+    assert.equal(synced.created, false);
+    assert.equal(synced.agent.id, created.agent.id);
+    assert.equal(synced.agent.name, 'Jordan Sync');
+    assert.deepEqual(synced.agent.tools, ['memory']);
+    assert.match(readAgent(created.agent.id).system_prompt, /Updated staff prompt/);
   });
 });
 

@@ -15,6 +15,7 @@ const TOOLS = {
   ...require('./sandboxTools'),
   ...require('./memoryTools'),
   ...require('./webTools'),
+  ...require('./githubTools'),
 };
 
 function getToolDefinitions(enabledGroups = []) {

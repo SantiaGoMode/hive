@@ -46,14 +46,31 @@ describe('Webhooks API', () => {
       .expect(201);
     
     assert.equal(res.body.name, 'Test Webhook');
-    assert.equal(res.body.secret, 'test-secret');
+    // Raw secrets are never echoed back — only a masked placeholder.
+    assert.equal(res.body.secret, '••••••••cret');
     webhookId = res.body.id;
   });
 
   it('lists webhooks', async () => {
     const res = await request(app).get('/api/webhooks').expect(200);
     assert.ok(Array.isArray(res.body));
-    assert.ok(res.body.find(w => w.id === webhookId));
+    const row = res.body.find(w => w.id === webhookId);
+    assert.ok(row);
+    assert.equal(row.secret, '••••••••cret');
+  });
+
+  it('keeps the stored secret when a masked value is written back', async () => {
+    await request(app)
+      .put(`/api/webhooks/${webhookId}`)
+      .send({ name: 'Renamed Webhook', secret: '••••••••cret' })
+      .expect(200);
+
+    // The real secret still validates incoming requests.
+    await request(app)
+      .post(`/api/webhooks/incoming/${webhookId}`)
+      .set('authorization', 'Bearer test-secret')
+      .send({ ping: 'masked-writeback' })
+      .expect(202);
   });
 
   it('rejects incoming webhook if secret is missing/invalid', async () => {
@@ -138,7 +155,7 @@ describe('Webhooks API', () => {
   it('fetches webhook events', async () => {
     const res = await request(app).get(`/api/webhooks/${webhookId}/events`).expect(200);
     assert.ok(Array.isArray(res.body));
-    assert.equal(res.body.length, 2); // The github one and the basic token one
+    assert.equal(res.body.length, 3); // github, basic token, and masked-writeback
     const ghEvent = res.body.find(e => e.event_type === 'issues');
     assert.ok(ghEvent, 'should find github event');
     assert.deepEqual(ghEvent.payload, { action: 'opened', issue: { number: 42 } });

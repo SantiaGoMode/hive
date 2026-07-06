@@ -29,13 +29,26 @@ module.exports = function registerRunReadRoutes(router) {
     if (!repoPath) return res.status(400).json({ error: 'This run has no repository path to resolve artifacts against.' });
 
     const path = require('path');
-    const root = path.resolve(repoPath);
+    // realpath the repo root so a symlinked repo path still compares correctly.
+    let root;
+    try { root = fs.realpathSync(path.resolve(repoPath)); } catch { root = path.resolve(repoPath); }
     const resolved = path.resolve(root, rel);
     if (resolved !== root && !resolved.startsWith(root + path.sep)) {
       return res.status(400).json({ error: 'Artifact path escapes the run repository.' });
     }
     let stat;
     try { stat = fs.statSync(resolved); } catch { stat = null; }
+
+    // Defeat symlink escapes: a colony worker can write the repo, so it could
+    // drop a symlink (docs/x -> ~/.ssh/id_rsa) that statSync happily follows.
+    // Resolve the real path and re-check containment before reading anything.
+    if (stat) {
+      let realResolved;
+      try { realResolved = fs.realpathSync(resolved); } catch { realResolved = resolved; }
+      if (realResolved !== root && !realResolved.startsWith(root + path.sep)) {
+        return res.status(400).json({ error: 'Artifact path escapes the run repository.' });
+      }
+    }
 
     // Not in the working tree — the run committed it to its own branch
     // (colony-<id>) which may not be checked out. Read it from git instead.

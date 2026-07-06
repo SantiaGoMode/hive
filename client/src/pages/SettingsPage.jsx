@@ -237,10 +237,13 @@ function ModelProvidersSection({ config, setConfig, gatewayStatus, gatewayLoadin
             />
           </div>
 
-          <div className="pt-3 border-t border-gray-800/60">
+          <div className="pt-3 border-t border-gray-800/60 flex items-center gap-4">
             <Button size="sm" variant="secondary" onClick={clearStoredSecrets} disabled={clearing} className="w-fit">
               {clearing ? 'Clearing...' : 'Clear stored secrets'}
             </Button>
+            <Link to="/setup" className="text-xs text-blue-400 hover:text-blue-300">
+              Run setup wizard again
+            </Link>
           </div>
         </div>
       </AdvancedDisclosure>

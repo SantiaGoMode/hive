@@ -13,7 +13,7 @@ import { useColonyPage } from './useColonyPage';
 function RunView(page) {
   const {
     teamId, navigate, loadingColony, loadedColony, displayColony, displayLog, displayColorMap,
-    isLive, streamingByAgent, livePlan, liveBlockers, livePrUrl,
+    isLive, streamingByAgent, livePlan, displayBlockers, displayPrUrl,
     handleStop, handleExport,
   } = page;
 
@@ -33,8 +33,8 @@ function RunView(page) {
             onStop={handleStop}
             onExport={handleExport}
             onBack={() => navigate(`/colony/${teamId}`)}
-            blockers={isLive ? liveBlockers : []}
-            prUrl={isLive ? livePrUrl : null}
+            blockers={displayBlockers}
+            prUrl={displayPrUrl}
           />
         ) : (
           <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
@@ -178,7 +178,7 @@ function TeamView(page) {
               </div>
 
               <div className="flex flex-col gap-1.5">
-                <span className="text-xs font-medium text-gray-400">Operator / base model</span>
+                <span className="text-xs font-medium text-gray-400">Colony lead / base model</span>
                 <select value={model} onChange={e => setModel(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500">
                   {Object.entries(groupedModels).map(([prov, list]) => {
                     // tools === false → the model can't drive colony agents; hide it here.
@@ -213,15 +213,21 @@ function TeamView(page) {
                           <span className="text-xs font-medium text-gray-400">Per-role model plan</span>
                           <button type="button" onClick={handleProposeModels} disabled={proposing} className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 disabled:opacity-50">
                             {proposing ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
-                            {modelPlan ? 'Re-propose plan' : 'Let operator propose'}
+                            {modelPlan ? 'Re-propose plan' : 'Generate model plan'}
                           </button>
                         </div>
                         {modelPlan && overview?.crew?.length > 0 && (
                           <div className="rounded-lg border border-gray-800 overflow-hidden">
-                            <div className="px-3 py-1.5 bg-gray-900/60 text-xs text-gray-500 border-b border-gray-800">Operator proposed, editable</div>
-                            {[{ role_key: 'operator', display_name: 'Operator' }, ...overview.crew].map(member => (
+                            <div className="px-3 py-1.5 bg-gray-900/60 text-xs text-gray-500 border-b border-gray-800">Model plan, editable</div>
+                            {[{ role_key: 'operator', display_name: 'Ari Morgan', role: 'Orchestrator' }, ...overview.crew].map(member => (
                               <div key={member.role_key} className="flex items-center gap-2 px-3 py-1.5 border-b border-gray-800/60 last:border-0">
-                                <span className="text-xs text-gray-400 w-32 flex-shrink-0 truncate">{member.display_name}</span>
+                                {/* Show role + name so the model choice can be made by responsibility, not just persona name. */}
+                                <span className="flex flex-col w-40 flex-shrink-0 min-w-0" title={`${member.role || member.role_key}${member.display_name ? ` — ${member.display_name}` : ''}`}>
+                                  <span className="text-xs text-gray-300 truncate">{member.role || member.role_key}</span>
+                                  {member.display_name && member.display_name !== (member.role || '') && (
+                                    <span className="text-[10px] text-gray-500 truncate">{member.display_name}</span>
+                                  )}
+                                </span>
                                 <select value={modelPlan[member.role_key] || ''} onChange={e => setModelPlan(p => ({ ...p, [member.role_key]: e.target.value }))} className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500">
                                   {models.map(m => <option key={m.id} value={m.id}>{m.name || m.id}</option>)}
                                 </select>

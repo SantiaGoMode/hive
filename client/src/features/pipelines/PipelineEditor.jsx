@@ -155,6 +155,7 @@ export function PipelineEditor({ open, onClose, pipeline, initialTemplate = null
                 step={step}
                 agents={agents}
                 mcpServers={mcpServers}
+                models={models}
                 onChange={v => updateStep(i, v)}
                 onRemove={() => removeStep(i)}
                 index={i}

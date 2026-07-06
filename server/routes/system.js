@@ -14,6 +14,8 @@ const staffScheduler = require('../lib/staffScheduler');
 const providers = require('../lib/providers');
 const gatewayHealth = require('../lib/gatewayHealth');
 const gatewaySpend = require('../lib/gatewaySpend');
+const setupStatus = require('../lib/setupStatus');
+const { invalidateSettingsCache } = require('../lib/config');
 
 // Read a value from a source, swallowing any failure so /metrics never 500s on
 // one bad source.
@@ -86,6 +88,7 @@ router.get('/metrics', async (req, res) => {
     hive_version: safe(() => require('../../package.json').version, null),
     memory: safe(() => getSystemMemory(), null),
     active_colony_runs: safe(() => colonyRunner.activeRunCount(), null),
+    active_pipeline_runs: safe(() => require('../lib/pipelineRunner').activeRunCount(), null),
     scheduled_tasks: safe(() => scheduler.scheduledCount(), null),
     staff_scheduler: safe(() => staffScheduler.status(), null),
     scheduler_lifecycle: safe(() => schedulerLifecycle.statuses(), null),
@@ -93,6 +96,20 @@ router.get('/metrics', async (req, res) => {
     gateway: { ...gatewayStatus, spend }, // sanitized: never expose gateway url/key
     recent_logs: safe(() => getRecentLogs(50), []),
   });
+});
+
+// GET /api/system/setup — aggregated dependency snapshot for the first-run
+// setup wizard: Ollama, Docker, CLI tools, provider keys, gateway.
+router.get('/setup', async (req, res) => {
+  res.json(await setupStatus.getSetupStatus());
+});
+
+// POST /api/system/setup/complete — mark the wizard finished (also used by
+// "Skip"); re-runnable from Settings by just visiting /setup again.
+router.post('/setup/complete', (req, res) => {
+  db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('setup_completed', 'true')").run();
+  invalidateSettingsCache();
+  res.json({ ok: true });
 });
 
 // POST /api/system/model/stop — unload a model from Ollama memory

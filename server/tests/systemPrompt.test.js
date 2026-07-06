@@ -94,3 +94,35 @@ describe('buildSystemPrompt — agent mode (colony/pipeline)', () => {
     assert.ok(out.endsWith('\n\n' + DEFAULT_USER_PROMPT), out);
   });
 });
+
+describe('buildSystemPrompt — per-agent skills injection', () => {
+  const db = require('../db');
+
+  it('injects a [Skills] section with catalog content in both modes, between prompt and memory', () => {
+    db.prepare(`INSERT OR REPLACE INTO skills (id, name, description, instructions, templates)
+                VALUES ('sk-test', 'Prompt Test Skill', 'Test the prompts.', 'Always test prompts.', '[]')`).run();
+    try {
+      const agent = { name: 'Nova', system_prompt: 'Ship it.', skills: ['Prompt Test Skill'] };
+      for (const mode of ['chat', 'agent']) {
+        const out = buildSystemPrompt(agent, { mode, memory: 'remember me' });
+        assert.ok(out.includes('[Skills]\n### Prompt Test Skill'), `${mode}: skills header missing`);
+        assert.ok(out.includes('Always test prompts.'), `${mode}: instructions missing`);
+        assert.ok(out.indexOf('Ship it.') < out.indexOf('[Skills]'), `${mode}: skills must follow the user prompt`);
+        assert.ok(out.indexOf('[Skills]') < out.indexOf('remember me'), `${mode}: skills must precede memory`);
+      }
+    } finally {
+      db.prepare("DELETE FROM skills WHERE id='sk-test'").run();
+    }
+  });
+
+  it('lists unknown skill names as plain bullets and stays silent with no skills', () => {
+    const out = buildSystemPrompt(
+      { name: 'Nova', system_prompt: 'Go.', skills: ['No Such Skill'] },
+      { mode: 'agent', memory: '' },
+    );
+    assert.ok(out.includes('[Skills]\n- No Such Skill'));
+
+    const none = buildSystemPrompt({ name: 'Nova', system_prompt: 'Go.' }, { mode: 'agent', memory: '' });
+    assert.ok(!none.includes('[Skills]'));
+  });
+});

@@ -8,8 +8,9 @@
 export const BUILTIN_TOOL_GROUPS = [
   { id: 'agent_tools', label: 'Agent Tools', desc: 'Create, run, and manage agents, pipelines, and schedules' },
   { id: 'memory',      label: 'Memory',      desc: 'Save and recall info across sessions' },
-  { id: 'web_search',  label: 'Web Search',  desc: 'Search the internet for current info' },
+  { id: 'web_search',  label: 'Web Search',  desc: 'Built-in Ollama web search/fetch; requires ollama signin' },
   { id: 'sandbox',     label: 'Sandbox',     desc: 'Run code and shell commands in an isolated Docker container' },
+  { id: 'github',      label: 'GitHub',      desc: 'Comment on/update issues, file issues, read security alerts on the linked repo' },
 ];
 
 // Toggle a tool id in/out of the selection (returns a new array; never mutates).

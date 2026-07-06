@@ -3,7 +3,8 @@ import { useState, useEffect } from 'react';
 import { CheckCircle, XCircle, Loader, ArrowDown, History, X, ChevronDown, ChevronUp, GitMerge, RotateCcw } from 'lucide-react';
 import { api } from '../../lib/api';
 import { groupStepEntries } from '../../components/pipelines/pipelineRunUtils';
-import { CopyBtn } from './runViews';
+import { CopyButton } from '../../components/ui/CopyButton';
+import { MarkdownContent } from '../../components/MarkdownContent';
 
 export function RunHistoryRow({ run }) {
   const [expanded, setExpanded] = useState(false);
@@ -56,8 +57,11 @@ export function RunHistoryRow({ run }) {
                       </div>
                       {entry.status === 'error'
                         ? <p className="text-xs text-red-400 whitespace-pre-wrap">{entry.error}</p>
-                        : <div className="max-h-48 overflow-y-auto bg-gray-900/60 rounded-md p-2 mt-1 border border-gray-700/50">
-                            <p className="text-xs text-gray-300 whitespace-pre-wrap leading-relaxed">{entry.output}</p>
+                        : <div className="max-h-48 overflow-y-auto bg-gray-900/60 rounded-md p-2 mt-1 border border-gray-700/50 text-xs">
+                            {entry.thinking && (
+                              <p className="text-[11px] text-purple-400/70 mb-1.5 whitespace-pre-wrap border-b border-gray-800 pb-1.5">{entry.thinking}</p>
+                            )}
+                            <MarkdownContent>{entry.output || ''}</MarkdownContent>
                           </div>}
                     </div>
                   ))}
@@ -69,10 +73,10 @@ export function RunHistoryRow({ run }) {
             <div className="p-3 rounded-lg border border-blue-700/30 bg-blue-500/5">
               <div className="flex items-center justify-between mb-1">
                 <p className="text-xs text-blue-400 font-semibold">Final Output</p>
-                <CopyBtn text={run.final_output} />
+                <CopyButton text={run.final_output} />
               </div>
-              <div className="max-h-64 overflow-y-auto">
-                <p className="text-xs text-gray-300 whitespace-pre-wrap leading-relaxed">{run.final_output}</p>
+              <div className="max-h-64 overflow-y-auto text-xs">
+                <MarkdownContent>{run.final_output}</MarkdownContent>
               </div>
             </div>
           )}

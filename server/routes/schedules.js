@@ -25,17 +25,20 @@ router.get('/:id', (req, res) => {
 
 // ── Create ────────────────────────────────────────────────────────────────────
 router.post('/', (req, res) => {
-  const { agent_id, label, cron_expr, prompt, enabled = true, tools = [] } = req.body;
-  if (!agent_id)   return res.status(400).json({ error: 'agent_id is required' });
+  const { agent_id, pipeline_id, label, cron_expr, prompt, enabled = true, tools = [] } = req.body;
+  if (!agent_id && !pipeline_id) return res.status(400).json({ error: 'agent_id or pipeline_id is required' });
   if (!label)      return res.status(400).json({ error: 'label is required' });
   if (!cron_expr)  return res.status(400).json({ error: 'cron_expr is required' });
   if (!prompt)     return res.status(400).json({ error: 'prompt is required' });
   if (!cron.validate(cron_expr)) return res.status(400).json({ error: 'Invalid cron expression' });
+  if (pipeline_id && !db.prepare('SELECT id FROM pipelines WHERE id = ?').get(pipeline_id)) {
+    return res.status(400).json({ error: 'Pipeline not found' });
+  }
 
   const id = newId();
   db.prepare(
-    'INSERT INTO scheduled_runs (id, agent_id, label, cron_expr, prompt, enabled, tools) VALUES (?, ?, ?, ?, ?, ?, ?)',
-  ).run(id, agent_id, label, cron_expr, prompt, enabled ? 1 : 0, JSON.stringify(tools));
+    'INSERT INTO scheduled_runs (id, agent_id, pipeline_id, label, cron_expr, prompt, enabled, tools) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+  ).run(id, pipeline_id ? '' : agent_id, pipeline_id || null, label, cron_expr, prompt, enabled ? 1 : 0, JSON.stringify(tools));
 
   const row = db.prepare('SELECT * FROM scheduled_runs WHERE id = ?').get(id);
   scheduler.register(row);
@@ -47,17 +50,37 @@ router.put('/:id', (req, res) => {
   const existing = db.prepare('SELECT * FROM scheduled_runs WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Schedule not found' });
 
-  const { agent_id, label, cron_expr, prompt, enabled, tools } = req.body;
+  const { agent_id, pipeline_id, label, cron_expr, prompt, enabled, tools } = req.body;
   if (cron_expr && !cron.validate(cron_expr)) {
     return res.status(400).json({ error: 'Invalid cron expression' });
+  }
+  if (pipeline_id && !db.prepare('SELECT id FROM pipelines WHERE id = ?').get(pipeline_id)) {
+    return res.status(400).json({ error: 'Pipeline not found' });
+  }
+
+  let nextAgentId = existing.agent_id || '';
+  let nextPipelineId = existing.pipeline_id || null;
+  if (pipeline_id !== undefined && pipeline_id) {
+    nextAgentId = '';
+    nextPipelineId = pipeline_id;
+  } else if (agent_id !== undefined && agent_id) {
+    nextAgentId = agent_id;
+    nextPipelineId = null;
+  } else {
+    if (agent_id !== undefined) nextAgentId = agent_id || '';
+    if (pipeline_id !== undefined) nextPipelineId = pipeline_id || null;
+  }
+  if (!nextAgentId && !nextPipelineId) {
+    return res.status(400).json({ error: 'agent_id or pipeline_id is required' });
   }
 
   db.prepare(`
     UPDATE scheduled_runs
-    SET agent_id=?, label=?, cron_expr=?, prompt=?, enabled=?, tools=?
+    SET agent_id=?, pipeline_id=?, label=?, cron_expr=?, prompt=?, enabled=?, tools=?
     WHERE id=?
   `).run(
-    agent_id  ?? existing.agent_id,
+    nextAgentId,
+    nextPipelineId,
     label     ?? existing.label,
     cron_expr ?? existing.cron_expr,
     prompt    ?? existing.prompt,

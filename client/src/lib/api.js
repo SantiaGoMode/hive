@@ -2,6 +2,9 @@ const BASE = '/api';
 const AUTH_STORAGE_KEY = 'hive.authToken';
 
 export function getHiveAuthToken() {
+  // Desktop shell injects the token via preload — no paste-a-token prompt.
+  const desktopToken = typeof window !== 'undefined' ? window.hiveDesktop?.authToken : '';
+  if (desktopToken) return desktopToken;
   const envToken = import.meta.env?.VITE_HIVE_AUTH_TOKEN || '';
   if (envToken) return envToken;
   try {
@@ -143,7 +146,7 @@ export const api = {
     req('POST', `/colony/${id}/handoffs/${handoffId}/approve`, { decision, note }),
   getRecipeFlow: (recipeId) => req('GET', `/colony/recipes/${recipeId}/flow`),
   // Colony launch returns an SSE stream — caller uses fetch directly
-  launchColony: (goal, model, recipeId, opts = {}) =>
+  launchColony: (goal, model, recipeId, opts = {}, signal) =>
     fetch(`${BASE}/colony`, {
       method: 'POST',
       headers: authHeaders({ 'Content-Type': 'application/json' }),
@@ -155,6 +158,7 @@ export const api = {
         trigger_config: opts.triggerConfig,
         github_writeback: opts.githubWriteback,
       }),
+      signal,
     }),
   updateColonyTriggers: (id, triggerConfig) => req('PUT', `/colony/${id}/triggers`, { trigger_config: triggerConfig }),
   postColonyBoardComment: (id, body) => req('POST', `/colony/${id}/board/comment`, body ? { body } : {}),
@@ -172,6 +176,7 @@ export const api = {
   createStaffProfile: (data) => req('POST', '/staff/profiles', data),
   updateStaffProfile: (id, data) => req('PUT', `/staff/profiles/${id}`, data),
   deleteStaffProfile: (id) => req('DELETE', `/staff/profiles/${id}`),
+  createAgentFromStaffProfile: (id, data = {}) => req('POST', `/staff/profiles/${id}/agent`, data),
   getStaffEffectiveConfig: (id) => req('GET', `/staff/profiles/${id}/effective`),
   resetStaffProfile: (id, fields) => req('POST', `/staff/profiles/${id}/reset`, fields ? { fields } : {}),
   syncStaffSuggestions: () => req('POST', '/staff/suggestions/sync'),
@@ -196,6 +201,10 @@ export const api = {
   startNgrok: () => req('POST', '/system/ngrok/start'),
   stopNgrok: () => req('POST', '/system/ngrok/stop'),
   getNgrokStatus: () => req('GET', '/system/ngrok/status'),
+
+  // First-run setup wizard
+  getSetupStatus: () => req('GET', '/system/setup'),
+  completeSetup: () => req('POST', '/system/setup/complete'),
 
   // Sandbox
   getSandboxStatus: (agentId) => req('GET', `/sandbox/${agentId}`),

@@ -38,6 +38,16 @@ router.put('/profiles/:id', (req, res) => {
   res.json(profile);
 });
 
+router.post('/profiles/:id/agent', (req, res) => {
+  try {
+    const result = staff.createAgentFromProfile(req.params.id, req.body || {});
+    if (!result) return res.status(404).json({ error: 'Staff profile not found' });
+    res.status(result.created ? 201 : 200).json(result);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
 // What this profile actually injects into a colony run (recipe baseline,
 // override status, effective tool union) — makes invisible drift visible.
 router.get('/profiles/:id/effective', (req, res) => {

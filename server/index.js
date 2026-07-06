@@ -8,6 +8,8 @@ process.on('uncaughtException', (err) => {
 });
 
 const http = require('http');
+const path = require('path');
+const fs = require('fs');
 const express = require('express');
 const cors = require('cors');
 const { createWebSocketServer } = require('./lib/websocket');
@@ -50,6 +52,12 @@ app.use(express.json({
     req.rawBody = buf;
   }
 }));
+// Unauthenticated liveness probe. The desktop shell polls this to know when
+// the server is ready; it exposes nothing beyond the app version.
+app.get('/healthz', (req, res) => {
+  res.json({ ok: true, version: require('../package.json').version });
+});
+
 app.use('/api', requireHiveAuth());
 app.use('/api', createMutatingRateLimiter());
 
@@ -68,6 +76,22 @@ app.use('/api/skills', require('./routes/skills'));
 app.use('/api/system', require('./routes/system'));
 app.use('/api/webhooks', require('./routes/webhooks'));
 
+// Serve the built client when it exists (production / desktop). In dev the
+// Vite server owns the UI and proxies /api here, so this stays inert.
+const CLIENT_DIST = path.join(__dirname, '..', 'client', 'dist');
+const SERVE_CLIENT = fs.existsSync(path.join(CLIENT_DIST, 'index.html'));
+if (SERVE_CLIENT) {
+  app.use(express.static(CLIENT_DIST));
+  // SPA fallback so react-router deep links survive a reload. Express 5
+  // rejects '*' route strings, hence plain middleware; unmatched /api and
+  // /ws paths fall through to the default 404 instead.
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+    if (req.path.startsWith('/api') || req.path.startsWith('/ws')) return next();
+    res.sendFile(path.join(CLIENT_DIST, 'index.html'));
+  });
+}
+
 createWebSocketServer(server);
 
 const PORT = config.port();
@@ -85,7 +109,12 @@ server.on('error', (err) => {
 });
 
 server.listen(PORT, async () => {
-  logger.info('server', 'listening', { port: PORT });
+  logger.info('server', 'listening', {
+    port: PORT,
+    ...(SERVE_CLIENT
+      ? { url: `http://localhost:${PORT}` }
+      : { hint: 'No client build found — run "npm run build" to serve the UI from this port, or use "npm run dev".' }),
+  });
   // Attempt to auto-start ngrok
   const rowEnabled = db.prepare("SELECT value FROM app_settings WHERE key='ngrok_enabled'").get();
   if (rowEnabled && rowEnabled.value === 'true') {

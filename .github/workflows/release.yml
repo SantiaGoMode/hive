@@ -1,0 +1,66 @@
+# Desktop release: push a tag `vX.Y.Z` (matching the root package.json version)
+# and each platform builds + uploads its installers to the GitHub Release.
+#
+# Signing (all optional — without these secrets the artifacts are unsigned):
+#   macOS:   CSC_LINK (base64 .p12) + CSC_KEY_PASSWORD sign the app. To also
+#            notarize, set mac.notarize=true in desktop/electron-builder.yml and
+#            add APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID.
+#            Unsigned mac builds require `xattr -dr com.apple.quarantine Hive.app`
+#            after download — document this on the release.
+#   Windows: unsigned → SmartScreen "More info → Run anyway".
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            client/package-lock.json
+            desktop/package-lock.json
+
+      - name: Verify tag matches package.json version
+        shell: bash
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $PKG_VERSION" >&2
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm ci --prefix client
+          npm ci --prefix desktop
+
+      - name: Build client
+        run: npm run build
+
+      - name: Build and publish desktop app
+        run: npm run dist:publish --prefix desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}

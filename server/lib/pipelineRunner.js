@@ -31,6 +31,28 @@ function renderStepPrompt(step, input, prev) {
     .replace(/\{prev\}/g, prev);
 }
 
+// Resolve a step's agent, applying the optional per-step model override —
+// e.g. pointing one step at gateway/hive-coding while the agent defaults to
+// a local model everywhere else.
+function stepAgent(step) {
+  const agent = readAgent(step.agent_id);
+  if (!agent) return null;
+  return step.model ? { ...agent, model: step.model } : agent;
+}
+
+// Keep the most recent runs per pipeline; unbounded history grew forever.
+const MAX_RUNS_PER_PIPELINE = 100;
+function pruneRuns(pipelineId) {
+  db.prepare(`
+    DELETE FROM pipeline_runs WHERE pipeline_id = ? AND id NOT IN (
+      SELECT id FROM pipeline_runs WHERE pipeline_id = ? ORDER BY ran_at DESC, id DESC LIMIT ${MAX_RUNS_PER_PIPELINE}
+    )`).run(pipelineId, pipelineId);
+}
+
+// Live-run gauge for /api/system/metrics.
+let activeRuns = 0;
+function activeRunCount() { return activeRuns; }
+
 function abortError() {
   const err = new Error('Pipeline run was stopped');
   err.name = 'AbortError';
@@ -61,6 +83,7 @@ async function runPipelineById(pipelineId, input, { emit = null, hivePath = null
   db.prepare(
     'INSERT INTO pipeline_runs (id, pipeline_id, pipeline_name, input, trace, status) VALUES (?, ?, ?, ?, ?, ?)',
   ).run(runId, row.id, row.name, cleanInput, '[]', 'running');
+  pruneRuns(row.id);
 
   const pipelineStart = Date.now();
   let prevOutput = cleanInput;
@@ -72,6 +95,7 @@ async function runPipelineById(pipelineId, input, { emit = null, hivePath = null
     else db.prepare('UPDATE pipeline_runs SET trace=? WHERE id=?').run(JSON.stringify(trace), runId);
   };
 
+  activeRuns++;
   try {
     throwIfAborted(signal);
 
@@ -82,7 +106,7 @@ async function runPipelineById(pipelineId, input, { emit = null, hivePath = null
 
       for (const idx of group.indices) {
         const step = steps[idx];
-        const agent = readAgent(step.agent_id);
+        const agent = stepAgent(step);
         const label = step.label || `Step ${idx + 1}`;
         if (!agent) {
           const entry = { step: idx, label, agent_name: step.agent_id, status: 'error', error: 'Agent not found', duration_ms: 0, group: g };
@@ -103,7 +127,7 @@ async function runPipelineById(pipelineId, input, { emit = null, hivePath = null
       if (!group.parallel) {
         const idx = group.indices[0];
         const step = steps[idx];
-        const agent = readAgent(step.agent_id);
+        const agent = stepAgent(step);
         const label = step.label || `Step ${idx + 1}`;
         const prompt = renderStepPrompt(step, cleanInput, groupPrev);
         const toolsOverride = Array.isArray(step.tools) && step.tools.length > 0 ? step.tools : null;
@@ -112,9 +136,11 @@ async function runPipelineById(pipelineId, input, { emit = null, hivePath = null
         const stepStart = Date.now();
         try {
           throwIfAborted(signal);
-          const output = await runAgentOnce(agent, [{ role: 'user', content: prompt }], ollamaUrl, 0, null, resolvedHivePath, toolsOverride, undefined, signal);
+          const thinkingParts = [];
+          const runCtx = { source: 'pipeline', onThinking: (t) => thinkingParts.push(t) };
+          const output = await runAgentOnce(agent, [{ role: 'user', content: prompt }], ollamaUrl, 0, null, resolvedHivePath, toolsOverride, undefined, signal, runCtx);
           throwIfAborted(signal);
-          const entry = { step: idx, label, agent_name: agent.name, status: 'done', output, duration_ms: Date.now() - stepStart, group: g };
+          const entry = { step: idx, label, agent_name: agent.name, status: 'done', output, ...(thinkingParts.length ? { thinking: thinkingParts.join('\n\n') } : {}), duration_ms: Date.now() - stepStart, group: g };
           trace.push(entry);
           updateTrace();
           emit?.({ type: 'step_done', ...entry });
@@ -138,23 +164,25 @@ async function runPipelineById(pipelineId, input, { emit = null, hivePath = null
       } else {
         for (const idx of group.indices) {
           const step = steps[idx];
-          const agent = readAgent(step.agent_id);
+          const agent = stepAgent(step);
           const label = step.label || `Step ${idx + 1}`;
           emit?.({ type: 'step_start', step: idx, label, agent_name: agent.name, group: g });
         }
 
         const results = await Promise.all(group.indices.map(async (idx) => {
           const step = steps[idx];
-          const agent = readAgent(step.agent_id);
+          const agent = stepAgent(step);
           const label = step.label || `Step ${idx + 1}`;
           const prompt = renderStepPrompt(step, cleanInput, groupPrev);
           const toolsOverride = Array.isArray(step.tools) && step.tools.length > 0 ? step.tools : null;
           const stepStart = Date.now();
           try {
             throwIfAborted(signal);
-            const output = await runAgentOnce(agent, [{ role: 'user', content: prompt }], ollamaUrl, 0, null, resolvedHivePath, toolsOverride, undefined, signal);
+            const thinkingParts = [];
+            const runCtx = { source: 'pipeline', onThinking: (t) => thinkingParts.push(t) };
+            const output = await runAgentOnce(agent, [{ role: 'user', content: prompt }], ollamaUrl, 0, null, resolvedHivePath, toolsOverride, undefined, signal, runCtx);
             throwIfAborted(signal);
-            const entry = { step: idx, label, agent_name: agent.name, status: 'done', output, duration_ms: Date.now() - stepStart, group: g };
+            const entry = { step: idx, label, agent_name: agent.name, status: 'done', output, ...(thinkingParts.length ? { thinking: thinkingParts.join('\n\n') } : {}), duration_ms: Date.now() - stepStart, group: g };
             emit?.({ type: 'step_done', ...entry });
             return entry;
           } catch (e) {
@@ -204,7 +232,9 @@ async function runPipelineById(pipelineId, input, { emit = null, hivePath = null
     ).run(JSON.stringify(trace), total_ms, 'stopped', runId);
     emit?.({ type: 'stopped', run_id: runId, total_ms });
     throw abortError();
+  } finally {
+    activeRuns--;
   }
 }
 
-module.exports = { abortError, groupSteps, isAbortError, runPipelineById, renderStepPrompt };
+module.exports = { abortError, groupSteps, isAbortError, runPipelineById, renderStepPrompt, activeRunCount };

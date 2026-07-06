@@ -11,7 +11,7 @@ const { normalizeTriggerConfig } = require('../../lib/colonyTriggers');
 const colonyTeams = require('../../lib/colonyTeams');
 const db = require('../../db');
 const { logSwallowed } = require('../../lib/logSwallowed');
-const { activeRuns, COLONY_MAX_DURATION_MS, sseHeaders, sseWrite, getColonyRepoPath } = require('./shared');
+const { activeRuns, sseHeaders, sseWrite, getColonyRepoPath } = require('./shared');
 
 module.exports = function registerLifecycleRoutes(router) {
   // POST /api/colony — create + immediately stream via SSE
@@ -60,14 +60,8 @@ module.exports = function registerLifecycleRoutes(router) {
     const ac = new AbortController();
     activeRuns.set(colonyId, ac);
 
-    // Wall-clock timeout — abort the run if it exceeds COLONY_MAX_DURATION_MS.
-    // Cleared in the finally block. We also emit a synthetic log line via the
-    // bus so the UI can show why the run stopped.
-    let timedOut = false;
-    const timeoutHandle = setTimeout(() => {
-      timedOut = true;
-      try { ac.abort(); } catch {} /* abort is best-effort */
-    }, COLONY_MAX_DURATION_MS);
+    // Wall-clock timeout is enforced inside runColony (covers every launch path),
+    // so the POST route no longer runs its own timer.
 
     // Subscribe this POST client to the per-colony bus. runColony publishes
     // every event to the bus as well as calling the legacy onEvent callback,
@@ -111,12 +105,8 @@ module.exports = function registerLifecycleRoutes(router) {
       try {
         db.prepare('UPDATE colonies SET status=?, updated_at=unixepoch() WHERE id=?').run(finalStatus, colonyId);
       } catch (e2) { logSwallowed('colonyRoutes:persistStatus', e2, { colonyId }); }
-      const message = timedOut
-        ? `Colony exceeded wall-clock limit of ${Math.round(COLONY_MAX_DURATION_MS / 60000)} minutes and was aborted`
-        : e.message;
-      emit({ type: isAbort ? 'done' : 'error', status: finalStatus, message });
+      emit({ type: isAbort ? 'done' : 'error', status: finalStatus, message: e.message });
     } finally {
-      clearTimeout(timeoutHandle);
       bus.off('event', listener);
       activeRuns.delete(colonyId);
       maybeCleanup(colonyId);

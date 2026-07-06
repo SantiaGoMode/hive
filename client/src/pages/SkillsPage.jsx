@@ -6,6 +6,8 @@ import {
 import { api } from '../lib/api';
 import { Button } from '../components/ui/Button';
 import { Input, Textarea } from '../components/ui/Input';
+import { Modal } from '../components/ui/Modal';
+import { MarkdownContent } from '../components/MarkdownContent';
 import { toast } from '../stores/toastStore';
 import { McpServersSection } from '../components/mcp/McpServersSection';
 
@@ -46,7 +48,7 @@ function TemplatesEditor({ templates, onChange }) {
       {templates.length === 0 && (
         <p className="text-xs text-gray-600 italic">
           No templates. Templates are reusable blocks — code scaffolds, table structures, step-by-step
-          instructions — given verbatim to any staff member with this skill.
+          instructions — given verbatim to any agent or staff member with this skill.
         </p>
       )}
       {templates.map((t, i) => (
@@ -120,43 +122,39 @@ function SkillModal({ open, skill, onClose, onSave }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
-      <div className="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-5xl flex flex-col h-[92vh]">
-        <div className="px-6 py-4 border-b border-gray-700">
-          <h3 className="font-semibold text-gray-100">{skill ? `Edit: ${skill.name}` : 'New Skill'}</h3>
-          <p className="text-xs text-gray-500 mt-0.5">
-            A skill's full content — summary, instructions, and templates — is injected into the prompt of every staff member it's assigned to.
-          </p>
+    <Modal open onClose={onClose} title={skill ? `Edit: ${skill.name}` : 'New Skill'} size="xl">
+      <p className="text-xs text-gray-500 -mt-2 mb-3">
+        A skill's full content — summary, instructions, and templates — is injected into the
+        system prompt of every agent or staff member it's assigned to.
+      </p>
+      <div className="flex flex-col gap-4 overflow-y-auto max-h-[65vh] pr-1">
+        <Input label="Name" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. API design review" />
+        <div className="flex flex-col gap-1">
+          <Input
+            label="Summary"
+            value={description}
+            onChange={e => setDescription(e.target.value)}
+            placeholder="One line: what this skill covers"
+          />
+          <p className="text-xs text-gray-600">Shown in the skill pickers on the Staff page and in the agent editor.</p>
         </div>
-        <div className="px-6 py-4 flex flex-col gap-4 overflow-y-auto flex-1">
-          <Input label="Name" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. API design review" />
-          <div className="flex flex-col gap-1">
-            <Input
-              label="Summary"
-              value={description}
-              onChange={e => setDescription(e.target.value)}
-              placeholder="One line: what this skill covers"
-            />
-            <p className="text-xs text-gray-600">Shown in the skill picker on the Staff page.</p>
-          </div>
-          <div className="flex flex-col gap-1">
-            <Textarea
-              label="Instructions"
-              value={instructions}
-              onChange={e => setInstructions(e.target.value)}
-              rows={12}
-              placeholder={'How to apply this skill — methodology, conventions, dos and don\'ts. Markdown supported.\n\ne.g.\n- Always check error paths before the happy path\n- Use the project\'s existing naming conventions\n- Cite the spec section for every decision'}
-            />
-            <p className="text-xs text-gray-600">The working knowledge of the skill — given to the agent verbatim.</p>
-          </div>
-          <TemplatesEditor templates={templates} onChange={setTemplates} />
+        <div className="flex flex-col gap-1">
+          <Textarea
+            label="Instructions"
+            value={instructions}
+            onChange={e => setInstructions(e.target.value)}
+            rows={12}
+            placeholder={'How to apply this skill — methodology, conventions, dos and don\'ts. Markdown supported.\n\ne.g.\n- Always check error paths before the happy path\n- Use the project\'s existing naming conventions\n- Cite the spec section for every decision'}
+          />
+          <p className="text-xs text-gray-600">The working knowledge of the skill — given to the agent verbatim.</p>
         </div>
-        <div className="px-6 py-4 border-t border-gray-700 flex justify-end gap-2">
-          <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
-        </div>
+        <TemplatesEditor templates={templates} onChange={setTemplates} />
       </div>
-    </div>
+      <div className="pt-4 mt-2 border-t border-gray-700 flex justify-end gap-2">
+        <Button variant="secondary" onClick={onClose}>Cancel</Button>
+        <Button onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
+      </div>
+    </Modal>
   );
 }
 
@@ -198,7 +196,9 @@ function SkillRow({ skill, onEdit, onDelete }) {
           {skill.instructions?.trim() ? (
             <div>
               <p className="text-xs font-medium text-gray-400 mb-1">Instructions</p>
-              <pre className="text-xs text-gray-400 whitespace-pre-wrap break-words max-h-48 overflow-y-auto bg-gray-950/50 rounded px-2 py-1.5">{skill.instructions}</pre>
+              <div className="text-xs text-gray-400 max-h-48 overflow-y-auto bg-gray-950/50 rounded px-2 py-1.5">
+                <MarkdownContent>{skill.instructions}</MarkdownContent>
+              </div>
             </div>
           ) : (
             <p className="text-xs text-gray-600 italic">No instructions yet.</p>
@@ -214,7 +214,13 @@ function SkillRow({ skill, onEdit, onDelete }) {
                       <Icon size={11} className="text-gray-500" /> {t.title || 'Untitled'}
                       <span className="text-gray-600">({t.type})</span>
                     </p>
-                    <pre className={`mt-1 text-xs text-gray-500 whitespace-pre-wrap break-words max-h-32 overflow-y-auto ${t.type === 'code' || t.type === 'table' ? 'font-mono' : ''}`}>{t.content}</pre>
+                    {t.type === 'code' ? (
+                      <pre className="mt-1 text-xs text-gray-500 whitespace-pre-wrap break-words max-h-32 overflow-y-auto font-mono">{t.content}</pre>
+                    ) : (
+                      <div className="mt-1 text-xs text-gray-500 max-h-32 overflow-y-auto">
+                        <MarkdownContent>{t.content}</MarkdownContent>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -232,6 +238,7 @@ function SkillsCatalogSection() {
   const [skills, setSkills] = useState([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [deleting, setDeleting] = useState(null);
 
   const load = useCallback(() => {
     api.getSkills().then(data => setSkills(data.skills || [])).catch(() => {});
@@ -256,11 +263,12 @@ function SkillsCatalogSection() {
     }
   };
 
-  const handleDelete = async (skill) => {
-    if (!confirm(`Delete skill "${skill.name}"? Staff members keep the assignment as a custom entry until edited.`)) return;
+  const handleDelete = async () => {
+    if (!deleting) return;
     try {
-      await api.deleteSkill(skill.id);
+      await api.deleteSkill(deleting.id);
       toast.success('Skill deleted');
+      setDeleting(null);
       load();
     } catch (e) {
       toast.error(e.message);
@@ -276,7 +284,7 @@ function SkillsCatalogSection() {
           </h2>
           <p className="text-xs text-gray-500 mt-0.5">
             {skills.length === 0
-              ? 'Skills bundle instructions and reusable templates, injected into assigned staff prompts'
+              ? 'Skills bundle instructions and reusable templates, injected into the prompts of assigned agents and staff'
               : `${skills.length} skill${skills.length === 1 ? '' : 's'} defined`}
           </p>
         </div>
@@ -291,13 +299,13 @@ function SkillsCatalogSection() {
           <p className="text-sm text-gray-400 font-medium">No skills defined yet</p>
           <p className="text-xs text-gray-600 mt-1 max-w-sm mx-auto">
             A skill carries a summary, working instructions, and reusable templates (code, tables, procedures).
-            Assign it to staff and its full content is injected into their prompt.
+            Assign it to agents (in the agent editor) or staff and its full content is injected into their prompt.
           </p>
         </div>
       ) : (
         <div className="flex flex-col gap-2">
           {skills.map(skill => (
-            <SkillRow key={skill.id} skill={skill} onEdit={(s) => { setEditing(s); setModalOpen(true); }} onDelete={handleDelete} />
+            <SkillRow key={skill.id} skill={skill} onEdit={(s) => { setEditing(s); setModalOpen(true); }} onDelete={setDeleting} />
           ))}
         </div>
       )}
@@ -308,6 +316,18 @@ function SkillsCatalogSection() {
         onClose={() => { setModalOpen(false); setEditing(null); }}
         onSave={handleSave}
       />
+
+      {deleting && (
+        <Modal open onClose={() => setDeleting(null)} title={`Delete skill "${deleting.name}"?`} size="sm">
+          <p className="text-sm text-gray-400 mb-4">
+            Agents and staff members keep the assignment as a plain-text entry until edited.
+          </p>
+          <div className="flex gap-2 justify-end">
+            <Button variant="secondary" onClick={() => setDeleting(null)}>Cancel</Button>
+            <Button variant="danger" onClick={handleDelete}>Delete</Button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

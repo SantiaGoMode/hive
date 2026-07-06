@@ -38,6 +38,9 @@ function createPerformWriteback(ctx) {
     if (!repoInfo) return;
     addEntry({ kind: 'writeback', message: `🔀 Committing and pushing colony work to branch "${colonyBranch}"…` });
     onEvent({ type: 'writeback', phase: 'push_start', branch: colonyBranch });
+    // Resolve the repo's real default branch — hardcoding "main" 422s the PR
+    // (and mislabels the diff) on master-default repos.
+    const base = gitDefaultBranch(row.repo_path);
     try {
       // First line only — board-item goals are multi-line and produce
       // unreadable commit subjects / PR titles otherwise.
@@ -52,8 +55,8 @@ function createPerformWriteback(ctx) {
       }
 
       let diffStat = '';
-      try { diffStat = gitExec(['diff', '--stat', 'origin/main...HEAD'], row.repo_path).slice(0, 2000); } catch {
-        try { diffStat = gitExec(['diff', '--stat', 'main...HEAD'], row.repo_path).slice(0, 2000); } catch (e) { logSwallowed('colonyRunner:diffStat', e, { colonyId }); }
+      try { diffStat = gitExec(['diff', '--stat', `origin/${base}...HEAD`], row.repo_path).slice(0, 2000); } catch {
+        try { diffStat = gitExec(['diff', '--stat', `${base}...HEAD`], row.repo_path).slice(0, 2000); } catch (e) { logSwallowed('colonyRunner:diffStat', e, { colonyId }); }
       }
 
       const prBody = [
@@ -66,7 +69,7 @@ function createPerformWriteback(ctx) {
         diffStat ? `\n**Changes:**\n\`\`\`\n${diffStat}\n\`\`\`` : '',
         '',
         `> This pull request was opened automatically by Hive Colony \`${colonyId}\`.`,
-        `> Verify the changes against the work item's acceptance criteria, then merge to \`main\` when satisfied.`,
+        `> Verify the changes against the work item's acceptance criteria, then merge to \`${base}\` when satisfied.`,
       ].filter(l => l !== null).join('\n');
 
       const titleLine = String(row.goal || 'Automated delivery')
@@ -80,7 +83,7 @@ function createPerformWriteback(ctx) {
         title: `[Colony] ${titleLine.slice(0, 72)}`,
         body: prBody,
         head: colonyBranch,
-        base: 'main',
+        base,
       });
 
       state.prUrl = pr.html_url; // read by the verified-outcome report
@@ -95,13 +98,16 @@ function createPerformWriteback(ctx) {
         '**What to do:**',
         `1. Open a terminal and navigate to: \`${row.repo_path}\``,
         `2. Run: \`git push -u origin ${colonyBranch}\``,
-        `3. Open a Pull Request from \`${colonyBranch}\` → \`main\` on GitHub.`,
+        `3. Open a Pull Request from \`${colonyBranch}\` → \`${base}\` on GitHub.`,
         '',
         'Once you have resolved the issue, click **"Retry Push"** in the colony panel.',
       ].join('\n');
       addEntry({ kind: 'writeback', message: `⚠️ ${msg}` });
       protocol.writeBlackboard(colonyId, 'system', 'blocker', msg, { action_required: 'retry_push', branch: colonyBranch, repo_path: row.repo_path });
-      onEvent({ type: 'blocker', blocker: { message: msg, action: 'retry_push', branch: colonyBranch } });
+      const blocker = { message: msg, action: 'retry_push', branch: colonyBranch };
+      // Persist the structured blocker too, so it reappears in the panel on refresh/replay.
+      addEntry({ kind: 'blocker', blocker });
+      onEvent({ type: 'blocker', blocker });
     }
   };
 }

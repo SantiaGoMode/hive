@@ -1,23 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../lib/api';
-import { Clock, Plus, Play, Trash2, ToggleLeft, ToggleRight, Edit2, X, CheckCircle, AlertCircle, Loader2, ChevronDown, ChevronUp, Copy, Check, RotateCcw } from 'lucide-react';
+import { Clock, Plus, Play, Trash2, ToggleLeft, ToggleRight, Edit2, CheckCircle, AlertCircle, Loader2, ChevronDown, ChevronUp, RotateCcw, GitBranch } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { toast } from '../stores/toastStore';
 import { Modal } from '../components/ui/Modal';
 import { ToolPicker } from '../components/ToolPicker';
-
-function CopyBtn({ text }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <button
-      onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000); }}
-      className="p-1 text-gray-500 hover:text-gray-300 rounded transition-colors flex-shrink-0"
-      title="Copy output"
-    >
-      {copied ? <Check size={11} className="text-green-400" /> : <Copy size={11} />}
-    </button>
-  );
-}
+import { CopyButton } from '../components/ui/CopyButton';
+import { MarkdownContent } from '../components/MarkdownContent';
 
 function AdvancedDisclosure({ id, title, summary, children, defaultOpen = false }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -62,15 +51,16 @@ const PRESETS = [
   { label: 'Custom…',        value: 'custom' },
 ];
 
-const EMPTY_FORM = { agent_id: '', label: '', cron_expr: '0 8 * * *', prompt: '', enabled: true, tools: [] };
+const EMPTY_FORM = { agent_id: '', pipeline_id: '', label: '', cron_expr: '0 8 * * *', prompt: '', enabled: true, tools: [] };
 
 // ── Schedule editor modal ─────────────────────────────────────────────────────
-function ScheduleEditor({ schedule, agents, onSave, onClose }) {
+function ScheduleEditor({ schedule, agents, pipelines, onSave, onClose }) {
   const [form, setForm] = useState(() =>
     schedule
-      ? { agent_id: schedule.agent_id, label: schedule.label, cron_expr: schedule.cron_expr, prompt: schedule.prompt, enabled: !!schedule.enabled, tools: schedule.tools || [] }
+      ? { agent_id: schedule.agent_id || '', pipeline_id: schedule.pipeline_id || '', label: schedule.label, cron_expr: schedule.cron_expr, prompt: schedule.prompt, enabled: !!schedule.enabled, tools: schedule.tools || [] }
       : { ...EMPTY_FORM },
   );
+  const [target, setTarget] = useState(schedule?.pipeline_id ? 'pipeline' : 'agent');
   const [presetKey, setPresetKey] = useState(() => {
     const found = PRESETS.find(p => p.value !== 'custom' && p.value === (schedule?.cron_expr ?? EMPTY_FORM.cron_expr));
     return found ? found.value : 'custom';
@@ -94,17 +84,22 @@ function ScheduleEditor({ schedule, agents, onSave, onClose }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!form.agent_id) { setError('Select an agent'); return; }
+    if (target === 'agent' && !form.agent_id) { setError('Select an agent'); return; }
+    if (target === 'pipeline' && !form.pipeline_id) { setError('Select a pipeline'); return; }
     if (!form.label.trim()) { setError('Label is required'); return; }
     if (!form.cron_expr.trim()) { setError('Cron expression is required'); return; }
     if (!form.prompt.trim()) { setError('Prompt is required'); return; }
     setSaving(true);
     setError('');
     try {
+      // Tool overrides only apply to agent runs; pipelines bring their own steps.
+      const payload = target === 'pipeline'
+        ? { ...form, agent_id: '', tools: [] }
+        : { ...form, pipeline_id: '' };
       if (schedule) {
-        await api.updateSchedule(schedule.id, form);
+        await api.updateSchedule(schedule.id, payload);
       } else {
-        await api.createSchedule(form);
+        await api.createSchedule(payload);
       }
       onSave();
     } catch (err) {
@@ -128,19 +123,47 @@ function ScheduleEditor({ schedule, agents, onSave, onClose }) {
             />
           </div>
 
-          {/* Agent */}
+          {/* Target: single agent or whole pipeline */}
           <div>
-            <label className="text-xs text-gray-400 font-medium block mb-1">Agent</label>
-            <select
-              className="w-full bg-[#0f1117] border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
-              value={form.agent_id}
-              onChange={e => set('agent_id', e.target.value)}
-            >
-              <option value="">Select an agent…</option>
-              {agents.map(a => (
-                <option key={a.id} value={a.id}>{a.name}</option>
+            <label className="text-xs text-gray-400 font-medium block mb-1">Run</label>
+            <div className="flex gap-1 mb-2 bg-[#0f1117] border border-gray-800 rounded-lg p-0.5 w-fit">
+              {['agent', 'pipeline'].map(t => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setTarget(t)}
+                  className={`px-3 py-1 rounded-md text-xs font-medium transition-colors capitalize ${target === t ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-100'}`}
+                >
+                  {t}
+                </button>
               ))}
-            </select>
+            </div>
+            {target === 'agent' ? (
+              <select
+                className="w-full bg-[#0f1117] border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
+                value={form.agent_id}
+                onChange={e => set('agent_id', e.target.value)}
+              >
+                <option value="">Select an agent…</option>
+                {agents.map(a => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </select>
+            ) : (
+              <>
+                <select
+                  className="w-full bg-[#0f1117] border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
+                  value={form.pipeline_id}
+                  onChange={e => set('pipeline_id', e.target.value)}
+                >
+                  <option value="">Select a pipeline…</option>
+                  {pipelines.map(p => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-600 mt-1">The prompt below is the pipeline's input; its final output is stored as the run result.</p>
+              </>
+            )}
           </div>
 
           {/* Schedule */}
@@ -184,12 +207,16 @@ function ScheduleEditor({ schedule, agents, onSave, onClose }) {
                 />
                 <p className="text-xs text-gray-600 mt-1">Format: minute hour day-of-month month day-of-week</p>
               </div>
-              <ToolPicker
-                tools={form.tools}
-                onChange={t => set('tools', t)}
-                mcpServers={mcpServers}
-                overrideHint="Overrides the agent's configured tools for this schedule."
-              />
+              {target === 'agent' ? (
+                <ToolPicker
+                  tools={form.tools}
+                  onChange={t => set('tools', t)}
+                  mcpServers={mcpServers}
+                  overrideHint="Overrides the agent's configured tools for this schedule."
+                />
+              ) : (
+                <p className="text-xs text-gray-600">Tool overrides don't apply to pipeline schedules — each step's own tool settings are used.</p>
+              )}
             </div>
           </AdvancedDisclosure>
 
@@ -225,13 +252,17 @@ function ScheduleEditor({ schedule, agents, onSave, onClose }) {
 }
 
 // ── Schedule card ─────────────────────────────────────────────────────────────
-function ScheduleCard({ schedule, agents, onEdit, onDelete, onToggle, onRefresh }) {
+function ScheduleCard({ schedule, agents, pipelines, onEdit, onDelete, onToggle, onRefresh }) {
   const [expanded, setExpanded] = useState(false);
   const [running, setRunning] = useState(false);
   const [clearingHistory, setClearingHistory] = useState(false);
 
+  const isPipeline = !!schedule.pipeline_id;
   const agent = agents.find(a => a.id === schedule.agent_id);
-  const agentName = agent?.name ?? schedule.agent_id;
+  const pipeline = pipelines.find(p => p.id === schedule.pipeline_id);
+  const targetName = isPipeline
+    ? (pipeline?.name ?? schedule.pipeline_id)
+    : (agent?.name ?? schedule.agent_id);
 
   const handleRunNow = async () => {
     setRunning(true);
@@ -277,7 +308,12 @@ function ScheduleCard({ schedule, agents, onEdit, onDelete, onToggle, onRefresh 
             )} />
             <div className="min-w-0">
               <p className="font-medium text-gray-100 text-sm truncate">{schedule.label}</p>
-              <p className="text-xs text-gray-500 mt-0.5">{agentName} · <code className="font-mono">{schedule.cron_expr}</code></p>
+              <p className="text-xs text-gray-500 mt-0.5 flex items-center gap-1.5">
+                {isPipeline && <GitBranch size={10} className="text-purple-400" />}
+                {targetName}
+                {isPipeline && <span className="text-[10px] uppercase tracking-wide bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded px-1 py-px">pipeline</span>}
+                {' '}· <code className="font-mono">{schedule.cron_expr}</code>
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-1 flex-shrink-0">
@@ -348,10 +384,10 @@ function ScheduleCard({ schedule, agents, onEdit, onDelete, onToggle, onRefresh 
             <div>
               <div className="flex items-center justify-between mb-1">
                 <p className="text-xs text-gray-500 font-medium">Last output</p>
-                <CopyBtn text={schedule.last_output} />
+                <CopyButton text={schedule.last_output} size={11} title="Copy output" className="flex-shrink-0" />
               </div>
-              <div className="bg-gray-900 border border-gray-700 rounded-lg p-3 max-h-72 overflow-y-auto">
-                <p className="text-sm text-gray-200 whitespace-pre-wrap leading-relaxed">{schedule.last_output}</p>
+              <div className="bg-gray-900 border border-gray-700 rounded-lg p-3 max-h-72 overflow-y-auto text-sm text-gray-200">
+                <MarkdownContent>{schedule.last_output}</MarkdownContent>
               </div>
             </div>
           )}
@@ -388,6 +424,7 @@ function DeleteConfirm({ onConfirm, onCancel }) {
 export default function SchedulesPage() {
   const [schedules, setSchedules] = useState([]);
   const [agents, setAgents] = useState([]);
+  const [pipelines, setPipelines] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editTarget, setEditTarget] = useState(null);    // schedule | true (new)
   const [deleteId, setDeleteId] = useState(null);
@@ -395,12 +432,14 @@ export default function SchedulesPage() {
   const load = useCallback(async () => {
     try {
       // Fetch independently so an agent list error doesn't wipe out schedules and vice versa
-      const [schedulesResult, agentsResult] = await Promise.allSettled([
+      const [schedulesResult, agentsResult, pipelinesResult] = await Promise.allSettled([
         api.getSchedules(),
         api.getAgents(),
+        api.getPipelines(),
       ]);
       if (schedulesResult.status === 'fulfilled') setSchedules(schedulesResult.value);
       if (agentsResult.status === 'fulfilled') setAgents(agentsResult.value);
+      if (pipelinesResult.status === 'fulfilled') setPipelines(pipelinesResult.value);
     } finally {
       setLoading(false);
     }
@@ -473,6 +512,7 @@ export default function SchedulesPage() {
               key={s.id}
               schedule={s}
               agents={agents}
+              pipelines={pipelines}
               onEdit={setEditTarget}
               onDelete={setDeleteId}
               onToggle={handleToggle}
@@ -487,6 +527,7 @@ export default function SchedulesPage() {
         <ScheduleEditor
           schedule={editTarget === true ? null : editTarget}
           agents={agents}
+          pipelines={pipelines}
           onSave={() => { setEditTarget(null); load(); }}
           onClose={() => setEditTarget(null)}
         />

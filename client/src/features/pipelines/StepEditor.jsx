@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Trash2, GitMerge, AlertCircle, Wrench, ChevronRight } from 'lucide-react';
 import { Input, Textarea } from '../../components/ui/Input';
 import { ToolPicker } from '../../components/ToolPicker';
+import { ModelSelect } from '../../components/ui/ModelSelect';
 
 function toolLabel(id, mcpServers) {
   if (id?.startsWith('mcp:')) {
@@ -38,7 +39,7 @@ function AdvancedDisclosure({ id, title, summary, children, defaultOpen = false 
   );
 }
 
-export function StepEditor({ step, agents, mcpServers, onChange, onRemove, index, errors = {} }) {
+export function StepEditor({ step, agents, mcpServers, models = {}, onChange, onRemove, index, errors = {} }) {
   const selectedAgent = agents.find(agent => String(agent.id) === String(step.agent_id));
   const hasErrors = Object.keys(errors).length > 0;
   const tools = step.tools || [];
@@ -98,9 +99,18 @@ export function StepEditor({ step, agents, mcpServers, onChange, onRemove, index
       <AdvancedDisclosure
         id={`pipeline-step-${index}-advanced`}
         title="Advanced step options"
-        summary={`${tools.length} tool override${tools.length === 1 ? '' : 's'}${step.parallel ? ' · parallel enabled' : ''}`}
-        defaultOpen={tools.length > 0 || !!step.parallel}
+        summary={`${tools.length} tool override${tools.length === 1 ? '' : 's'}${step.model ? ' · model override' : ''}${step.parallel ? ' · parallel enabled' : ''}`}
+        defaultOpen={tools.length > 0 || !!step.model || !!step.parallel}
       >
+        <ModelSelect
+          label="Model override"
+          value={step.model || ''}
+          onChange={m => onChange({ ...step, model: m || undefined })}
+          groupedModels={models}
+          placeholder={`— Agent default${selectedAgent?.model ? ` (${selectedAgent.model})` : ''} —`}
+          hint={<p className="text-xs text-gray-600">Run just this step on a different model — e.g. a gateway alias like <code className="text-gray-500">gateway/hive-coding</code> — without changing the agent.</p>}
+        />
+
         <div>
           {tools.length > 0 && (
             <div className="mb-3 rounded-md border border-blue-700/30 bg-blue-500/5 p-2">

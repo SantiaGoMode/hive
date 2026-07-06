@@ -296,20 +296,66 @@ async function createGitHubIssue({ owner, repo, title, body, token }) {
   );
 }
 
-async function updateGitHubIssue({ owner, repo, number, state, comment, token }) {
+// Update an issue's fields (body/title/state/labels) and/or post a comment.
+// A PM uses this to keep the work-item description and status current the way a
+// human PM would; comments are additive progress notes.
+async function updateGitHubIssue({ owner, repo, number, state, body, title, labels, comment, token }) {
   const auth = token || githubToken();
   if (!auth) throw new Error('No GitHub token configured.');
-  
+
   if (comment) {
     await postIssueComment({ owner, repo, number, body: comment, token: auth });
   }
-  
-  if (state) {
-    return githubFetch(
-      `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${encodeURIComponent(number)}`,
-      { token: auth, method: 'PATCH', body: { state } }
-    );
-  }
+
+  const patch = {};
+  if (state) patch.state = state;
+  if (body != null) patch.body = body;
+  if (title != null) patch.title = title;
+  if (Array.isArray(labels)) patch.labels = labels;
+  if (Object.keys(patch).length === 0) return { ok: true, commented: !!comment };
+
+  return githubFetch(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${encodeURIComponent(number)}`,
+    { token: auth, method: 'PATCH', body: patch }
+  );
+}
+
+// Read open Dependabot (dependency) alerts — the DevSecOps signal a DevOps
+// engineer flags before the final PR. Requires a token with security-events /
+// repo scope; a 403/404 means the feature is off or the scope is missing.
+async function fetchDependabotAlerts({ owner, repo, token, state = 'open' } = {}) {
+  const auth = token || githubToken();
+  if (!auth) throw new Error('No GitHub token configured.');
+  const alerts = await githubFetch(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/dependabot/alerts?state=${encodeURIComponent(state)}&per_page=100`,
+    { token: auth },
+  );
+  return (Array.isArray(alerts) ? alerts : []).map(a => ({
+    number: a.number,
+    state: a.state,
+    severity: a.security_advisory?.severity || a.security_vulnerability?.severity || 'unknown',
+    package: a.dependency?.package?.name || '',
+    summary: a.security_advisory?.summary || '',
+    url: a.html_url,
+  }));
+}
+
+// Read open code-scanning (CodeQL/SAST) alerts. Same auth requirements as above.
+async function fetchCodeScanningAlerts({ owner, repo, token, state = 'open' } = {}) {
+  const auth = token || githubToken();
+  if (!auth) throw new Error('No GitHub token configured.');
+  const alerts = await githubFetch(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/code-scanning/alerts?state=${encodeURIComponent(state)}&per_page=100`,
+    { token: auth },
+  );
+  return (Array.isArray(alerts) ? alerts : []).map(a => ({
+    number: a.number,
+    state: a.state,
+    severity: a.rule?.security_severity_level || a.rule?.severity || 'unknown',
+    rule: a.rule?.id || a.rule?.name || '',
+    summary: a.rule?.description || a.most_recent_instance?.message?.text || '',
+    url: a.html_url,
+  }));
 }
 
 async function createDraftPR({ owner, repo, title, body, head, base, token }) {
@@ -353,5 +399,7 @@ module.exports = {
   createGitHubIssue,
   updateGitHubIssue,
   createDraftPR,
+  fetchDependabotAlerts,
+  fetchCodeScanningAlerts,
   buildBoardComment,
 };

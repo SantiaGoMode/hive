@@ -22,9 +22,14 @@ describe('sseToEntries', () => {
     expect(entries[0]).toMatchObject({ type: 'round', round: 2, ts: 2000 });
   });
 
-  it('handles orchestrator_message: returns message entry with agent=Orchestrator', () => {
-    const entries = sseToEntries({ type: 'orchestrator_message', content: 'Planning…' }, {}, 3000);
+  it('handles orchestrator_message: uses the orchestrator name when provided', () => {
+    const entries = sseToEntries({ type: 'orchestrator_message', agent: 'Ari Morgan', content: 'Planning…' }, {}, 3000);
     expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ type: 'message', agent: 'Ari Morgan', content: 'Planning…', ts: 3000 });
+  });
+
+  it('handles orchestrator_message: falls back to Orchestrator when no name given', () => {
+    const entries = sseToEntries({ type: 'orchestrator_message', content: 'Planning…' }, {}, 3000);
     expect(entries[0]).toMatchObject({ type: 'message', agent: 'Orchestrator', content: 'Planning…', ts: 3000 });
   });
 
@@ -178,6 +183,11 @@ describe('dbLogToEntries', () => {
 
   it('filters out unknown kinds (returns null → filtered)', () => {
     const result = dbLogToEntries([{ kind: 'unknown_kind', ts: 8000 }], {});
+    expect(result).toHaveLength(0);
+  });
+
+  it('skips persisted blocker entries (shown in the panel, not the log stream)', () => {
+    const result = dbLogToEntries([{ kind: 'blocker', blocker: { message: 'push failed', action: 'retry_push' }, ts: 8500 }], {});
     expect(result).toHaveLength(0);
   });
 

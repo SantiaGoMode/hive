@@ -5,7 +5,7 @@ const db = require('../db');
 const { buildEnvelope } = require('../lib/webhookProjection');
 const { serializeActions, triggerWebhookActions } = require('../lib/webhookActions');
 const { processWebhookEvent } = require('../lib/colonyTriggers');
-const { resolveSecret } = require('../lib/secrets');
+const { resolveSecret, parseEnvRef } = require('../lib/secrets');
 const { timingSafeEqualString } = require('../lib/auth');
 const { validateBody, createWebhookSchema, updateWebhookSchema } = require('../lib/validate');
 
@@ -22,20 +22,37 @@ function serializeSpec(spec) {
   try { return JSON.stringify(spec); } catch { return '[]'; }
 }
 
+// Secret handling mirrors routes/config.js: env:NAME refs are returned
+// verbatim (the reference is not sensitive), raw values are masked, and a
+// masked value sent back on update means "keep the stored secret".
+function maskSecret(value) {
+  if (!value) return '';
+  if (parseEnvRef(value)) return value;
+  return `••••••••${value.slice(-4)}`;
+}
+
+function isMasked(value) {
+  return typeof value === 'string' && value.includes('•');
+}
+
+function publicWebhook(row) {
+  return row ? { ...row, secret: maskSecret(row.secret) } : row;
+}
+
 // ── CRUD ──────────────────────────────────────────────────────────────────────
 
 router.get('/', (req, res) => {
   const rows = db.prepare('SELECT * FROM webhooks ORDER BY created_at DESC').all();
-  res.json(rows);
+  res.json(rows.map(publicWebhook));
 });
 
 router.post('/', validateBody(createWebhookSchema), (req, res) => {
   const { name, description = '', secret = '', enabled = 1, context_spec, actions_config } = req.body;
   const id = newId();
   db.prepare('INSERT INTO webhooks (id, name, description, secret, enabled, context_spec, actions_config) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run(id, name, description, secret, enabled ? 1 : 0, serializeSpec(context_spec), serializeActions(actions_config));
+    .run(id, name, description, isMasked(secret) ? '' : secret, enabled ? 1 : 0, serializeSpec(context_spec), serializeActions(actions_config));
   const row = db.prepare('SELECT * FROM webhooks WHERE id = ?').get(id);
-  res.status(201).json(row);
+  res.status(201).json(publicWebhook(row));
 });
 
 router.put('/:id', validateBody(updateWebhookSchema), (req, res) => {
@@ -47,14 +64,14 @@ router.put('/:id', validateBody(updateWebhookSchema), (req, res) => {
     .run(
       name ?? existing.name,
       description ?? existing.description,
-      secret ?? existing.secret,
+      secret === undefined || isMasked(secret) ? existing.secret : secret,
       enabled !== undefined ? (enabled ? 1 : 0) : existing.enabled,
       context_spec !== undefined ? serializeSpec(context_spec) : (existing.context_spec ?? '[]'),
       actions_config !== undefined ? serializeActions(actions_config) : (existing.actions_config ?? '[]'),
       req.params.id
     );
   const row = db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id);
-  res.json(row);
+  res.json(publicWebhook(row));
 });
 
 router.delete('/:id', (req, res) => {

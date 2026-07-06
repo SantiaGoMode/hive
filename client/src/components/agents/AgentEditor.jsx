@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Wand2, Trash2, Save, RefreshCw, Plug, Terminal, RotateCcw, FolderOpen, FileText, ChevronRight, ExternalLink } from 'lucide-react';
+import { Wand2, Trash2, Save, RefreshCw, Plug, Terminal, RotateCcw, FolderOpen, FileText, ChevronRight, ExternalLink, UserRound } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
-import { Input, Textarea } from '../ui/Input';
+import { Input, Select, Textarea } from '../ui/Input';
 import { ModelSelect } from '../ui/ModelSelect';
 import { toast } from '../../stores/toastStore';
 import { useAgentStore } from '../../stores/agentStore';
@@ -74,7 +74,7 @@ const TOOLS = [
     builtin: true,
   },
   { id: 'memory', label: 'Persistent Memory', desc: 'Remember things across conversations. The agent can save notes, user preferences, and context to a MEMORY.md file in its workspace.' },
-  { id: 'web_search', label: 'Web Search', desc: 'Search the internet for current events and recent information' },
+  { id: 'web_search', label: 'Web Search', desc: 'Built-in Ollama web_search/web_fetch. Requires Ollama web access via ollama signin.' },
   { id: 'sandbox', label: 'Sandbox', desc: 'Isolated Docker container for safe code execution. Gives the agent shell access, Python (run_python), and file read/write — all contained away from your system.' },
 ];
 
@@ -109,19 +109,24 @@ function AdvancedDisclosure({ id, title, summary, children, defaultOpen = false 
 }
 
 export function AgentEditor({ open, onClose, agent, initialValues }) {
-  const { createAgent, updateAgent } = useAgentStore();
+  const { createAgent, updateAgent, fetchAgents } = useAgentStore();
   const [tab, setTab] = useState(0);
   const [models, setModels] = useState({});
   const [saving, setSaving] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
+  const [staffProfiles, setStaffProfiles] = useState([]);
+  const [staffProfileId, setStaffProfileId] = useState('');
+  const [staffCreating, setStaffCreating] = useState(false);
+  const [createMode, setCreateMode] = useState('staff');
   const DEFAULTS = {
     name: '', persona_name: '', persona_role: '', description: '', avatar_color: '#3b82f6',
     model: '', temperature: 0.7, max_tokens: 4096, context_length: 8192,
-    system_prompt: '', tools: [], reasoning: false,
+    system_prompt: '', tools: [], skills: [], reasoning: false,
   };
 
   const [form, setForm] = useState(DEFAULTS);
   const [mcpServers, setMcpServers] = useState([]);
+  const [skillOptions, setSkillOptions] = useState([]);
   const [memory, setMemory] = useState('');
   const [memorySaving, setMemorySaving] = useState(false);
   const [memoryLoading, setMemoryLoading] = useState(false);
@@ -132,12 +137,15 @@ export function AgentEditor({ open, onClose, agent, initialValues }) {
   const [sandboxFileContent, setSandboxFileContent] = useState('');
   const [sandboxFileSaving, setSandboxFileSaving] = useState(false);
 
+  const staffCreateMode = !agent && createMode === 'staff' && staffProfiles.length > 0;
   const hasSandbox = form.tools.includes('sandbox') && !!agent?.id;
   const TABS = hasSandbox ? [...BASE_TABS, 'Sandbox'] : BASE_TABS;
+  const selectedStaffProfile = staffProfiles.find(profile => profile.id === staffProfileId) || null;
 
   useEffect(() => {
     if (agent) setForm({ ...DEFAULTS, ...agent });
     else setForm({ ...DEFAULTS, ...(initialValues || {}) });
+    setCreateMode(agent ? 'manual' : 'staff');
     setTab(0);
     setShowTemplates(false);
     setMemory('');
@@ -234,12 +242,32 @@ export function AgentEditor({ open, onClose, agent, initialValues }) {
   useEffect(() => {
     api.getAllModels().then(setModels).catch(() => setModels({}));
     api.getMcpServers().then(setMcpServers).catch(() => setMcpServers([]));
-  }, [open]);
+    api.getSkills().then(d => setSkillOptions(d.skills || [])).catch(() => setSkillOptions([]));
+    if (!agent) {
+      api.getStaffProfiles()
+        .then(data => {
+          const profiles = data.profiles || [];
+          setStaffProfiles(profiles);
+          setStaffProfileId(prev => prev || profiles[0]?.id || '');
+        })
+        .catch(() => {
+          setStaffProfiles([]);
+          setStaffProfileId('');
+        });
+    } else {
+      setStaffProfiles([]);
+      setStaffProfileId('');
+    }
+  }, [open, agent]);
 
   const set = (key, val) => setForm(f => ({ ...f, [key]: val }));
   const toggleTool = (id) => setForm(f => ({
     ...f,
     tools: f.tools.includes(id) ? f.tools.filter(t => t !== id) : [...f.tools, id],
+  }));
+  const toggleSkill = (name) => setForm(f => ({
+    ...f,
+    skills: (f.skills || []).includes(name) ? f.skills.filter(s => s !== name) : [...(f.skills || []), name],
   }));
   const routineTools = TOOLS.filter(tool => ROUTINE_TOOLS.has(tool.id));
   const advancedTools = TOOLS.filter(tool => !ROUTINE_TOOLS.has(tool.id));
@@ -257,6 +285,29 @@ export function AgentEditor({ open, onClose, agent, initialValues }) {
       toast.error(e.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleCreateFromStaffProfile = async () => {
+    if (!staffProfileId) return toast.error('Choose a staff profile first');
+    setStaffCreating(true);
+    try {
+      const body = {
+        model: form.model || undefined,
+        temperature: form.temperature,
+        max_tokens: form.max_tokens,
+        context_length: form.context_length,
+        reasoning: !!form.reasoning,
+        gateway_budget_usd: form.gateway_budget_usd ?? null,
+      };
+      const result = await api.createAgentFromStaffProfile(staffProfileId, body);
+      await fetchAgents();
+      toast.success(result.created ? 'Agent created from staff profile' : 'Assigned agent synced from staff profile');
+      onClose();
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setStaffCreating(false);
     }
   };
 
@@ -281,23 +332,200 @@ export function AgentEditor({ open, onClose, agent, initialValues }) {
   };
 
   const yamlPreview = JSON.stringify({ name: form.name, model: form.model, temperature: form.temperature, system_prompt: form.system_prompt, tools: form.tools }, null, 2);
+  const staffDefaultModel = selectedStaffProfile?.model_preference || '';
+  const modelPlaceholder = staffCreateMode && staffDefaultModel
+    ? `Use staff default (${staffDefaultModel})`
+    : '— Select a model —';
+  const modelHint = staffCreateMode ? (
+    <p className="text-xs text-gray-500 -mt-1">
+      {staffDefaultModel
+        ? 'Leave blank to use the staff profile default. Choose a model here only to override it for this agent.'
+        : 'This staff profile has no model preference. Choose a model for the agent before chatting.'}
+    </p>
+  ) : (
+    <p className="text-xs text-gray-500 -mt-1">
+      Pick a configured provider model. Cloud models are prefixed
+      (<code className="bg-gray-800 px-1 rounded">anthropic/…</code>, <code className="bg-gray-800 px-1 rounded">openai/…</code>, <code className="bg-gray-800 px-1 rounded">gemini/…</code>);
+      Ollama models use the bare name.
+    </p>
+  );
+  const modelRuntimeSettings = (
+    <div className="flex flex-col gap-4">
+      <ModelSelect
+        value={form.model}
+        onChange={v => set('model', v)}
+        groupedModels={models}
+        placeholder={modelPlaceholder}
+        showBadge
+        hint={modelHint}
+      />
+      <div>
+        <label className="text-sm font-medium text-gray-300 block mb-1">Temperature: {form.temperature}</label>
+        <input type="range" min="0" max="2" step="0.05" value={form.temperature}
+          onChange={e => set('temperature', parseFloat(e.target.value))}
+          className="w-full accent-blue-500" />
+        <div className="flex justify-between text-xs text-gray-500 mt-1"><span>Precise</span><span>Creative</span></div>
+      </div>
+      <div className="flex items-center justify-between gap-3 rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
+        <div>
+          <p className="text-sm font-medium text-gray-300">Show reasoning</p>
+          <p className="text-xs text-gray-600 mt-0.5">Stream the model's thinking in chat. Only applies to models with the Reasoning capability (see Models page) — others ignore it.</p>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={!!form.reasoning}
+          onClick={() => set('reasoning', !form.reasoning)}
+          className={`relative w-10 h-6 rounded-full flex-shrink-0 transition-colors ${form.reasoning ? 'bg-purple-600' : 'bg-gray-700'}`}
+        >
+          <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${form.reasoning ? 'right-0.5' : 'left-0.5'}`} />
+        </button>
+      </div>
+      <AdvancedDisclosure
+        id="agent-model-advanced"
+        title="Advanced model settings"
+        summary={`Output ${form.max_tokens.toLocaleString()} tokens · context ${form.context_length.toLocaleString()}${form.gateway_budget_usd != null ? ` · budget $${form.gateway_budget_usd}` : ''}`}
+      >
+        <div className="flex flex-col gap-4">
+          <div>
+            <label className="text-sm font-medium text-gray-300 block mb-1">
+              Max Tokens (num_predict): {form.max_tokens.toLocaleString()}
+              <span className="text-gray-500 font-normal ml-2 text-xs">max output per response</span>
+            </label>
+            <input type="range" min="256" max="32768" step="256" value={form.max_tokens}
+              onChange={e => set('max_tokens', parseInt(e.target.value))}
+              className="w-full accent-blue-500" />
+            <div className="flex justify-between text-xs text-gray-500 mt-1"><span>256</span><span>32k</span></div>
+          </div>
+          <div>
+            <label className="text-sm font-medium text-gray-300 block mb-1">
+              Context Window (num_ctx): {form.context_length.toLocaleString()}
+              {form.context_length >= 65536 && <span className="text-blue-400 text-xs ml-2">64k+</span>}
+              <span className="text-gray-500 font-normal ml-2 text-xs">conversation memory — auto-expanded if Max Tokens exceeds this</span>
+            </label>
+            <input type="range" min="2048" max="131072" step="2048" value={form.context_length}
+              onChange={e => set('context_length', parseInt(e.target.value))}
+              className="w-full accent-blue-500" />
+            <div className="flex justify-between text-xs text-gray-500 mt-1"><span>2k</span><span>128k</span></div>
+          </div>
+          <div>
+            <label className="text-sm font-medium text-gray-300 block mb-1">
+              LLM Gateway budget (USD)
+              <span className="text-gray-500 font-normal ml-2 text-xs">optional — caps this agent's spend via a dedicated gateway key</span>
+            </label>
+            <input
+              type="number" min="0" step="0.5"
+              value={form.gateway_budget_usd ?? ''}
+              onChange={e => set('gateway_budget_usd', e.target.value === '' ? null : parseFloat(e.target.value))}
+              placeholder="No limit"
+              className="w-40 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-gray-200"
+            />
+            <p className="text-xs text-gray-600 mt-1">Requires the LLM gateway (Settings → Model Providers). When set, calls run on a per-agent key with this hard cap; changing it re-mints the key.</p>
+          </div>
+        </div>
+      </AdvancedDisclosure>
+    </div>
+  );
 
   return (
     <Modal open={open} onClose={onClose} title={agent ? `Edit: ${agent.name}` : 'New Agent'} size="xl">
-      <div className="flex gap-1 mb-6 border-b border-gray-700 pb-0">
-        {TABS.map((t, i) => (
+      {!agent && staffProfiles.length > 0 && (
+        <div className="mb-4 inline-flex rounded-lg border border-gray-800 bg-gray-900/50 p-1">
           <button
-            key={t}
-            onClick={() => setTab(i)}
-            className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${tab === i ? 'text-blue-400 border-b-2 border-blue-400 -mb-px' : 'text-gray-400 hover:text-gray-200'}`}
+            type="button"
+            onClick={() => { setCreateMode('staff'); setTab(0); }}
+            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${createMode === 'staff' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-100 hover:bg-gray-800'}`}
           >
-            {t}
+            Staff profile
           </button>
-        ))}
-      </div>
+          <button
+            type="button"
+            onClick={() => { setCreateMode('manual'); setTab(0); }}
+            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${createMode === 'manual' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-100 hover:bg-gray-800'}`}
+          >
+            Manual
+          </button>
+        </div>
+      )}
+      {!staffCreateMode && (
+        <div className="flex gap-1 mb-6 border-b border-gray-700 pb-0">
+          {TABS.map((t, i) => (
+            <button
+              key={t}
+              onClick={() => setTab(i)}
+              className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors ${tab === i ? 'text-blue-400 border-b-2 border-blue-400 -mb-px' : 'text-gray-400 hover:text-gray-200'}`}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="min-h-64">
-        {tab === 0 && (
+        {staffCreateMode && (
+          <div className="grid grid-cols-1 lg:grid-cols-[minmax(260px,320px)_1fr] gap-5">
+            <div className="flex flex-col gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <UserRound size={16} className="text-blue-300" />
+                  <p className="text-sm font-medium text-gray-200">Staff profile</p>
+                </div>
+                <p className="text-xs text-gray-600 mt-1">Identity, prompt, tools, skills, and memory are managed in Staff settings.</p>
+              </div>
+              <div>
+                <Select
+                  label="Profile"
+                  value={staffProfileId}
+                  onChange={e => setStaffProfileId(e.target.value)}
+                >
+                  <option value="">Select staff profile</option>
+                  {staffProfiles.map(profile => (
+                    <option key={profile.id} value={profile.id}>
+                      {profile.display_name} — {profile.role}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+
+              {selectedStaffProfile && (
+                <div className="rounded-lg border border-gray-800 bg-gray-950/40 p-3">
+                  <div className="flex items-center gap-3">
+                    <span
+                      className="w-10 h-10 rounded-lg flex items-center justify-center text-xs font-semibold text-white flex-shrink-0"
+                      style={{ background: selectedStaffProfile.avatar_color }}
+                    >
+                      {selectedStaffProfile.display_name.slice(0, 2).toUpperCase()}
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-gray-200 truncate">{selectedStaffProfile.display_name}</p>
+                      <p className="text-xs text-gray-500 truncate">{selectedStaffProfile.role}</p>
+                    </div>
+                  </div>
+                  <div className="mt-3 grid grid-cols-1 gap-2 text-xs">
+                    <div>
+                      <p className="text-gray-600">Profile key</p>
+                      <p className="text-gray-300 font-mono truncate">{selectedStaffProfile.role_key}</p>
+                    </div>
+                    <div>
+                      <p className="text-gray-600">Default model</p>
+                      <p className="text-gray-300 truncate">{selectedStaffProfile.model_preference || 'No staff model preference'}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-3">
+              <div className="mb-3">
+                <p className="text-sm font-medium text-gray-200">Runtime model settings</p>
+                <p className="text-xs text-gray-600 mt-0.5">Only these runtime settings are editable here.</p>
+              </div>
+              {modelRuntimeSettings}
+            </div>
+          </div>
+        )}
+
+        {!staffCreateMode && tab === 0 && (
           <div className="flex flex-col gap-4">
             {/* Template picker */}
             <div className="flex items-center justify-between">
@@ -343,89 +571,7 @@ export function AgentEditor({ open, onClose, agent, initialValues }) {
           </div>
         )}
 
-        {tab === 1 && (
-          <div className="flex flex-col gap-4">
-            <ModelSelect
-              value={form.model}
-              onChange={v => set('model', v)}
-              groupedModels={models}
-              showBadge
-              allowCustom
-              hint={(
-                <p className="text-xs text-gray-500 -mt-1">
-                  Pick a model, or type a custom id below. Cloud models are prefixed
-                  (<code className="bg-gray-800 px-1 rounded">anthropic/…</code>, <code className="bg-gray-800 px-1 rounded">openai/…</code>, <code className="bg-gray-800 px-1 rounded">gemini/…</code>);
-                  Ollama models use the bare name (<code className="bg-gray-800 px-1 rounded">llama3.1:8b</code>). Add cloud API keys in Settings → Model Providers.
-                </p>
-              )}
-            />
-            <div>
-              <label className="text-sm font-medium text-gray-300 block mb-1">Temperature: {form.temperature}</label>
-              <input type="range" min="0" max="2" step="0.05" value={form.temperature}
-                onChange={e => set('temperature', parseFloat(e.target.value))}
-                className="w-full accent-blue-500" />
-              <div className="flex justify-between text-xs text-gray-500 mt-1"><span>Precise</span><span>Creative</span></div>
-            </div>
-            <div className="flex items-center justify-between gap-3 rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
-              <div>
-                <p className="text-sm font-medium text-gray-300">Show reasoning</p>
-                <p className="text-xs text-gray-600 mt-0.5">Stream the model's thinking in chat. Only applies to models with the Reasoning capability (see Models page) — others ignore it.</p>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={!!form.reasoning}
-                onClick={() => set('reasoning', !form.reasoning)}
-                className={`relative w-10 h-6 rounded-full flex-shrink-0 transition-colors ${form.reasoning ? 'bg-purple-600' : 'bg-gray-700'}`}
-              >
-                <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${form.reasoning ? 'right-0.5' : 'left-0.5'}`} />
-              </button>
-            </div>
-            <AdvancedDisclosure
-              id="agent-model-advanced"
-              title="Advanced model settings"
-              summary={`Output ${form.max_tokens.toLocaleString()} tokens · context ${form.context_length.toLocaleString()}${form.gateway_budget_usd != null ? ` · budget $${form.gateway_budget_usd}` : ''}`}
-            >
-              <div className="flex flex-col gap-4">
-                <div>
-                  <label className="text-sm font-medium text-gray-300 block mb-1">
-                    Max Tokens (num_predict): {form.max_tokens.toLocaleString()}
-                    <span className="text-gray-500 font-normal ml-2 text-xs">max output per response</span>
-                  </label>
-                  <input type="range" min="256" max="32768" step="256" value={form.max_tokens}
-                    onChange={e => set('max_tokens', parseInt(e.target.value))}
-                    className="w-full accent-blue-500" />
-                  <div className="flex justify-between text-xs text-gray-500 mt-1"><span>256</span><span>32k</span></div>
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-gray-300 block mb-1">
-                    Context Window (num_ctx): {form.context_length.toLocaleString()}
-                    {form.context_length >= 65536 && <span className="text-blue-400 text-xs ml-2">64k+</span>}
-                    <span className="text-gray-500 font-normal ml-2 text-xs">conversation memory — auto-expanded if Max Tokens exceeds this</span>
-                  </label>
-                  <input type="range" min="2048" max="131072" step="2048" value={form.context_length}
-                    onChange={e => set('context_length', parseInt(e.target.value))}
-                    className="w-full accent-blue-500" />
-                  <div className="flex justify-between text-xs text-gray-500 mt-1"><span>2k</span><span>128k</span></div>
-                </div>
-                <div>
-                  <label className="text-sm font-medium text-gray-300 block mb-1">
-                    LLM Gateway budget (USD)
-                    <span className="text-gray-500 font-normal ml-2 text-xs">optional — caps this agent's spend via a dedicated gateway key</span>
-                  </label>
-                  <input
-                    type="number" min="0" step="0.5"
-                    value={form.gateway_budget_usd ?? ''}
-                    onChange={e => set('gateway_budget_usd', e.target.value === '' ? null : parseFloat(e.target.value))}
-                    placeholder="No limit"
-                    className="w-40 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm text-gray-200"
-                  />
-                  <p className="text-xs text-gray-600 mt-1">Requires the LLM gateway (Settings → Model Providers). When set, calls run on a per-agent key with this hard cap; changing it re-mints the key.</p>
-                </div>
-              </div>
-            </AdvancedDisclosure>
-          </div>
-        )}
+        {!staffCreateMode && tab === 1 && modelRuntimeSettings}
 
         {tab === 2 && (
           <div className="flex flex-col gap-2">
@@ -470,6 +616,38 @@ export function AgentEditor({ open, onClose, agent, initialValues }) {
                 Webhook-triggered agents can use the projected input envelope's <code className="bg-blue-950/60 px-1 rounded">_event_id</code> with <code className="bg-blue-950/60 px-1 rounded">get_webhook_event</code> to fetch the full raw payload only when they need more fields.
               </div>
             )}
+
+            <AdvancedDisclosure
+              id="agent-skills"
+              title="Skills"
+              summary={`${(form.skills || []).length} skill${(form.skills || []).length === 1 ? '' : 's'} assigned`}
+              defaultOpen={(form.skills || []).length > 0}
+            >
+              <p className="text-xs text-gray-500 mb-2">
+                Assigned skills inject their instructions and templates into this agent's
+                system prompt — in chat, pipelines, and schedules. Manage the catalog on
+                the Skills &amp; Tools page.
+              </p>
+              {skillOptions.length === 0 && (
+                <p className="text-xs text-gray-600">No skills in the catalog yet.</p>
+              )}
+              <div className="flex flex-wrap gap-1.5">
+                {skillOptions.map(skill => {
+                  const selected = (form.skills || []).includes(skill.name);
+                  return (
+                    <button
+                      key={skill.id}
+                      type="button"
+                      onClick={() => toggleSkill(skill.name)}
+                      title={skill.description || skill.name}
+                      className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${selected ? 'bg-teal-600/20 border-teal-500/40 text-teal-300' : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-600'}`}
+                    >
+                      {skill.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </AdvancedDisclosure>
 
             <AdvancedDisclosure
               id="agent-tools-advanced"
@@ -721,9 +899,13 @@ export function AgentEditor({ open, onClose, agent, initialValues }) {
         )}
       </div>
 
-      <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-gray-700">
+      <div className="sticky bottom-0 -mx-6 -mb-6 mt-6 flex justify-end gap-3 border-t border-gray-700 bg-gray-900/95 px-6 py-4 backdrop-blur">
         <Button variant="secondary" onClick={onClose}>Cancel</Button>
-        {tab !== 4 && tab !== sandboxTabIndex && (
+        {staffCreateMode ? (
+          <Button onClick={handleCreateFromStaffProfile} disabled={staffCreating || !staffProfileId}>
+            <UserRound size={14} /> {staffCreating ? 'Creating…' : 'Create from staff'}
+          </Button>
+        ) : tab !== 4 && tab !== sandboxTabIndex && (
           <Button onClick={handleSave} disabled={saving}>
             {saving ? 'Saving…' : (agent ? 'Save Changes' : 'Create Agent')}
           </Button>

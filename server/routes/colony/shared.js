@@ -31,12 +31,10 @@ function parseRepoSlug(slug) {
 // the route modules rather than re-created per module.
 const activeRuns = new Map();
 
-// Wall-clock safety cap. If a colony run hasn't finished in this many ms, we
-// abort it. Prevents a stuck model or a worker agent in an infinite tool loop
-// from pinning resources forever. Tuned generously — a full dev-team flow is
-// six roles each doing real tool work on a local model; 15 minutes was
-// routinely killing runs at ~2 of 7 plan steps.
-const COLONY_MAX_DURATION_MS = 30 * 60 * 1000; // 30 minutes
+// Wall-clock safety cap. Now enforced inside runColony (so every launch path is
+// covered, not just POST); re-exported here from the single source for any route
+// that still references it.
+const { COLONY_MAX_DURATION_MS } = require('../../lib/colonyRunner');
 
 // SSE plumbing shared between POST / and GET /:id/stream.
 function sseHeaders(res) {

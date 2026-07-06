@@ -31,7 +31,17 @@ const CODING_GUIDELINES = `[Coding Guidelines — follow strictly]
 11. A failed command (non-zero exit, "command not found", "No such file") means the
    thing DID NOT HAPPEN. Never report it as done, and never let a downstream summary
    claim it. Report the failure honestly.
-12. If a project AGENTS.md / CONTRIBUTING.md is provided below, it OVERRIDES these defaults wherever they conflict.`;
+12. DEPENDENCY INSTALL RECOVERY (this is safe — do it, don't stall):
+   * "npm error code ERESOLVE" / "unable to resolve dependency tree" is a peer-dependency
+     conflict, NOT a network or access problem. Re-run once as
+     "npm install --legacy-peer-deps" (or "--force" as a last resort). This is allowed;
+     only "npm audit fix --force" is banned.
+   * Never run a project scaffolder (create-next-app, create-react-app, vite create, etc.)
+     in a non-empty repository — it errors on existing files. The repo already exists:
+     add the specific dependencies/config the work item needs instead of scaffolding.
+   * A bare timeout on an install means it needs longer — re-run with a higher
+     timeout_seconds (up to 600), don't abandon it.
+13. If a project AGENTS.md / CONTRIBUTING.md is provided below, it OVERRIDES these defaults wherever they conflict.`;
 
 const REPO_GUIDELINE_FILES = ['AGENTS.md', 'CONTRIBUTING.md', '.cursorrules', '.github/copilot-instructions.md'];
 const MAX_REPO_GUIDELINE_CHARS = 6000;

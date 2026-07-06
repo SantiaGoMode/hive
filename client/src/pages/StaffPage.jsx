@@ -19,6 +19,7 @@ export default function StaffPage() {
   const [selected, setSelected] = useState(null);
   const [tab, setTab] = useState('Prompt & Personality');
   const [saving, setSaving] = useState(false);
+  const [syncingAgent, setSyncingAgent] = useState(false);
   const [search, setSearch] = useState('');
   const [models, setModels] = useState({});
   const [form, setForm] = useState(null);
@@ -102,6 +103,25 @@ export default function StaffPage() {
       toast.error(e.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const createOrSyncAgent = async () => {
+    if (!selected || !form) return;
+    setSyncingAgent(true);
+    try {
+      await api.updateStaffProfile(selected.id, {
+        ...form,
+        chat_interval_minutes: Number(form.chat_interval_minutes) || 10,
+      });
+      const result = await api.createAgentFromStaffProfile(selected.id);
+      toast.success(result.created ? 'Agent created from staff profile' : 'Assigned agent synced from staff profile');
+      await loadProfiles();
+      await loadSelected(selected.id);
+    } catch (e) {
+      toast.error(e.message);
+    } finally {
+      setSyncingAgent(false);
     }
   };
 
@@ -227,7 +247,15 @@ export default function StaffPage() {
                   >
                     <Trash2 size={14} />
                   </Button>
-                  <Button onClick={save} disabled={saving}>
+                  <Button
+                    variant="secondary"
+                    onClick={createOrSyncAgent}
+                    disabled={syncingAgent || saving}
+                    title="Create or update a durable agent from this staff profile"
+                  >
+                    <Bot size={14} /> {syncingAgent ? 'Syncing…' : selected.assigned_agent_id ? 'Sync agent' : 'Create agent'}
+                  </Button>
+                  <Button onClick={save} disabled={saving || syncingAgent}>
                     <Save size={14} /> {saving ? 'Saving…' : 'Save'}
                   </Button>
                 </div>

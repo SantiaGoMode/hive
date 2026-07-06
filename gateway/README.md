@@ -1,12 +1,14 @@
 # Hive LLM Gateway (LiteLLM)
 
-A local [LiteLLM](https://litellm.ai) proxy, in Docker, that becomes the **only**
-process holding your real OpenAI / Anthropic / Gemini keys. Hive talks to it with a
-revocable, localhost-scoped key, so neither Hive nor the agent code it runs can ever
-exfiltrate the real provider keys.
+**Optional hardening layer.** By default Hive stores provider keys in Settings and
+calls providers directly — the gateway is for when you want key isolation, failover,
+and spend caps. It is a local [LiteLLM](https://litellm.ai) proxy, in Docker, that
+becomes the **only** process holding your real OpenAI / Anthropic / Gemini keys. Hive
+talks to it with a revocable, localhost-scoped key, so neither Hive nor the agent code
+it runs can ever exfiltrate the real provider keys.
 
 ```
-scrt4 vault ──inject real keys──▶ LiteLLM container (127.0.0.1:4000) ──▶ providers
+env / vault ──inject real keys──▶ LiteLLM container (127.0.0.1:4000) ──▶ providers
                                           ▲
                   Hive + agents ──gateway key (sk-hive-gateway)──┘
 ```
@@ -18,9 +20,10 @@ scrt4 vault ──inject real keys──▶ LiteLLM container (127.0.0.1:4000) �
 
 ## Start
 
-Real keys are injected from the scrt4 vault into the container env at launch (they
-never touch the host DB/disk or Hive's process). `docker compose up -d` is natively
-detached, so this returns immediately:
+Real keys are injected into the container env at launch — from a secrets vault like
+[scrt4](https://github.com/llmsecrets/llm-secrets) if you use one (shown below), or as
+plain environment variables. Either way they never touch Hive's process or DB.
+`docker compose up -d` is natively detached, so this returns immediately:
 
 ```bash
 scrt4 run 'OPENAI_API_KEY=$env[OPENAI_API_KEY] \

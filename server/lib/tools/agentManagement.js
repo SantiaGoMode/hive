@@ -195,7 +195,7 @@ module.exports = {
               hasWebSearch
                 ? `- You have web_search. Use it to find REAL information — do not answer from memory alone. Search first, then synthesize.`
                 : hasSandbox
-                  ? `- You have a sandbox: use write_file to save documents, run_python/run_bash to execute code.`
+                  ? `- You have a sandbox: use write_file to save documents, run_python/shell to execute code.`
                   : `- You have no external tools. Use your trained knowledge directly and be explicit that findings are from training data, not live research.`,
               `- If a tool call succeeds, do NOT retry it.`,
               `- Answer directly and completely. Do not ask for clarification — make reasonable assumptions.`,

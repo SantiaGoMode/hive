@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { Clock, MessageSquare, Wrench, Trash2, Download, Eye, ArrowRight, Pencil, Check, X } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
 import { api } from '../../lib/api';
 import { Button } from '../ui/Button';
+import { MarkdownContent } from '../MarkdownContent';
 import { formatDate, download, exportMarkdown } from '../../lib/utils';
 import { toast } from '../../stores/toastStore';
 import { DeleteConfirm } from '../agents/DeleteConfirm';
@@ -148,15 +148,7 @@ export function SessionList({ agentId, onContinue }) {
                     {msg.role === 'user' ? (
                       <p className="whitespace-pre-wrap text-sm">{typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content)}</p>
                     ) : (
-                      <div className="prose prose-invert prose-sm max-w-none">
-                        <ReactMarkdown components={{
-                          code({ inline, children }) {
-                            return inline
-                              ? <code className="bg-gray-900 px-1 py-0.5 rounded text-blue-300 font-mono text-xs">{children}</code>
-                              : <pre className="bg-gray-900 rounded-lg p-3 overflow-auto my-2"><code className="font-mono text-xs text-gray-300">{children}</code></pre>;
-                          },
-                        }}>{typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content)}</ReactMarkdown>
-                      </div>
+                      <MarkdownContent>{typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content)}</MarkdownContent>
                     )}
                   </div>
                 </div>

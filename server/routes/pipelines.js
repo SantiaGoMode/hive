@@ -144,7 +144,8 @@ router.post('/:id/run-step', async (req, res) => {
   }
 
   const step  = steps[step_index];
-  const agent = readAgent(step.agent_id);
+  const base  = readAgent(step.agent_id);
+  const agent = base && step.model ? { ...base, model: step.model } : base;
   const label = step.label || `Step ${step_index + 1}`;
 
   if (!agent)       return res.status(400).json({ error: `Agent "${step.agent_id}" not found` });
@@ -174,9 +175,11 @@ router.post('/:id/run-step', async (req, res) => {
   const toolsOverride = Array.isArray(step.tools) && step.tools.length > 0 ? step.tools : null;
   try {
     if (ctrl.signal.aborted) throw abortError();
-    const output = await runAgentOnce(agent, [{ role: 'user', content: prompt }], ollamaUrl, 0, null, hivePath, toolsOverride, undefined, ctrl.signal);
+    const thinkingParts = [];
+    const runCtx = { source: 'pipeline', onThinking: (t) => thinkingParts.push(t) };
+    const output = await runAgentOnce(agent, [{ role: 'user', content: prompt }], ollamaUrl, 0, null, hivePath, toolsOverride, undefined, ctrl.signal, runCtx);
     if (ctrl.signal.aborted) throw abortError();
-    emit({ type: 'step_done', step: step_index, label, agent_name: agent.name, output, duration_ms: Date.now() - stepStart });
+    emit({ type: 'step_done', step: step_index, label, agent_name: agent.name, output, ...(thinkingParts.length ? { thinking: thinkingParts.join('\n\n') } : {}), duration_ms: Date.now() - stepStart });
   } catch (e) {
     if (isAbortError(e, ctrl.signal)) {
       emit({ type: 'step_stopped', step: step_index, label, agent_name: agent.name, error: 'Pipeline step retry was stopped', duration_ms: Date.now() - stepStart });

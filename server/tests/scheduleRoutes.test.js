@@ -10,6 +10,7 @@ const { makeApp } = require('./helpers/testApp');
 
 const app = makeApp(require('../routes/schedules'), '/api/schedules');
 const created = [];
+const createdPipelines = [];
 const orig = {};
 
 before(() => {
@@ -18,9 +19,16 @@ before(() => {
 after(() => {
   for (const fn of Object.keys(orig)) scheduler[fn] = orig[fn];
   for (const id of created) { try { db.prepare('DELETE FROM scheduled_runs WHERE id=?').run(id); } catch {} }
+  for (const id of createdPipelines) { try { db.prepare('DELETE FROM pipelines WHERE id=?').run(id); } catch {} }
 });
 
 const validBody = (extra = {}) => ({ agent_id: 'a1', label: 'Nightly', cron_expr: '0 8 * * *', prompt: 'go', ...extra });
+
+function makePipeline(id = `pl-sched-test-${Date.now()}-${createdPipelines.length}`) {
+  db.prepare('INSERT OR REPLACE INTO pipelines (id, name, steps) VALUES (?, ?, ?)').run(id, 'Sched Pipeline', '[]');
+  createdPipelines.push(id);
+  return id;
+}
 
 describe('Schedules API', () => {
   it('lists schedules', async () => {
@@ -57,5 +65,59 @@ describe('Schedules API', () => {
     await request(app).get('/api/schedules/missing').expect(404);
     const made = await request(app).post('/api/schedules').send(validBody()).expect(201);
     await request(app).delete(`/api/schedules/${made.body.id}`).expect(200);
+  });
+
+  it('creates a pipeline-target schedule and rejects unknown pipelines', async () => {
+    const pipelineId = makePipeline();
+
+    // Missing both targets is a 400; unknown pipeline is a 400.
+    const noTarget = await request(app).post('/api/schedules')
+      .send({ label: 'x', cron_expr: '0 8 * * *', prompt: 'go' }).expect(400);
+    assert.match(noTarget.body.error, /agent_id or pipeline_id/);
+    await request(app).post('/api/schedules')
+      .send({ pipeline_id: 'nope', label: 'x', cron_expr: '0 8 * * *', prompt: 'go' }).expect(400);
+
+    const made = await request(app).post('/api/schedules')
+      .send({ pipeline_id: pipelineId, label: 'Pipeline nightly', cron_expr: '0 8 * * *', prompt: 'go' })
+      .expect(201);
+    created.push(made.body.id);
+    assert.equal(made.body.pipeline_id, pipelineId);
+    assert.equal(made.body.agent_id, '');
+
+    const fetched = await request(app).get(`/api/schedules/${made.body.id}`).expect(200);
+    assert.equal(fetched.body.pipeline_id, pipelineId);
+    assert.equal(fetched.body.agent_id, '');
+
+    // Switching back to an agent target clears pipeline_id.
+    const updated = await request(app).put(`/api/schedules/${made.body.id}`)
+      .send({ agent_id: 'a1', pipeline_id: '' }).expect(200);
+    assert.equal(updated.body.pipeline_id, null);
+    assert.equal(updated.body.agent_id, 'a1');
+  });
+
+  it('normalizes target switches when update payloads include only the new target', async () => {
+    const pipelineId = makePipeline();
+    const made = await request(app).post('/api/schedules').send(validBody({ agent_id: 'agent-old' })).expect(201);
+    created.push(made.body.id);
+
+    const asPipeline = await request(app).put(`/api/schedules/${made.body.id}`)
+      .send({ pipeline_id: pipelineId })
+      .expect(200);
+    assert.equal(asPipeline.body.pipeline_id, pipelineId);
+    assert.equal(asPipeline.body.agent_id, '');
+
+    const storedPipeline = db.prepare('SELECT agent_id, pipeline_id FROM scheduled_runs WHERE id=?').get(made.body.id);
+    assert.deepEqual(storedPipeline, { agent_id: '', pipeline_id: pipelineId });
+
+    const asAgent = await request(app).put(`/api/schedules/${made.body.id}`)
+      .send({ agent_id: 'agent-new' })
+      .expect(200);
+    assert.equal(asAgent.body.pipeline_id, null);
+    assert.equal(asAgent.body.agent_id, 'agent-new');
+
+    const noTarget = await request(app).put(`/api/schedules/${made.body.id}`)
+      .send({ agent_id: '' })
+      .expect(400);
+    assert.match(noTarget.body.error, /agent_id or pipeline_id/);
   });
 });

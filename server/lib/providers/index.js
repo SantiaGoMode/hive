@@ -182,6 +182,32 @@ function getModel(provider, modelId, settings = {}) {
   }
 }
 
+// Strip OpenAI "harmony" control tokens that some Ollama/MLX builds leak as raw
+// text instead of parsing into reasoning/content channels. Observed with
+// gemma4-mlx, which emitted "<|channel>thought" (a malformed marker missing its
+// closing pipe) as the ENTIRE reasoning content for a round — surfacing as a
+// garbage "model thinking" bubble. Removes both well-formed (<|channel|>) and
+// malformed (<|channel>) variants, plus a leading channel-name preamble
+// (analysis/final/commentary/thought) before the message so real reasoning text
+// is preserved and only the scaffolding is dropped.
+function sanitizeModelText(str) {
+  if (!str) return str;
+  return String(str)
+    // <|channel|>analysis<|message|>  →  ''  (keep the text that follows)
+    .replace(/<\|channel\|?>\s*(?:analysis|final|commentary|thought)?\s*(?:<\|message\|?>)?/gi, '')
+    // any remaining special tokens, well-formed or malformed
+    .replace(/<\|[a-z0-9_]+\|>/gi, '')
+    .replace(/<\|[a-z0-9_]+>/gi, '')
+    .replace(/<\|[a-z0-9_]+\|/gi, '');
+}
+
+// After sanitizing, reasoning that is empty or just a bare channel name carries
+// no information — used to suppress the degenerate "<|channel>thought" bubble.
+function isBlankReasoning(str) {
+  const t = sanitizeModelText(str || '').trim();
+  return !t || /^(analysis|final|thought|commentary|assistant|channel|message)$/i.test(t);
+}
+
 // Name-based fallback for old Ollama versions that don't report capabilities.
 // The live check below prefers the model's actual probed capabilities — this
 // regex once silently disabled thinking for every reasoning model not on the
@@ -346,4 +372,6 @@ module.exports = {
   ENV_VAR,
   LABEL,
   supportsOllamaReasoning,
+  sanitizeModelText,
+  isBlankReasoning,
 };

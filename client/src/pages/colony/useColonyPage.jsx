@@ -66,6 +66,11 @@ export function useColonyPage() {
   const [livePrUrl, setLivePrUrl] = useState(null);
   const colorIndexRef = useRef(0);
   const streamAbortRef = useRef(null);
+  // Separate from streamAbortRef: the launch stream is opened by handleLaunch,
+  // not the resume effect, and must survive the navigation to the run page (the
+  // resume effect early-returns for the just-launched run). Tracked here so it
+  // can be aborted on unmount and when the user switches to a DIFFERENT run.
+  const launchAbortRef = useRef(null);
   // Ref mirror of the selected run id so the shared event processor can read
   // the current selection without re-creating on navigation.
   const selectedIdRef = useRef(selectedId);
@@ -113,6 +118,13 @@ export function useColonyPage() {
       if (tokenFlushRef.current) { clearTimeout(tokenFlushRef.current); tokenFlushRef.current = null; }
       setStreamingByAgent({});
     }
+  }, []);
+
+  // Abort the launch stream and drop the pending token-flush timer on unmount —
+  // otherwise the SSE loop keeps calling setState on an unmounted component.
+  useEffect(() => () => {
+    if (launchAbortRef.current) { launchAbortRef.current.abort(); launchAbortRef.current = null; }
+    if (tokenFlushRef.current) { clearTimeout(tokenFlushRef.current); tokenFlushRef.current = null; }
   }, []);
 
   // ── Data loading ────────────────────────────────────────────────────────────
@@ -299,8 +311,17 @@ export function useColonyPage() {
     }
 
     if (!selectedId) { setLoadedColony(null); return; }
-    // Already being streamed by handleLaunch — don't double-attach.
+    // Already being streamed by handleLaunch — don't double-attach or abort it.
     if (selectedId === activeColonyIdRef.current) return;
+
+    // Switching to a DIFFERENT run than the one being launched: the launch stream
+    // must stop appending into the shared liveLog (otherwise two streams cross-
+    // contaminate one log). Done AFTER the early-return above so navigating to the
+    // just-launched run keeps its stream alive.
+    if (launchAbortRef.current) {
+      launchAbortRef.current.abort();
+      launchAbortRef.current = null;
+    }
 
     let cancelled = false;
     setLoadingColony(true);
@@ -350,6 +371,12 @@ export function useColonyPage() {
     setLaunchError('');
     resetLiveState();
 
+    // Abort any previous launch stream, then track this one so it can be
+    // cancelled on unmount / when the user switches runs.
+    if (launchAbortRef.current) launchAbortRef.current.abort();
+    const launchAc = new AbortController();
+    launchAbortRef.current = launchAc;
+
     try {
       const baseModel = (modelPlan && modelPlan.operator) || model;
       const triggerConfig = selectedWebhookId && triggerEvents.length > 0
@@ -367,7 +394,7 @@ export function useColonyPage() {
         githubWriteback: team.github_writeback,
         modelPlan: modelPlan || undefined,
         triggerConfig,
-      });
+      }, launchAc.signal);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || 'Failed to start run');
@@ -393,12 +420,18 @@ export function useColonyPage() {
         },
       });
 
-      for await (const event of readSSEStream(res)) processEvent(event);
+      for await (const event of readSSEStream(res)) {
+        if (launchAc.signal.aborted) break;
+        processEvent(event);
+      }
     } catch (e) {
+      if (e.name === 'AbortError' || launchAc.signal.aborted) return;
       setLaunchError(e.message);
       setLiveLog(prev => [...prev, { type: 'error', content: e.message }]);
       setLaunching(false);
       setActiveColonyId(null);
+    } finally {
+      if (launchAbortRef.current === launchAc) launchAbortRef.current = null;
     }
   };
 
@@ -469,6 +502,20 @@ export function useColonyPage() {
     || (overview?.runs || []).find(r => r.id === selectedId);
   const isLive = selectedId != null && selectedId === activeColonyId;
 
+  // Blockers and the Draft-PR badge arrive as live-only events; reconstruct them
+  // from the persisted log (server now records kind:'blocker' and kind:'writeback'
+  // with pr_url) so a refresh/replay still shows the amber panel and PR badge.
+  const pastBlockers = useMemo(
+    () => (isLive || !loadedColony?.log) ? [] : loadedColony.log.filter(e => e.kind === 'blocker' && e.blocker).map(e => e.blocker),
+    [isLive, loadedColony],
+  );
+  const pastPrUrl = useMemo(
+    () => (isLive || !loadedColony?.log) ? null : (loadedColony.log.find(e => e.kind === 'writeback' && e.pr_url)?.pr_url || null),
+    [isLive, loadedColony],
+  );
+  const displayBlockers = isLive ? liveBlockers : pastBlockers;
+  const displayPrUrl = isLive ? livePrUrl : pastPrUrl;
+
   // Memoized — dbLogToEntries over the full log is O(log size) and must not
   // re-run on every render (renders happen every ~80ms during token flushes).
   const pastAgentColorMap = useMemo(() => {
@@ -528,7 +575,8 @@ export function useColonyPage() {
     launching, launchError, launchAdvancedOpen, setLaunchAdvancedOpen,
     // run display
     loadingColony, loadedColony, displayColony, displayLog, displayColorMap,
-    isLive, streamingByAgent, livePlan, liveBlockers, livePrUrl, activeColonyId,
+    isLive, streamingByAgent, livePlan, liveBlockers, livePrUrl,
+    displayBlockers, displayPrUrl, activeColonyId,
     // actions
     handleLaunch, handleStop, handleExport, handleDeleteRun, handleDeleteTeam,
     saveTeamMemory,
