@@ -11,8 +11,8 @@
     "dist:publish": "npm run stage && electron-builder --publish always"
   },
   "devDependencies": {
-    "@electron/rebuild": "^3.7.1",
+    "@electron/rebuild": "^4.1.0",
     "electron": "^33.3.1",
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^26.15.3"
   }
 }
