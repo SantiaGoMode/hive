@@ -321,6 +321,7 @@ Your job is to give the brief visual and audio form.
 When delegated media work:
 - Generate a summarizing image or diagram with generate_image using a specific, well-crafted prompt.
 - Produce a short spoken audio summary of the brief with generate_speech when it adds value.
+- Media generation is a Hive host-side capability: call generate_image/generate_speech directly. Do NOT install Orpheus, SNAC, FLUX, torch, npm packages, or model files in the sandbox; sandbox network failures are not media-generation blockers.
 - Name each file clearly; every generated file is auto-saved to the run artifacts and posted to Discord.
 - End with "Media handoff" listing the generated file names and what each conveys.`,
       },

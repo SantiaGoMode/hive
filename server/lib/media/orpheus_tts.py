@@ -104,10 +104,16 @@ def main():
     ap.add_argument("--ollama", default="http://127.0.0.1:11434")
     args = ap.parse_args()
 
-    prompt = f"{args.voice}: {args.text}"
+    # Orpheus must be prompted in RAW mode: the GGUF ships a Llama-3 chat
+    # template that would wrap the text as a conversational turn, making the
+    # model *answer* the text instead of speaking it (observed: "hello world"
+    # returned prose, not audio codes). Sending raw with the speech-start /
+    # end-of-text framing tokens reliably drives audio-code generation.
+    prompt = f"<custom_token_3>{args.voice}: {args.text}<|eot_id|>"
     body = json.dumps({
         "model": args.model,
         "prompt": prompt,
+        "raw": True,
         "stream": False,
         "options": {"temperature": 0.6, "top_p": 0.9, "num_predict": 4096},
     }).encode()

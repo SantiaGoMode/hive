@@ -54,6 +54,12 @@ Hive prioritizes your privacy and security. By default, API keys are stored loca
 - **MCP Integration**: Connect any external MCP server via stdio or HTTP (e.g., filesystem, git, GitHub, Brave Search, PostgreSQL, Slack).
 - Environment variables are safely resolved at runtime.
 
+### 🎙️ Media Generation
+- Generate local images and speech through Hive's host-side `media` tool group.
+- `generate_image` uses the configured local FLUX/Ollama image model and saves PNG artifacts.
+- `generate_speech` uses the configured local Orpheus/Ollama TTS model, decodes with SNAC, and saves WAV artifacts.
+- Media backends run outside the sandbox. Agents should call `generate_image` or `generate_speech` directly, not install Orpheus, SNAC, FLUX, torch, npm packages, or model files inside sandbox containers.
+
 ### 🧠 Models & Providers
 - Browse, pull, and delete local Ollama models with live progress tracking.
 - First-class support for cloud models (Anthropic, OpenAI, Gemini) via the [Vercel AI SDK](https://ai-sdk.dev).
@@ -133,6 +139,11 @@ Key Environment Variables:
 - `HIVE_AUTH_TOKEN`: Protects your API and UI.
 - `HIVE_SANDBOX_NETWORK`: Set to `bridge` to allow sandbox containers internet access (default is `none`).
 - `LLM_GATEWAY_URL` / `LLM_GATEWAY_KEY`: Used if deploying with the LiteLLM gateway.
+
+Media Settings:
+- `media_python`: Optional path to the Python interpreter that has SNAC/Torch installed for local speech decoding. This is stored in Hive settings, not bundled into the desktop app.
+- `media_tts_model`: Ollama model tag for local Orpheus TTS.
+- `media_image_model`: Ollama model tag for local image generation.
 
 ---
 

@@ -3,6 +3,22 @@ const fs = require('fs');
 const path = require('path');
 const { stripWorkspacePrefix } = require('./shared');
 
+function mediaBackendInstallHint() {
+  return 'Hive media backends run on the host, not inside the sandbox. Do NOT install Orpheus, SNAC, FLUX, torch, npm packages, or model files in the sandbox for speech/image generation. Use the host-side generate_speech or generate_image tool; if this role lacks the media tool, delegate to a media-capable role or report the missing media tool assignment, not sandbox network access.';
+}
+
+function isMediaBackendInstallTarget(value) {
+  const text = String(value || '').toLowerCase();
+  return /\b(orpheus|snac|flux2?|flux-?klein|text-to-speech|speech-synthesis|tts)\b/.test(text)
+    || (/\btorch\b/.test(text) && /\b(orpheus|snac|speech|tts)\b/.test(text));
+}
+
+function isPackageInstallCommand(command) {
+  return /\b(npm|pnpm|yarn)\s+(install|add|i)\b/i.test(command)
+    || /\b(pip|pip3)\s+install\b/i.test(command)
+    || /\bpython3?\s+-m\s+pip\s+install\b/i.test(command);
+}
+
 module.exports = {
   // ── Sandbox ──────────────────────────────────────────────────────────────────
   shell: {
@@ -27,6 +43,14 @@ module.exports = {
       // Hard policy, not a prompt suggestion: models ignore the prompt ban
       // mid-frenzy and this command reliably destroys dependency trees
       // (observed twice: force-downgraded next@15 to next@9 / react@16).
+      if (isPackageInstallCommand(command) && isMediaBackendInstallTarget(command)) {
+        return {
+          stdout: '',
+          stderr: `BLOCKED: ${mediaBackendInstallHint()}`,
+          exitCode: 1,
+          media_backend_hint: mediaBackendInstallHint(),
+        };
+      }
       if (/npm\s+audit\s+fix\b[^|;&]*--force/.test(command)) {
         return {
           stdout: '', exitCode: 1,
@@ -94,7 +118,7 @@ module.exports = {
       type: 'function',
       function: {
         name: 'install_package',
-        description: 'Install a Python (pip) or Node.js (npm) package in the sandbox.',
+        description: 'Install a Python (pip) or Node.js (npm) package in the sandbox. Do not use this for Hive media backends such as Orpheus, SNAC, FLUX, or TTS; those run through host-side media tools.',
         parameters: {
           type: 'object',
           properties: {
@@ -107,6 +131,10 @@ module.exports = {
     },
     async handler({ package: pkg, manager = 'pip' }, { callerAgentId }) {
       const sandbox = require('../sandbox');
+      if (isMediaBackendInstallTarget(pkg)) {
+        const message = mediaBackendInstallHint();
+        return { success: false, message, stdout: '', exitCode: 1, media_backend_hint: message };
+      }
       // pipefail is load-bearing: without it the exit code is tail's (always 0)
       // and a failed install is reported as success.
       const cmd = manager === 'npm'

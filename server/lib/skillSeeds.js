@@ -502,7 +502,7 @@ const SKILL_SEEDS_V3 = [
   {
     name: 'Voice Synthesis',
     description: 'Narrate text as audio with the local Orpheus TTS model',
-    instructions: '- Write for the ear: short sentences, natural phrasing, and expanded numbers/acronyms so they read aloud correctly\n- Pick a voice that fits the content and pass it to generate_speech; keep one voice per deliverable for consistency\n- Keep each clip focused — split long scripts into logical segments with clear filenames\n- generate_speech saves a WAV to the run artifacts (downloadable and auto-posted to Discord) — reference the returned filename in your handoff\n- Proofread the script before synthesizing; regenerating is cheaper than shipping a mispronounced take',
+    instructions: '- Write for the ear: short sentences, natural phrasing, and expanded numbers/acronyms so they read aloud correctly\n- Pick a voice that fits the content and pass it to generate_speech; keep one voice per deliverable for consistency\n- Keep each clip focused — split long scripts into logical segments with clear filenames\n- generate_speech is a Hive host-side media tool: do NOT install Orpheus, SNAC, torch, npm packages, or model files in the sandbox\n- generate_speech saves a WAV to the run artifacts (downloadable and auto-posted to Discord) — reference the returned filename in your handoff\n- Proofread the script before synthesizing; regenerating is cheaper than shipping a mispronounced take',
     templates: [],
   },
 ];

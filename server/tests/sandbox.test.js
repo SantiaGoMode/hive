@@ -138,4 +138,17 @@ describe('sandbox path containment', () => {
       await sandbox.reset(agentId);
     }
   });
+
+  it('redirects media backend package installs to host-side media tools', async () => {
+    const install = await executeTool('install_package', { package: 'orpheus-tts', manager: 'npm' }, 'media-install-agent');
+    assert.equal(install.success, false);
+    assert.equal(install.exitCode, 1);
+    assert.match(install.message, /host-side generate_speech/i);
+    assert.match(install.message, /not sandbox network access/i);
+
+    const shell = await executeTool('shell', { command: 'npm install -g orpheus-tts' }, 'media-install-agent');
+    assert.equal(shell.exitCode, 1);
+    assert.match(shell.stderr, /host-side generate_speech/i);
+    assert.match(shell.media_backend_hint, /delegate to a media-capable role/i);
+  });
 });

@@ -59,6 +59,9 @@ function buildRolePrompt(teamName, def, tools) {
   if (def.artifact && hasFileTool) {
     lines.push(`- WRITE YOUR DELIVERABLE TO A FILE: save ${def.artifact} with write_file and list the path in your handoff artifacts. A note saying the work is "complete" is NOT a deliverable — if no file exists, the work does not exist.`);
   }
+  if (tools.includes('media')) {
+    lines.push('- Media generation is a Hive host-side capability: call generate_image/generate_speech directly. Do NOT install Orpheus, SNAC, FLUX, torch, npm packages, or model files in the sandbox; sandbox network failures are not media-generation blockers.');
+  }
   lines.push('- Be direct about assumptions, evidence gaps, and anything you could not verify.');
   lines.push(`- End with "${def.handoff || `${def.title} handoff`}" containing ${def.handoffContents || 'your key findings, decisions, artifacts, and open questions'}.`);
   return lines.join('\n');

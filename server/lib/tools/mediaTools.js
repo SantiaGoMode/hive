@@ -92,7 +92,7 @@ module.exports = {
       type: 'function',
       function: {
         name: 'generate_image',
-        description: 'Generate an image from a text prompt using the local FLUX.2-klein model (served by Ollama). Saves a PNG to the run\'s artifacts (downloadable in the colony overview and posted to Discord). Use for visuals, mockups, illustrations, and social/marketing assets. Write a vivid, specific prompt.',
+        description: 'Generate an image from a text prompt using the local FLUX.2-klein model (served by Ollama) through Hive\'s host-side media backend. Do not install models or packages in the sandbox for this. Saves a PNG to the run\'s artifacts (downloadable in the colony overview and posted to Discord). Use for visuals, mockups, illustrations, and social/marketing assets. Write a vivid, specific prompt.',
         parameters: {
           type: 'object',
           properties: {
@@ -129,7 +129,7 @@ module.exports = {
       type: 'function',
       function: {
         name: 'generate_speech',
-        description: 'Synthesize speech (text-to-speech) from text using the local Orpheus model via Ollama. Saves a WAV to the run\'s artifacts (downloadable and posted to Discord). Use for voiceovers, audio summaries, and narrated deliverables.',
+        description: 'Synthesize speech (text-to-speech) from text using the local Orpheus model via Ollama through Hive\'s host-side media backend. Do not install Orpheus, SNAC, torch, npm packages, or model files in the sandbox for this. Saves a WAV to the run\'s artifacts (downloadable and posted to Discord). Use for voiceovers, audio summaries, and narrated deliverables.',
         parameters: {
           type: 'object',
           properties: {
