@@ -9,15 +9,15 @@ import { useAgentStore } from '../../stores/agentStore';
 import { api } from '../../lib/api';
 
 const AVATAR_COLORS = [
-  '#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444',
-  '#06b6d4', '#ec4899', '#f97316', '#6366f1', '#84cc16',
+  '#d97706', '#f59e0b', '#0f766e', '#10b981', '#8b5cf6',
+  '#ec4899', '#06b6d4', '#84cc16', '#ef4444', '#64748b',
 ];
 
 const TEMPLATES = [
   {
     name: 'Researcher',
     description: 'Search the web and synthesize findings on any topic',
-    avatar_color: '#3b82f6',
+    avatar_color: '#d97706',
     tools: ['web_search', 'memory'],
     temperature: 0.6,
     max_tokens: 4096,
@@ -121,7 +121,7 @@ export function AgentEditor({ open, onClose, agent, initialValues }) {
   const [staffCreating, setStaffCreating] = useState(false);
   const [createMode, setCreateMode] = useState('staff');
   const DEFAULTS = {
-    name: '', persona_name: '', persona_role: '', description: '', avatar_color: '#3b82f6',
+    name: '', persona_name: '', persona_role: '', description: '', avatar_color: '#d97706',
     model: '', temperature: 0.7, max_tokens: 4096, context_length: 8192,
     system_prompt: '', tools: [], skills: [], reasoning: false,
   };

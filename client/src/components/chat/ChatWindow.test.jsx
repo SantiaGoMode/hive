@@ -37,7 +37,7 @@ class MockWebSocket {
   }
 }
 
-const AGENT = { id: 'a1', name: 'Testbot', model: 'llama3', avatar_color: '#3b82f6', tools: [] };
+const AGENT = { id: 'a1', name: 'Testbot', model: 'llama3', avatar_color: '#d97706', tools: [] };
 
 function lastSocket() {
   return MockWebSocket.instances[MockWebSocket.instances.length - 1];

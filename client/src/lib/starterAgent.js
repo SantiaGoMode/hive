@@ -24,7 +24,7 @@ export function starterAgentDefaults(modelId) {
     name: starterAgentName(modelId),
     persona_role: 'General Assistant',
     description: 'Starter agent created during first-run setup. Customize it any time.',
-    avatar_color: '#3b82f6',
+    avatar_color: '#d97706',
     model: modelId,
     temperature: 0.7,
     max_tokens: 4096,

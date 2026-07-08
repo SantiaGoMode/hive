@@ -19,6 +19,7 @@ With Hive, you can:
 - **Schedule Autonomous Work**: Use natural language to set up cron jobs for agents to execute routines automatically.
 - **Manage Tools via MCP**: Integrate any external tool or API using the Model Context Protocol (MCP).
 - **Integrate Webhooks**: Trigger agent pipelines from external services.
+- **Use a Hive-native interface**: bee/hive branding, a custom packaged app icon, and honey-accented UI defaults.
 
 Hive prioritizes your privacy and security. By default, API keys are stored locally in a secure SQLite database. For even stronger isolation, Hive integrates optionally with a LiteLLM gateway to keep secret keys completely out of the agent sandbox.
 

@@ -7,7 +7,7 @@ describe('sseToEntries', () => {
   it('handles agent_ready: registers agent in nameMap and returns agent_ready entry', () => {
     const nameMap = {};
     const entries = sseToEntries(
-      { type: 'agent_ready', agent: { id: 'a1', name: 'backend-dev', avatar_color: '#3b82f6', model: 'qwen3:8b', tools: ['protocol', 'github'] }, role: 'worker' },
+      { type: 'agent_ready', agent: { id: 'a1', name: 'backend-dev', avatar_color: '#d97706', model: 'qwen3:8b', tools: ['protocol', 'github'] }, role: 'worker' },
       nameMap,
       1000
     );

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CheckCircle2, Circle, ExternalLink, RefreshCw, Rocket } from 'lucide-react';
+import { CheckCircle2, Circle, ExternalLink, RefreshCw } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
+import { HiveMark } from '../components/ui/HiveMark';
 import { api } from '../lib/api';
 import { SETUP_STEPS, nextStep, prevStep, dependencyChecklist, hasModelAccess } from '../lib/setupWizard';
 
@@ -90,8 +91,8 @@ export function SetupPage() {
 
       {step === 'welcome' && (
         <div className="text-center py-10">
-          <div className="w-14 h-14 mx-auto bg-blue-600/20 border border-blue-500/30 rounded-2xl flex items-center justify-center mb-4">
-            <Rocket size={24} className="text-blue-400" />
+          <div className="w-14 h-14 mx-auto rounded-2xl flex items-center justify-center mb-4 shadow-sm shadow-amber-950/50">
+            <HiveMark size={56} title="" />
           </div>
           <h1 className="text-2xl font-semibold text-gray-100">Welcome to Hive</h1>
           <p className="text-sm text-gray-400 mt-2 max-w-md mx-auto">

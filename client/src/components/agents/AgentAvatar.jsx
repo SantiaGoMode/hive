@@ -1,6 +1,6 @@
 import { getInitials } from '../../lib/utils';
 
-export function AgentAvatar({ name, color = '#3b82f6', size = 40 }) {
+export function AgentAvatar({ name, color = '#d97706', size = 40 }) {
   const initials = getInitials(name);
   return (
     <div

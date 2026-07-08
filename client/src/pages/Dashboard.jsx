@@ -18,6 +18,7 @@ import { readSSEStream } from '../lib/streamParser';
 import { hasAnyModelOption } from '../lib/modelLabels';
 import { pickStarterModel } from '../lib/starterAgent';
 import { useCreateStarterAgent } from '../components/agents/useCreateStarterAgent';
+import { HiveMark } from '../components/ui/HiveMark';
 
 const STARTER_MODELS = [
   { name: 'llama3.2:3b', label: 'Llama 3.2 3B', desc: 'Fast · 2 GB · Great for everyday tasks' },
@@ -320,8 +321,8 @@ function OnboardingScreen({ onPull, onDismiss, onCloudSetup }) {
   return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] gap-8 max-w-xl mx-auto text-center">
       <div className="flex flex-col items-center gap-3">
-        <div className="w-14 h-14 bg-blue-600 rounded-2xl flex items-center justify-center">
-          <Zap size={28} className="text-white" />
+        <div className="w-14 h-14 rounded-2xl flex items-center justify-center shadow-sm shadow-amber-950/50">
+          <HiveMark size={56} title="" />
         </div>
         <h1 className="text-2xl font-bold text-gray-100">Welcome to Hive</h1>
         <p className="text-gray-400 text-sm leading-relaxed">

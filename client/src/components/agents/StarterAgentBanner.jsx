@@ -1,5 +1,6 @@
-import { Zap, Wand2, MessageSquare } from 'lucide-react';
+import { Wand2, MessageSquare } from 'lucide-react';
 import { Button } from '../ui/Button';
+import { HiveMark } from '../ui/HiveMark';
 import { modelBadge } from '../../lib/modelLabels';
 import { useCreateStarterAgent } from './useCreateStarterAgent';
 
@@ -12,8 +13,8 @@ export function StarterAgentBanner({ modelId, onCustomize, title }) {
 
   return (
     <div className="p-4 bg-blue-500/5 border border-blue-500/30 rounded-xl flex flex-wrap items-center gap-3">
-      <div className="w-9 h-9 bg-blue-600/20 border border-blue-500/30 rounded-lg flex items-center justify-center shrink-0">
-        <Zap size={16} className="text-blue-400" />
+      <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 shadow-sm shadow-amber-950/40">
+        <HiveMark size={36} title="" />
       </div>
       <div className="flex-1 min-w-48">
         <p className="text-sm font-medium text-gray-200">{title || 'Model ready — create your first agent'}</p>

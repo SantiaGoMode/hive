@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { Bot, HardDrive, Settings, Zap, GitFork, Clock, Search, Users, Webhook, UserRound, Wrench } from 'lucide-react';
+import { Bot, HardDrive, Settings, GitFork, Clock, Search, Users, Webhook, UserRound, Wrench } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { AgentSwitcher } from './AgentSwitcher';
+import { HiveMark } from './HiveMark';
 
 const NAV = [
   { to: '/', icon: Bot, label: 'Agents' },
@@ -39,8 +40,8 @@ export function Layout({ children }) {
         <nav className="w-56 flex-shrink-0 bg-[#1a1d27] border-r border-gray-800 flex flex-col">
           {/* Logo */}
           <div className="flex items-center gap-2.5 px-4 py-5 border-b border-gray-800">
-            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-              <Zap size={16} className="text-white" />
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center shadow-sm shadow-amber-950/40">
+              <HiveMark size={32} title="" />
             </div>
             <div>
               <span className="font-bold text-gray-100 text-sm">Hive</span>

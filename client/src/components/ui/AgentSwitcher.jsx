@@ -99,7 +99,7 @@ export function AgentSwitcher({ open, onClose }) {
               >
                 <div
                   className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0"
-                  style={{ backgroundColor: agent.avatar_color || '#3b82f6' }}
+                  style={{ backgroundColor: agent.avatar_color || '#d97706' }}
                 >
                   <Bot size={13} className="text-white" />
                 </div>

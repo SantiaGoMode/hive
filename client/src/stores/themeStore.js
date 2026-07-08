@@ -2,14 +2,14 @@ import { create } from 'zustand';
 import { api } from '../lib/api';
 
 export const ACCENT_PRESETS = [
+  { color: '#d97706', label: 'Honey'   },
+  { color: '#f59e0b', label: 'Amber'   },
+  { color: '#10b981', label: 'Emerald' },
+  { color: '#0f766e', label: 'Teal'    },
   { color: '#3b82f6', label: 'Blue'    },
   { color: '#8b5cf6', label: 'Violet'  },
-  { color: '#10b981', label: 'Emerald' },
-  { color: '#f59e0b', label: 'Amber'   },
   { color: '#ef4444', label: 'Red'     },
   { color: '#ec4899', label: 'Pink'    },
-  { color: '#06b6d4', label: 'Cyan'    },
-  { color: '#f97316', label: 'Orange'  },
 ];
 
 const FONT_SIZES = { sm: '13px', md: '14px', lg: '16px' };
@@ -24,7 +24,7 @@ function applyTheme({ theme, accent, fontSize }) {
 
 export const useThemeStore = create((set, get) => ({
   theme:    'dark',
-  accent:   '#3b82f6',
+  accent:   '#d97706',
   fontSize: 'md',
 
   async load() {
@@ -32,7 +32,7 @@ export const useThemeStore = create((set, get) => ({
       const cfg = await api.getConfig();
       const s = {
         theme:    cfg.theme        || 'dark',
-        accent:   cfg.accent_color || '#3b82f6',
+        accent:   cfg.accent_color || '#d97706',
         fontSize: cfg.font_size    || 'md',
       };
       set(s);

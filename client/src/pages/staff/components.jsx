@@ -458,7 +458,7 @@ export function NewStaffModal({ onClose, onCreated }) {
   const [displayName, setDisplayName] = useState('');
   const [role, setRole] = useState('');
   const [personality, setPersonality] = useState('');
-  const [avatarColor, setAvatarColor] = useState('#3b82f6');
+  const [avatarColor, setAvatarColor] = useState('#d97706');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
