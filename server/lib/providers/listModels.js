@@ -35,10 +35,14 @@ async function listOllama() {
   try {
     const data = await fetchJson(`${ollamaBaseUrl()}/api/tags`);
     const entries = (data.models || []).map(m => entry('ollama', m.name, 'live'));
-    // Annotate tool-calling support (cached probes) so colony planning and the
-    // pickers can exclude models that can't drive agents. `tools` is true,
+    // Annotate tool-calling + chat support (cached probes) so colony planning and
+    // the pickers can exclude models that can't drive agents. `tools` is true,
     // false, or null (unknown — old Ollama without the capabilities field).
-    return await annotateToolSupport(entries, ollamaBaseUrl());
+    const annotated = await annotateToolSupport(entries, ollamaBaseUrl());
+    // Drop media-only models (image gen like x/flux2-klein, TTS like Orpheus) —
+    // they produce garbage as an agent's chat brain. They stay usable via the
+    // media tools, which reference them through their own settings, not this list.
+    return annotated.filter(e => e.chat !== false);
   } catch {
     return []; // Ollama simply not running; no fallback list to invent.
   }

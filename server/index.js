@@ -70,6 +70,7 @@ app.use('/api/schedules', require('./routes/schedules'));
 app.use('/api/mcp', require('./routes/mcp'));
 app.use('/api/sandbox', require('./routes/sandbox'));
 app.use('/api/colony', require('./routes/colony'));
+app.use('/api/artifacts', require('./routes/artifacts'));
 app.use('/api/staff', require('./routes/staff'));
 app.use('/api/skills', require('./routes/skills'));
 app.use('/api/system', require('./routes/system'));

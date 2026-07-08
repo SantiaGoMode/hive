@@ -6,6 +6,26 @@ const assert = require('node:assert/strict');
 const {
   parseModel, normalizeArgs, splitSystem, toModelMessages, mapUsage,
 } = require('../lib/providers/adapters');
+const { isChatModel } = require('../lib/providers/ollamaCapabilities');
+
+describe('isChatModel (media-model picker filter)', () => {
+  it('rejects TTS models that misreport completion (Orpheus)', () => {
+    assert.equal(isChatModel('legraphista/Orpheus:latest', ['tools', 'completion']), false);
+    assert.equal(isChatModel('whisper-large', null), false);
+  });
+  it('rejects image and embedding models by capability', () => {
+    assert.equal(isChatModel('x/flux2-klein:4b', ['image']), false);
+    assert.equal(isChatModel('nomic-embed-text:latest', ['embedding']), false);
+  });
+  it('accepts real chat models', () => {
+    assert.equal(isChatModel('qwen3:14b', ['completion', 'tools', 'thinking']), true);
+    assert.equal(isChatModel('gemma4:12b-mlx', ['completion', 'tools', 'thinking']), true);
+  });
+  it('is permissive when capabilities are unknown (old Ollama) unless the name is a media generator', () => {
+    assert.equal(isChatModel('some-new-model', null), true);
+    assert.equal(isChatModel('x/flux2-klein:4b', null), false);
+  });
+});
 
 describe('parseModel', () => {
   it('routes known prefixes', () => {

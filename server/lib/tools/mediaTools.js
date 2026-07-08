@@ -113,8 +113,13 @@ module.exports = {
       const res = await generateImageViaOllama(text, model, outPath);
       if (!res.ok) return { error: res.error || 'Image generation failed.' };
       const name = path.basename(outPath);
-      registerArtifact(ctx, { name, mime: artifacts.mimeFor(name), kind: 'image', prompt: text });
-      return { success: true, artifact: name, message: `Image saved as ${name}. It will appear in the colony artifacts and be posted to Discord.` };
+      const mime = artifacts.mimeFor(name);
+      registerArtifact(ctx, { name, mime, kind: 'image', prompt: text });
+      return {
+        success: true, artifact: name, mime, kind: 'image',
+        url: `/api/artifacts/${encodeURIComponent(colonyId)}/${encodeURIComponent(name)}`,
+        message: `Image "${name}" generated. In a colony it appears in the artifacts and posts to Discord; in regular chat it renders inline from the url.`,
+      };
     },
   },
 
@@ -148,8 +153,13 @@ module.exports = {
       const res = await runPython(ORPHEUS_SCRIPT, args);
       if (!res.ok) return { error: res.error || 'Speech generation failed.' };
       const name = path.basename(outPath);
-      registerArtifact(ctx, { name, mime: artifacts.mimeFor(name), kind: 'audio', text: body.slice(0, 200) });
-      return { success: true, artifact: name, message: `Speech saved as ${name}. It will appear in the colony artifacts and be posted to Discord.` };
+      const mime = artifacts.mimeFor(name);
+      registerArtifact(ctx, { name, mime, kind: 'audio', text: body.slice(0, 200) });
+      return {
+        success: true, artifact: name, mime, kind: 'audio',
+        url: `/api/artifacts/${encodeURIComponent(colonyId)}/${encodeURIComponent(name)}`,
+        message: `Speech "${name}" generated. In a colony it appears in the artifacts and posts to Discord; in regular chat it plays inline from the url.`,
+      };
     },
   },
 };

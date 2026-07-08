@@ -14,12 +14,17 @@ function artifactsRoot() {
   return path.join(config.hiveHome(), 'artifacts');
 }
 
-// The run's directory (created on demand). colonyId is validated to a safe slug
-// so it can never escape the artifacts root.
+// The validated path for a bucket (a colony id, or an adhoc-<agentId> bucket for
+// non-colony agents). Does NOT create the directory — safe for read paths.
+function bucketDir(bucket) {
+  const id = String(bucket || '').trim();
+  if (!/^[a-zA-Z0-9_-]{1,80}$/.test(id)) throw new Error('Invalid artifacts bucket');
+  return path.join(artifactsRoot(), id);
+}
+
+// The run's directory, created on demand (write path).
 function artifactsDir(colonyId) {
-  const id = String(colonyId || '').trim();
-  if (!/^[a-zA-Z0-9_-]{1,80}$/.test(id)) throw new Error('Invalid colony id for artifacts dir');
-  const dir = path.join(artifactsRoot(), id);
+  const dir = bucketDir(colonyId);
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -58,11 +63,12 @@ function saveArtifact(colonyId, filename, data, { ext = '' } = {}) {
 }
 
 // Resolve a relative artifact name to an absolute path, refusing traversal.
-function resolveArtifact(colonyId, name) {
-  const dir = artifactsDir(colonyId);
+// Read-safe: does not create the bucket directory.
+function resolveArtifact(bucket, name) {
+  const dir = bucketDir(bucket);
   const resolved = path.resolve(dir, String(name || ''));
   if (resolved !== dir && !resolved.startsWith(dir + path.sep)) {
-    throw new Error('Artifact path escapes the run artifacts directory');
+    throw new Error('Artifact path escapes the artifacts directory');
   }
   return resolved;
 }
@@ -83,7 +89,8 @@ function mimeFor(name) {
 }
 
 function listArtifacts(colonyId) {
-  const dir = path.join(artifactsRoot(), String(colonyId || ''));
+  let dir;
+  try { dir = bucketDir(colonyId); } catch { return []; }
   let entries = [];
   try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return []; }
   const out = [];
@@ -98,6 +105,7 @@ function listArtifacts(colonyId) {
 
 module.exports = {
   artifactsRoot,
+  bucketDir,
   artifactsDir,
   safeFilename,
   saveArtifact,

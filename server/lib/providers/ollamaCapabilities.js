@@ -35,16 +35,35 @@ async function supportsTools(model, ollamaUrl) {
   return caps.includes('tools');
 }
 
-// Annotate model entries (from listOllama) with { tools } in parallel.
+// Media-generation models that are NOT usable as an agent's chat brain. Image
+// models report caps like ['image'] (no 'completion') and are caught by the
+// capability check below — but TTS/audio models such as Orpheus are Llama
+// fine-tunes that DO report ['completion','tools'], so they slip past caps and
+// need this name heuristic. Using one as an agent model yields garbage output
+// (audio codes / confused text), so they're dropped from the model pickers.
+const MEDIA_MODEL_RE = /\b(orpheus|tts|whisper|bark|xtts|kokoro|musicgen|melotts|piper|parler|vits|flux|flux2|sdxl|stable-?diffusion|dall-?e|snac|comfyui)\b/i;
+
+// Is this model usable as a conversational agent brain? false for media/image/
+// embedding models; null-caps (old Ollama) is treated as chat-capable, except
+// for names that clearly denote a media generator.
+function isChatModel(name, caps) {
+  if (MEDIA_MODEL_RE.test(String(name || ''))) return false;
+  if (Array.isArray(caps) && caps.length > 0) return caps.includes('completion');
+  return true; // unknown capabilities → permissive
+}
+
+// Annotate model entries (from listOllama) with { tools, chat } in parallel,
+// probing each model's capabilities once.
 async function annotateToolSupport(entries, ollamaUrl) {
-  return Promise.all(entries.map(async (e) => ({
-    ...e,
-    tools: await supportsTools(e.name, ollamaUrl),
-  })));
+  return Promise.all(entries.map(async (e) => {
+    const caps = await getCapabilities(e.name, ollamaUrl);
+    const tools = (!caps || caps.length === 0) ? null : caps.includes('tools');
+    return { ...e, tools, chat: isChatModel(e.name, caps) };
+  }));
 }
 
 function _resetForTests() {
   cache.clear();
 }
 
-module.exports = { getCapabilities, supportsTools, annotateToolSupport, _resetForTests };
+module.exports = { getCapabilities, supportsTools, isChatModel, annotateToolSupport, _resetForTests };
