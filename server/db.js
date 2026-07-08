@@ -229,9 +229,6 @@ db.exec(`
     model_preference TEXT DEFAULT '',
     memory TEXT NOT NULL DEFAULT '',
     avatar_color TEXT DEFAULT '#3b82f6',
-    chat_enabled INTEGER NOT NULL DEFAULT 0,
-    chat_interval_minutes INTEGER NOT NULL DEFAULT 10,
-    last_chat_at INTEGER,
     created_at INTEGER DEFAULT (unixepoch()),
     updated_at INTEGER DEFAULT (unixepoch()),
     UNIQUE(recipe_id, role_key)
@@ -261,15 +258,6 @@ db.exec(`
     created_at INTEGER DEFAULT (unixepoch()),
     updated_at INTEGER DEFAULT (unixepoch())
   );
-  CREATE TABLE IF NOT EXISTS staff_chat_messages (
-    id TEXT PRIMARY KEY,
-    author_type TEXT NOT NULL DEFAULT 'profile',
-    author_profile_id TEXT,
-    content TEXT NOT NULL,
-    mentions TEXT NOT NULL DEFAULT '[]',
-    trigger_type TEXT NOT NULL DEFAULT 'manual',
-    created_at INTEGER DEFAULT (unixepoch())
-  );
 `);
 
 // ── Schema migrations ─────────────────────────────────────────────────────────
@@ -277,18 +265,21 @@ db.exec(`
 // than run as bare `ALTER TABLE … catch {}`. See server/lib/migrations.js (#32).
 runMigrations(db);
 
-// One-time seed of a starter skills catalog (demo/testing). Guarded by a flag
-// so user deletions are not re-seeded on the next boot.
+// One-time seeds of the skills catalog, in versioned batches. Each batch is
+// guarded by its own flag so user deletions are not re-seeded on the next
+// boot, while DBs that already ran an earlier batch still receive later ones
+// (v2 carries the business/analysis skills for the expanded recipe catalog).
 try {
-  const seeded = db.prepare("SELECT value FROM app_settings WHERE key='skills_seeded_v1'").get();
-  if (!seeded) {
-    const { SKILL_SEEDS } = require('./lib/skillSeeds');
-    const { v4 } = require('./lib/uuid');
-    const ins = db.prepare('INSERT OR IGNORE INTO skills (id, name, description, instructions, templates) VALUES (?, ?, ?, ?, ?)');
-    for (const s of SKILL_SEEDS) {
+  const { SKILL_SEEDS, SKILL_SEEDS_V2, SKILL_SEEDS_V3 } = require('./lib/skillSeeds');
+  const { v4 } = require('./lib/uuid');
+  const ins = db.prepare('INSERT OR IGNORE INTO skills (id, name, description, instructions, templates) VALUES (?, ?, ?, ?, ?)');
+  for (const [flag, seeds] of [['skills_seeded_v1', SKILL_SEEDS], ['skills_seeded_v2', SKILL_SEEDS_V2], ['skills_seeded_v3', SKILL_SEEDS_V3]]) {
+    const seeded = db.prepare('SELECT value FROM app_settings WHERE key=?').get(flag);
+    if (seeded) continue;
+    for (const s of seeds) {
       ins.run(v4(), s.name, s.description || '', s.instructions || '', JSON.stringify(s.templates || []));
     }
-    db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('skills_seeded_v1', '1')").run();
+    db.prepare('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, \'1\')').run(flag);
   }
 } catch (e) { logSwallowed('db:skillsSeed', e); }
 

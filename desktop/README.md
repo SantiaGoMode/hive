@@ -4,7 +4,7 @@ Electron shell around the unmodified Hive server + built client. The shell:
 
 1. picks a free localhost port and starts `server/index.js` — via `utilityProcess` (Electron's bundled Node) when packaged, via the system `node` in dev,
 2. waits for `GET /healthz`,
-3. reads `~/.hive/auth_token` and opens a `BrowserWindow` at the local origin with the token injected through `preload.js` (`window.hiveDesktop.authToken`), so the paste-a-token prompt never appears.
+3. reads the active auth token from `HIVE_AUTH_TOKEN` or `~/.hive/hive.db` (`hive_auth_token`), resyncs the convenience copy at `~/.hive/auth_token`, and opens a `BrowserWindow` at the local origin with the token injected through `preload.js` (`window.hiveDesktop.authToken`), so the paste-a-token prompt never appears.
 
 Data lives in the same `~/.hive` as the browser/dev workflows — the desktop app, `npm run dev`, and `npm start` are interchangeable views of one install.
 

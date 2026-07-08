@@ -111,10 +111,13 @@ const GROUP_META = {
   colony_tools: { label: 'Colony Tools', description: 'Colony management tools (operator-level)' },
   agent_tools: { label: 'Agent Tools', description: 'Delegate to and ask other agents' },
   github: { label: 'GitHub', description: 'Issues, PRs, comments, and repo reads via the GitHub API' },
+  skills: { label: 'Skill Loader', description: 'Browse the skill catalog and load skills mid-conversation' },
+  hive_admin: { label: 'Hive Admin', description: 'Read/modify staff profiles, skills, tool grants, and non-secret settings' },
+  media: { label: 'Media Generation', description: 'Local text-to-image (FLUX.2-klein) and text-to-speech (Orpheus), both via Ollama' },
 };
 
 // Worker-internal groups that only make sense when the runtime injects them.
-const INTERNAL_GROUPS = new Set(['delegation', 'protocol_worker', 'sandbox_files']);
+const INTERNAL_GROUPS = new Set(['delegation', 'protocol_worker', 'sandbox_files', 'colony_operator']);
 
 router.get('/tool-options', (req, res) => {
   const catalog = builtInToolCatalog();

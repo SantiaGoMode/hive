@@ -24,6 +24,10 @@ docs/AUDIT.md
 # Colony run exports
 colony_output/
 
+# Python cache (media generation helper scripts)
+__pycache__/
+*.pyc
+
 # macOS
 .DS_Store
 

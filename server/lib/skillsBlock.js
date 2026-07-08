@@ -1,5 +1,5 @@
 // Render assigned skills into a prompt section. Shared by staff profiles
-// (colony workers, staff chat) and per-agent skills (chat, pipelines,
+// (colony workers) and per-agent skills (chat, pipelines,
 // schedules via buildSystemPrompt). Skills defined in the catalog contribute
 // their full body (description, instructions, templates); names with no
 // catalog entry are listed as plain bullet points.
@@ -34,4 +34,27 @@ function renderSkillsBlock(skillNames) {
   return parts.join('\n\n');
 }
 
-module.exports = { renderSkillsBlock };
+// Lean manifest of assigned skills: names + one-line descriptions only, plus an
+// instruction to pull the full body on demand with load_skill. This is what
+// goes into system prompts now — the full renderSkillsBlock body (instructions +
+// templates) would bloat every turn's context with skills the agent may never
+// use. load_skill fetches the full body exactly when it's needed.
+function renderSkillsManifest(skillNames) {
+  if (!Array.isArray(skillNames) || !skillNames.length) return '';
+  const rows = db.prepare(
+    `SELECT name, description FROM skills WHERE name IN (${skillNames.map(() => '?').join(',')})`
+  ).all(...skillNames);
+  const byName = new Map(rows.map(r => [r.name, r]));
+  const lines = skillNames.map(name => {
+    const desc = byName.get(name)?.description?.trim();
+    return `- ${name}${desc ? ` — ${desc}` : ''}`;
+  });
+  return [
+    'These skills are assigned to you. Their full instructions are NOT loaded yet, to keep your context lean.',
+    'Before doing work that matches one, call load_skill("<name>") to load its full instructions and templates, then follow them.',
+    '',
+    ...lines,
+  ].join('\n');
+}
+
+module.exports = { renderSkillsBlock, renderSkillsManifest };

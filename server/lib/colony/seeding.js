@@ -16,6 +16,43 @@ const { addAgentToColony } = require('./persistence');
 const { connectedMcpServers, mcpCategoriesForWorker } = require('./mcp');
 const { orchestratorPrompt } = require('./prompts');
 
+// ── Role-metadata seeding decisions ───────────────────────────────────────────
+// Worker configs carry `_role_meta` (capabilities, repo_access, network, mcp)
+// from the recipe definition. These helpers turn that metadata into concrete
+// seeding decisions, with legacy role-key fallbacks for configs that predate
+// metadata (custom staff profiles, hand-rolled configs in tests).
+
+function workerIsCoding(workerConfig) {
+  return colonyModels.isCodingRole({
+    key: workerConfig.role_key,
+    capabilities: workerConfig._role_meta?.capabilities || undefined,
+  });
+}
+
+// Legacy fallback: the PM and designer write record-keeping/spec artifacts
+// under docs/, so they get a writable mount too (file tools only, no shell).
+const DOC_WRITER_ROLES = new Set(['project_manager', 'ui_ux_designer']);
+
+// 'write' | 'read' | null — how (and whether) to mount the colony repo.
+function workerRepoAccess(workerConfig) {
+  const declared = workerConfig._role_meta?.repo_access;
+  if (declared === 'write' || declared === 'read') return declared;
+  if (declared === null && workerConfig._role_meta?.capabilities) {
+    // Metadata-bearing role that explicitly declares no repo access.
+    return null;
+  }
+  if (workerIsCoding(workerConfig) || DOC_WRITER_ROLES.has(workerConfig.role_key)) return 'write';
+  return null;
+}
+
+// 'bridge' | null — sandbox egress (installs need the network; default stays none).
+function workerNetwork(workerConfig) {
+  const declared = workerConfig._role_meta?.network;
+  if (declared === 'bridge') return 'bridge';
+  if (declared === null && workerConfig._role_meta?.capabilities) return null;
+  return workerIsCoding(workerConfig) ? 'bridge' : null;
+}
+
 // Seed the recipe's workers into the DB and populate the run-scoped
 // `recipeWorkers` array + `reasoningByAgentId` map (both mutated in place).
 // `ctx` carries all run inputs:
@@ -70,7 +107,7 @@ function seedRecipeWorkers(ctx) {
   const repoGuidelines = row.repo_path ? readRepoGuidelines(row.repo_path) : '';
   if (repoGuidelines) {
     for (const wc of workerConfigs) {
-      if (colonyModels.CODING_ROLES.has(wc.role_key)) wc.system_prompt += repoGuidelines;
+      if (workerIsCoding(wc)) wc.system_prompt += repoGuidelines;
     }
     addEntry({ kind: 'recipe', recipe_id: recipe.id, message: 'Loaded repository coding guidelines for coding roles.' });
   }
@@ -78,14 +115,14 @@ function seedRecipeWorkers(ctx) {
   // is possible when this crew has coding roles and a repo to work in. If not,
   // remove the sandbox tool before workers are written so they do not loop on
   // an unavailable runtime.
-  const hasCodingRole = recipe.roles.some(r => colonyModels.CODING_ROLES.has(r.key));
+  const hasCodingRole = recipe.roles.some(r => colonyModels.isCodingRole(r));
   if (hasCodingRole && row.repo_path) {
     try {
       const cap = sandbox.capabilities();
       addEntry({ kind: cap.ready ? 'recipe' : 'preflight', recipe_id: recipe.id, message: `Sandbox: ${cap.message}` });
       if (!cap.ready) {
         for (const wc of workerConfigs) {
-          if (colonyModels.CODING_ROLES.has(wc.role_key)) {
+          if (workerIsCoding(wc)) {
             wc.tools = (wc.tools || []).filter(tool => tool !== 'sandbox');
             wc.system_prompt += `\n\n[Sandbox unavailable]\n${cap.message}\nDo not attempt code edits or test execution in this run. Report the capability blocker clearly and hand off only planning or review work that can be done without executing code.`;
           }
@@ -127,17 +164,17 @@ complete, or a plain-text answer stating exactly what you did and what remains.`
     if (workerConfig.role_key) {
       try { staffDirectory.linkAssignedAgent(recipe.id, workerConfig.role_key, worker.id, workerConfig._staff_profile_id); } catch (e) { logSwallowed('colonyRunner:linkStaff', e, { agentId: worker.id }); }
     }
-    // Coding roles get the colony's repo mounted as their sandbox workspace
-    // so they edit the real project. The PM and designer get it too — they
-    // persist record-keeping and spec artifacts under docs/ (file tools only).
-    // All need writes, so opt in explicitly; every other mount stays read-only.
-    const DOC_WRITER_ROLES = new Set(['project_manager', 'ui_ux_designer']);
-    if (row.repo_path && (colonyModels.CODING_ROLES.has(workerConfig.role_key) || DOC_WRITER_ROLES.has(workerConfig.role_key))) {
-      try { sandbox.setAgentRepo(worker.id, row.repo_path, { writable: true }); } catch (e) { logSwallowed('colonyRunner:setAgentRepo', e, { agentId: worker.id }); }
+    // Role metadata decides the repo mount: 'write' roles edit the real
+    // project (coding, doc-writing), 'read' roles inspect it (reviewers,
+    // analysts), everyone else gets no mount at all.
+    const repoAccess = workerRepoAccess(workerConfig);
+    if (row.repo_path && repoAccess) {
+      try { sandbox.setAgentRepo(worker.id, row.repo_path, { writable: repoAccess === 'write' }); } catch (e) { logSwallowed('colonyRunner:setAgentRepo', e, { agentId: worker.id }); }
     }
-    // Coding roles need egress for npm/pip installs; the sandbox default is
-    // network=none, so opt them into bridge explicitly.
-    if (colonyModels.CODING_ROLES.has(workerConfig.role_key)) {
+    // Sandbox egress: the default is network=none; roles that install
+    // dependencies or audit registries declare network 'bridge' in metadata
+    // (coding roles get it by legacy fallback).
+    if (workerNetwork(workerConfig) === 'bridge') {
       try { sandbox.setAgentNetwork(worker.id, 'bridge'); } catch (e) { logSwallowed('colonyRunner:setAgentNetwork', e, { agentId: worker.id }); }
     }
     const roleReasoning = workerConfig.role_key && Object.prototype.hasOwnProperty.call(reasoningDecision.by_role, workerConfig.role_key)
@@ -203,4 +240,11 @@ function createOrchestrator(ctx) {
   return orch;
 }
 
-module.exports = { seedRecipeWorkers, createOrchestrator };
+module.exports = {
+  seedRecipeWorkers,
+  createOrchestrator,
+  // Exported for tests: pure metadata → seeding-decision helpers.
+  workerIsCoding,
+  workerRepoAccess,
+  workerNetwork,
+};

@@ -25,6 +25,46 @@ module.exports = function registerRunReadRoutes(router) {
     if (!colony) return res.status(404).json({ error: 'Colony not found' });
     const rel = String(req.query.path || '').trim();
     if (!rel) return res.status(400).json({ error: 'path is required' });
+
+    // The report is a synthetic artifact stored inline in the deliverable, not a
+    // file on disk — serve it directly so repo-less runs still have a viewable
+    // work product.
+    if (rel === '__report__') {
+      const d = colony.deliverable && typeof colony.deliverable === 'object'
+        ? colony.deliverable
+        : (() => { try { return JSON.parse(colony.deliverable || 'null'); } catch { return null; } })();
+      const report = d?.report || d?.summary || colony.summary;
+      if (!report) return res.status(404).json({ error: 'This run has no report.' });
+      return res.json({ path: 'report.md', content: String(report), source: 'report' });
+    }
+
+    // Run artifact dir first: media (images/audio), the mirrored report, and any
+    // non-repo file the crew produced live here. This is what makes repo-less
+    // runs' outputs downloadable. `?raw=1` streams the bytes (for <img>/<audio>/
+    // download); otherwise text is previewed as JSON and binary is advertised.
+    {
+      const nodePath = require('path');
+      const runArtifacts = require('../../lib/colonyArtifacts');
+      let abs = null;
+      try { abs = runArtifacts.resolveArtifact(colony.id, rel); } catch { abs = null; }
+      if (abs && fs.existsSync(abs) && fs.statSync(abs).isFile()) {
+        const mime = runArtifacts.mimeFor(abs);
+        const isText = mime.startsWith('text/') || mime === 'application/json' || /\.(md|markdown|csv|svg|html|txt)$/i.test(rel);
+        if (req.query.raw === '1') {
+          res.setHeader('Content-Type', mime);
+          const disp = req.query.download === '1' ? 'attachment' : 'inline';
+          res.setHeader('Content-Disposition', `${disp}; filename="${nodePath.basename(abs)}"`);
+          return fs.createReadStream(abs).pipe(res);
+        }
+        const size = fs.statSync(abs).size;
+        if (!isText) {
+          return res.json({ path: rel, size, mime, binary: true, source: 'artifacts', download_url: `/api/colony/${colony.id}/artifact?path=${encodeURIComponent(rel)}&raw=1` });
+        }
+        const buf = fs.readFileSync(abs);
+        return res.json({ path: rel, size, truncated: buf.length > ARTIFACT_MAX_BYTES, source: 'artifacts', mime, content: buf.slice(0, ARTIFACT_MAX_BYTES).toString('utf8') });
+      }
+    }
+
     const repoPath = colony.repo_path || getColonyRepoPath();
     if (!repoPath) return res.status(400).json({ error: 'This run has no repository path to resolve artifacts against.' });
 

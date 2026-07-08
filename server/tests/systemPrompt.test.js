@@ -98,15 +98,19 @@ describe('buildSystemPrompt — agent mode (colony/pipeline)', () => {
 describe('buildSystemPrompt — per-agent skills injection', () => {
   const db = require('../db');
 
-  it('injects a [Skills] section with catalog content in both modes, between prompt and memory', () => {
+  it('injects a lean [Skills] manifest (names + descriptions, not full bodies) in both modes, between prompt and memory', () => {
     db.prepare(`INSERT OR REPLACE INTO skills (id, name, description, instructions, templates)
                 VALUES ('sk-test', 'Prompt Test Skill', 'Test the prompts.', 'Always test prompts.', '[]')`).run();
     try {
       const agent = { name: 'Nova', system_prompt: 'Ship it.', skills: ['Prompt Test Skill'] };
       for (const mode of ['chat', 'agent']) {
         const out = buildSystemPrompt(agent, { mode, memory: 'remember me' });
-        assert.ok(out.includes('[Skills]\n### Prompt Test Skill'), `${mode}: skills header missing`);
-        assert.ok(out.includes('Always test prompts.'), `${mode}: instructions missing`);
+        assert.ok(out.includes('[Skills]'), `${mode}: skills header missing`);
+        // Manifest lists the name + description and points at load_skill…
+        assert.ok(out.includes('- Prompt Test Skill — Test the prompts.'), `${mode}: manifest line missing`);
+        assert.ok(out.includes('load_skill'), `${mode}: load_skill hint missing`);
+        // …but the full instruction body is NOT baked into the prompt anymore.
+        assert.ok(!out.includes('Always test prompts.'), `${mode}: full body must not be injected up-front`);
         assert.ok(out.indexOf('Ship it.') < out.indexOf('[Skills]'), `${mode}: skills must follow the user prompt`);
         assert.ok(out.indexOf('[Skills]') < out.indexOf('remember me'), `${mode}: skills must precede memory`);
       }
@@ -120,7 +124,8 @@ describe('buildSystemPrompt — per-agent skills injection', () => {
       { name: 'Nova', system_prompt: 'Go.', skills: ['No Such Skill'] },
       { mode: 'agent', memory: '' },
     );
-    assert.ok(out.includes('[Skills]\n- No Such Skill'));
+    assert.ok(out.includes('[Skills]'));
+    assert.ok(out.includes('- No Such Skill'));
 
     const none = buildSystemPrompt({ name: 'Nova', system_prompt: 'Go.' }, { mode: 'agent', memory: '' });
     assert.ok(!none.includes('[Skills]'));

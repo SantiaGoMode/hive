@@ -6,9 +6,22 @@
 
 const { parseModel } = require('./providers/adapters');
 
-// Roles that primarily write/inspect code — they get the strongest coding model.
+// Legacy fallback set for roles that predate role metadata (and for custom
+// staff roles that carry a bare role_key with no recipe definition). New
+// recipes declare `capabilities: ['coding', ...]` on the role instead —
+// prefer isCodingRole(role) over consulting this set directly.
 const CODING_ROLES = new Set(['software_developer', 'qa_engineer', 'devops_engineer']);
 const REASONING_MODES = new Set(['auto', 'on', 'off']);
+
+// Does this role primarily write/inspect code? Accepts a recipe role object
+// (uses its capabilities metadata when present) or a bare role_key string
+// (falls back to the legacy CODING_ROLES set).
+function isCodingRole(role) {
+  if (!role) return false;
+  if (typeof role === 'string') return CODING_ROLES.has(role);
+  if (Array.isArray(role.capabilities)) return role.capabilities.includes('coding');
+  return CODING_ROLES.has(role.key);
+}
 
 function normalizeReasoningMode(mode) {
   const v = String(mode || 'auto').toLowerCase();
@@ -102,7 +115,7 @@ function proposeModelPlan(recipe, grouped, { cloudEnabled = false, fallback = 'l
   const plan = { operator: strongest };
   const roles = (recipe && Array.isArray(recipe.roles)) ? recipe.roles : [];
   for (const role of roles) {
-    plan[role.key] = CODING_ROLES.has(role.key) ? coding : general;
+    plan[role.key] = isCodingRole(role) ? coding : general;
   }
   return plan;
 }
@@ -134,7 +147,7 @@ async function proposeModelPlanLLM(recipe, grouped, { cloudEnabled = false, goal
   if (!pool.length || !reasoner) return { model_plan: heuristic, source: 'heuristic' };
 
   const roleLines = ((recipe && recipe.roles) || [])
-    .map(r => `- ${r.key} (${r.role}): ${CODING_ROLES.has(r.key) ? 'writes/inspects code' : 'analysis/planning/writing'}`)
+    .map(r => `- ${r.key} (${r.role}): ${isCodingRole(r) ? 'writes/inspects code' : 'analysis/planning/writing'}`)
     .join('\n');
   const allowedIds = pool.map(e => e.id).join(', ');
   const sys = 'You are a Colony Operator provisioning a software team. Choose the most cost-effective capable model for each role. Coding roles benefit from strong coding models; analysis/planning roles can use lighter models. If "gateway/" capability aliases (e.g. gateway/hive-smart, gateway/hive-coding, gateway/hive-cheap) are in the allowed list, PREFER them — they automatically fail over across providers if one is unavailable. Respond with ONLY a JSON object mapping each role key (and "operator") to a model id chosen strictly from the allowed list. No prose, no code fences.';
@@ -177,7 +190,7 @@ function shouldEnableWorkerReasoning({ mode = 'auto', recipe = null, goal = '' }
   if (normalized === 'on') return true;
   if (normalized === 'off') return false;
   const text = `${goal || ''} ${recipe?.name || ''}`.toLowerCase();
-  const hasCodingRoles = Array.isArray(recipe?.roles) && recipe.roles.some(r => CODING_ROLES.has(r.key));
+  const hasCodingRoles = Array.isArray(recipe?.roles) && recipe.roles.some(isCodingRole);
   return hasCodingRoles || /architecture|debug|investigate|migrate|refactor|security|test failure|failing test|multi[-\s]?step|complex|root cause/.test(text);
 }
 
@@ -192,9 +205,9 @@ function decideRoleReasoning({ recipe = null, goal = '' } = {}) {
   const byRole = {};
   const roles = Array.isArray(recipe?.roles) ? recipe.roles : [];
   for (const role of roles) {
-    byRole[role.key] = CODING_ROLES.has(role.key) || complex;
+    byRole[role.key] = isCodingRole(role) || complex;
   }
-  const hasCodingRoles = roles.some(r => CODING_ROLES.has(r.key));
+  const hasCodingRoles = roles.some(isCodingRole);
   return {
     operator: true,
     by_role: byRole,
@@ -217,6 +230,7 @@ function gatePlan(modelPlan, cloudEnabled) {
 
 module.exports = {
   CODING_ROLES,
+  isCodingRole,
   normalizeReasoningMode,
   shouldEnableWorkerReasoning,
   decideRoleReasoning,

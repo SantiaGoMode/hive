@@ -23,10 +23,8 @@ describe('GET /api/system/metrics', () => {
     assert.ok('memory' in b);
     assert.ok('active_colony_runs' in b);
     assert.ok('scheduled_tasks' in b);
-    assert.equal(typeof b.staff_scheduler.started, 'boolean');
-    assert.equal(typeof b.staff_scheduler.ticking, 'boolean');
-    assert.equal(typeof b.scheduler_lifecycle.staffScheduler.running, 'boolean');
-    assert.equal(typeof b.scheduler_lifecycle.staffScheduler.tick_count, 'number');
+    assert.equal(typeof b.scheduler_lifecycle.scheduler.running, 'boolean');
+    assert.equal(typeof b.scheduler_lifecycle.scheduler.tick_count, 'number');
     assert.equal(typeof b.ollama.reachable, 'boolean');
     assert.equal(typeof b.ollama.url, 'string');
     assert.equal(typeof b.ollama.loaded_models, 'number');

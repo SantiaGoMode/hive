@@ -33,6 +33,11 @@ function hasBus(colonyId) {
 function publish(colonyId, event) {
   const bus = buses.get(colonyId);
   if (bus) bus.emit('event', event);
+  // Terminal run events also nudge the roster page (every launch path
+  // publishes its end through this bus, so this is the one chokepoint).
+  if (event?.type === 'done' || event?.type === 'error') {
+    try { require('./rosterBus').notifyRoster('run_finished', { run_id: colonyId }); } catch { /* roster is best-effort */ }
+  }
 }
 
 // Call after a run ends. If there are still subscribers (e.g., a tailing client

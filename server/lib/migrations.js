@@ -99,7 +99,8 @@ const MIGRATIONS = [
       addColumn(db, 'colonies', 'github_writeback', 'INTEGER DEFAULT 0');
       db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_staff_profiles_recipe_role ON staff_profiles(recipe_id, role_key)');
       db.exec('CREATE INDEX IF NOT EXISTS idx_staff_suggestions_profile_status ON staff_operator_suggestions(profile_id, status)');
-      db.exec('CREATE INDEX IF NOT EXISTS idx_staff_chat_created ON staff_chat_messages(created_at)');
+      // (An idx_staff_chat_created index was created here historically; the
+      // staff-chat feature and its table were removed in migration 16.)
     },
   },
   {
@@ -120,7 +121,8 @@ const MIGRATIONS = [
     name: 'staff_profiles assigned_agent_id + chat_model',
     up(db) {
       addColumn(db, 'staff_profiles', 'assigned_agent_id', "TEXT DEFAULT ''");
-      addColumn(db, 'staff_profiles', 'chat_model', "TEXT DEFAULT ''");
+      // (chat_model was also added here historically; the staff-chat feature
+      // and its columns were removed in migration 16.)
     },
   },
   {
@@ -172,6 +174,77 @@ const MIGRATIONS = [
     version: 15,
     name: 'scheduled_runs.pipeline_id (schedules can target a pipeline instead of an agent)',
     up(db) { addColumn(db, 'scheduled_runs', 'pipeline_id', 'TEXT'); },
+  },
+  {
+    version: 16,
+    name: 'remove staff chat (drop staff_chat_messages + staff_profiles chat columns)',
+    up(db) {
+      db.exec('DROP TABLE IF EXISTS staff_chat_messages');
+      // Guarded: fresh DBs never had these columns (removed from the baseline
+      // schema and from migrations 7/10 alongside this migration).
+      for (const column of ['chat_enabled', 'chat_interval_minutes', 'last_chat_at', 'chat_model']) {
+        if (columnExists(db, 'staff_profiles', column)) {
+          db.exec(`ALTER TABLE staff_profiles DROP COLUMN ${column}`);
+        }
+      }
+    },
+  },
+  {
+    version: 17,
+    name: 'colony_work_items table (per-colony work queue) + indexes',
+    up(db) {
+      // Work items flow to colonies (colonies-first spec): board cards, webhook
+      // events, and manual directions land here as proposed/queued items; a
+      // claimed item points at the run it became via run_id. team_id is nullable
+      // — NULL means the item sits in the roster's Unrouted tray.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS colony_work_items (
+          id TEXT PRIMARY KEY,
+          team_id TEXT,
+          source TEXT NOT NULL DEFAULT 'manual',
+          source_ref TEXT,
+          title TEXT NOT NULL DEFAULT '',
+          direction TEXT DEFAULT '',
+          board_card TEXT,
+          status TEXT NOT NULL DEFAULT 'queued',
+          run_id TEXT,
+          match_reason TEXT DEFAULT '',
+          created_at INTEGER DEFAULT (unixepoch()),
+          updated_at INTEGER DEFAULT (unixepoch())
+        );
+      `);
+      db.exec('CREATE INDEX IF NOT EXISTS idx_work_items_team ON colony_work_items(team_id, status, created_at)');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_work_items_source ON colony_work_items(source, source_ref)');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_work_items_run ON colony_work_items(run_id)');
+    },
+  },
+  {
+    version: 18,
+    name: 'discord bridge tables (channel bindings + thread map)',
+    up(db) {
+      // One private guild per install: `kind` is the primary key so /hive setup
+      // rebinds idempotently. Kinds: 'general' | 'colony_forum' | 'health_forum'.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS discord_bindings (
+          kind TEXT PRIMARY KEY,
+          guild_id TEXT NOT NULL,
+          channel_id TEXT NOT NULL,
+          created_at INTEGER DEFAULT (unixepoch()),
+          updated_at INTEGER DEFAULT (unixepoch())
+        );
+      `);
+      // Durable thread ownership: a colony team's forum thread ('colony', ref =
+      // team id) or a health finding's thread ('health', ref = fingerprint).
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS discord_threads (
+          thread_id TEXT PRIMARY KEY,
+          kind TEXT NOT NULL,
+          ref TEXT NOT NULL,
+          created_at INTEGER DEFAULT (unixepoch())
+        );
+      `);
+      db.exec('CREATE INDEX IF NOT EXISTS idx_discord_threads_ref ON discord_threads(kind, ref)');
+    },
   },
 ];
 

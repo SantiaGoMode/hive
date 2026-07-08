@@ -5,6 +5,7 @@ const db = require('../db');
 const { buildEnvelope } = require('../lib/webhookProjection');
 const { serializeActions, triggerWebhookActions } = require('../lib/webhookActions');
 const { processWebhookEvent } = require('../lib/colonyTriggers');
+const { routeWebhookEvent } = require('../lib/workRouter');
 const { resolveSecret, parseEnvRef } = require('../lib/secrets');
 const { timingSafeEqualString } = require('../lib/auth');
 const { validateBody, createWebhookSchema, updateWebhookSchema } = require('../lib/validate');
@@ -211,6 +212,10 @@ router.post('/incoming/:id', (req, res) => {
     triggerWebhookActions(webhook, event);
     setImmediate(() => {
       try { processWebhookEvent(event); } catch (e) { console.warn('[hive] colony trigger evaluation failed:', e.message); }
+      // Intake matchmaking (colonies-first): independently of any per-run
+      // trigger config, propose the event to the best-matching colony's work
+      // queue (suggestion-only — never starts a run).
+      try { routeWebhookEvent(event); } catch (e) { console.warn('[hive] work-queue intake failed:', e.message); }
     });
   }
 

@@ -9,8 +9,10 @@ const fs = require('fs');
 const os = require('os');
 const net = require('net');
 const http = require('http');
+const { readAuthToken: resolveAuthToken } = require('./authToken');
 
 const HIVE_HOME = process.env.HIVE_HOME || path.join(os.homedir(), '.hive');
+const HIVE_DB_PATH = process.env.HIVE_DB_PATH || path.join(HIVE_HOME, 'hive.db');
 const LOG_PATH = path.join(HIVE_HOME, 'desktop.log');
 const MAX_RESTARTS = 3;
 const APP_NAME = 'Hive';
@@ -142,16 +144,18 @@ function waitForHealthz(port, timeoutMs = 30_000) {
   });
 }
 
-// The server generates ~/.hive/auth_token on first boot (before listen), so
-// after /healthz responds the file is guaranteed to exist — unless auth comes
-// from the environment, in which case that value is the token.
+// The server's authoritative token is HIVE_AUTH_TOKEN, then the hive_auth_token
+// row in ~/.hive/hive.db. ~/.hive/auth_token is only a convenience copy and can
+// drift, so prefer the same source the server validates and resync the file.
 function readAuthToken() {
-  if (process.env.HIVE_AUTH_TOKEN) return process.env.HIVE_AUTH_TOKEN;
-  try {
-    return fs.readFileSync(path.join(HIVE_HOME, 'auth_token'), 'utf8').trim();
-  } catch {
-    return '';
-  }
+  return resolveAuthToken({
+    hiveHome: HIVE_HOME,
+    dbPath: HIVE_DB_PATH,
+    env: process.env,
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    log,
+  });
 }
 
 // v1 update story: manual check against GitHub Releases with a download link.

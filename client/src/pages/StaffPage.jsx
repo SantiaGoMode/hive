@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Bot, ExternalLink, Plus, Save, Search, Sparkles, Trash2, UserRound, X } from 'lucide-react';
 import { api } from '../lib/api';
@@ -7,7 +7,7 @@ import { Input, Textarea } from '../components/ui/Input';
 import { ModelSelect } from '../components/ui/ModelSelect';
 import { toast } from '../stores/toastStore';
 import {
-  MultiPicker, NewStaffModal, ProfileCard, StaffChat, StaffHistoryTab, StaffPerformanceTab, Suggestion,
+  MultiPicker, NewStaffModal, ProfileCard, StaffHistoryTab, StaffPerformanceTab, Suggestion,
 } from './staff/components';
 import { initials } from './staff/utils';
 
@@ -48,11 +48,8 @@ export default function StaffPage() {
       skills: Array.isArray(data.skills) ? data.skills : [],
       tools: Array.isArray(data.tools) ? data.tools : [],
       model_preference: data.model_preference || '',
-      chat_model: data.chat_model || '',
       memory: data.memory || '',
       avatar_color: data.avatar_color,
-      chat_enabled: data.chat_enabled,
-      chat_interval_minutes: data.chat_interval_minutes || 10,
     });
   }, []);
 
@@ -71,15 +68,6 @@ export default function StaffPage() {
     loadSelected(selectedId).catch(e => toast.error(e.message));
   }, [selectedId, loadSelected]);
 
-  const flatModels = useMemo(() => {
-    const out = [];
-    for (const [provider, list] of Object.entries(models || {})) {
-      for (const m of Array.isArray(list) ? list : []) out.push({ ...m, provider: m.provider || provider });
-    }
-    return out;
-  }, [models]);
-
-  const profilesById = useMemo(() => Object.fromEntries(profiles.map(p => [p.id, p])), [profiles]);
   const filtered = profiles.filter(profile => {
     const q = search.trim().toLowerCase();
     if (!q) return true;
@@ -92,10 +80,7 @@ export default function StaffPage() {
     if (!selected || !form) return;
     setSaving(true);
     try {
-      await api.updateStaffProfile(selected.id, {
-        ...form,
-        chat_interval_minutes: Number(form.chat_interval_minutes) || 10,
-      });
+      await api.updateStaffProfile(selected.id, form);
       toast.success('Staff profile saved');
       await loadProfiles();
       await loadSelected(selected.id);
@@ -110,10 +95,7 @@ export default function StaffPage() {
     if (!selected || !form) return;
     setSyncingAgent(true);
     try {
-      await api.updateStaffProfile(selected.id, {
-        ...form,
-        chat_interval_minutes: Number(form.chat_interval_minutes) || 10,
-      });
+      await api.updateStaffProfile(selected.id, form);
       const result = await api.createAgentFromStaffProfile(selected.id);
       toast.success(result.created ? 'Agent created from staff profile' : 'Assigned agent synced from staff profile');
       await loadProfiles();
@@ -164,7 +146,7 @@ export default function StaffPage() {
           <h1 className="text-2xl font-bold text-gray-100 flex items-center gap-2">
             <UserRound size={22} className="text-gray-400" /> Staff
           </h1>
-          <p className="text-sm text-gray-500 mt-0.5">Durable colony employee profiles, evidence-backed suggestions, and staff chat</p>
+          <p className="text-sm text-gray-500 mt-0.5">Durable colony employee profiles and evidence-backed suggestions</p>
         </div>
         <Button className="ml-auto" variant="secondary" onClick={syncSuggestions}>
           <Sparkles size={14} /> Refresh suggestions
@@ -376,39 +358,6 @@ export default function StaffPage() {
                         </div>
                       </div>
                     )}
-                    <div className="md:col-span-2 rounded-lg border border-gray-800 bg-gray-950/40 px-3 py-2">
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-medium text-gray-200">Autonomous staff chat</p>
-                          <p className="text-xs text-gray-600 mt-0.5">Off by default. Profiles with no model preference cannot generate scheduled messages.</p>
-                        </div>
-                        <button type="button" role="switch" aria-checked={form.chat_enabled} onClick={() => set('chat_enabled', !form.chat_enabled)} className={`relative w-10 h-6 rounded-full flex-shrink-0 transition-colors ${form.chat_enabled ? 'bg-blue-600' : 'bg-gray-700'}`}>
-                          <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${form.chat_enabled ? 'right-0.5' : 'left-0.5'}`} />
-                        </button>
-                      </div>
-                      <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <Input
-                          label="Chat interval minutes"
-                          type="number"
-                          min="1"
-                          max="1440"
-                          value={form.chat_interval_minutes}
-                          onChange={e => set('chat_interval_minutes', e.target.value)}
-                          className="w-40"
-                        />
-                        <div className="flex flex-col gap-1">
-                          <ModelSelect
-                            label="Chat model"
-                            value={form.chat_model}
-                            onChange={v => set('chat_model', v)}
-                            groupedModels={models}
-                            placeholder={`Same as work model${form.model_preference ? '' : ' (launch plan)'}`}
-                          />
-                          <p className="text-xs text-gray-600">Used only for autonomous staff chat — pick a smaller, cheaper model than the colony work model.</p>
-                        </div>
-                      </div>
-                      {flatModels.length === 0 && <p className="mt-2 text-xs text-gray-600">No models loaded from providers yet.</p>}
-                    </div>
                   </div>
                 )}
 
@@ -448,8 +397,6 @@ export default function StaffPage() {
           )}
         </section>
       </div>
-
-      <StaffChat profilesById={profilesById} />
 
       {showNewStaff && (
         <NewStaffModal

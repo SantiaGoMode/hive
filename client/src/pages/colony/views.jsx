@@ -1,12 +1,14 @@
-import { Zap, Trash2, Clock, XCircle, Loader2, Users, RefreshCw, ArrowLeft, Plus, Pencil, Search, Link2, ChevronRight } from 'lucide-react';
+import { Trash2, Clock, XCircle, Loader2, Users, ArrowLeft, Plus, Pencil, Sparkles } from 'lucide-react';
 import { api } from '../../lib/api';
+import { toast } from '../../stores/toastStore';
 import { Button } from '../../components/ui/Button';
 import { formatDate } from '../../lib/utils';
 import {
   ArtifactsPanel, ArtifactViewerModal, ColonyCard, ColonyLiveView, ColonyMemoryPanel,
-  InsightsPanel, PerformanceStrip, TeamConfigModal,
+  CrewPanel, InsightsPanel, PerformanceStrip, RecipeGhostCard, StartRunModal,
+  TeamConfigModal, UnroutedTray, WorkQueuePanel,
 } from './components';
-import { PROVIDER_LABEL, STATUS_DOT, STATUS_TEXT, runLabel } from './helpers';
+import { STATUS_DOT, STATUS_TEXT, runLabel } from './helpers';
 import { useColonyPage } from './useColonyPage';
 
 // ── Run page (/colony/:teamId/run/:runId) ─────────────────────────────────────
@@ -48,26 +50,40 @@ function RunView(page) {
   );
 }
 
-// ── Colony (team) page (/colony/:teamId) ──────────────────────────────────────
+// ── Colony team room (/colony/:teamId) ────────────────────────────────────────
+// Identity first (crew + charter), the work queue alongside, history below.
+// There is no launch form: work is queued, and a queued item's Start step
+// collects the direction + model plan.
 function TeamView(page) {
   const {
     teamId, navigate, team, setTeams, recipes, recipeNames,
     teamModal, setTeamModal, overview, loadingOverview, reloadOverview,
     artifactViewer, setArtifactViewer,
+    queue, reloadQueue,
+    giveWorkOpen, setGiveWorkOpen, addingWork, handleAddWork,
+    handleAcceptItem, handleDismissItem, handleDeleteItem,
+    startItem, setStartItem, openStartItem, startDirection, setStartDirection, handleStartItem,
     goal, setGoal, model, setModel, models, groupedModels, cloudEnabled,
     modelPlan, setModelPlan, proposing, handleProposeModels,
-    triggerEvents, setTriggerEvents, webhooks, selectedWebhookId, setSelectedWebhookId,
-    commentToken, setCommentToken,
     projectBoard, selectedBoardCard, selectedBoardCardId, setSelectedBoardCardId,
     boardSearch, setBoardSearch, visibleBoardCards,
     launching, launchError, launchAdvancedOpen, setLaunchAdvancedOpen,
-    activeColonyId, handleLaunch, handleDeleteRun, saveTeamMemory,
+    activeColonyId, handleDeleteRun, saveTeamMemory,
   } = page;
+
+  const queueBoardCard = async (card) => {
+    try {
+      await api.addTeamQueueItem(teamId, { board_card: card });
+      reloadQueue();
+    } catch (e) {
+      toast.error(`Failed to queue work item: ${e.message}`);
+    }
+  };
 
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-3 px-6 py-3 border-b border-gray-800">
-        <button onClick={() => navigate('/colony')} className="p-1.5 rounded-lg text-gray-500 hover:text-gray-200 hover:bg-gray-800 transition flex-shrink-0" title="Back to all colonies">
+        <button onClick={() => navigate('/colony')} className="p-1.5 rounded-lg text-gray-500 hover:text-gray-200 hover:bg-gray-800 transition flex-shrink-0" title="Back to the roster">
           <ArrowLeft size={15} />
         </button>
         <h1 className="text-lg font-semibold text-gray-100 flex items-center gap-2 min-w-0">
@@ -106,182 +122,38 @@ function TeamView(page) {
           </div>
         ) : (
           <div className="max-w-5xl flex flex-col gap-4">
+            {/* ── Charter ── */}
             {team.description && <p className="text-sm text-gray-400 leading-relaxed">{team.description}</p>}
 
-            <PerformanceStrip performance={overview?.performance} />
+            {/* ── Identity: the crew leads the page ── */}
+            <CrewPanel crew={overview?.crew} recipeName={recipeNames[team.recipe_id] || team.recipe_id} />
 
-            {/* ── Launch a run: pick a work item from the team's board ── */}
-            <div className="rounded-xl border border-gray-800 bg-gray-900/40 px-4 py-3 flex flex-col gap-3">
-              <div className="flex items-center gap-1.5">
-                <Zap size={13} className="text-amber-400/80" />
-                <span className="text-xs font-semibold text-gray-300">Launch a run</span>
-                <span className="text-xs text-gray-600">— the operator staffs the crew and decides reasoning</span>
-              </div>
+            {/* ── Work: the colony's queue (proposed → queued → claimed) ── */}
+            <WorkQueuePanel
+              queue={queue}
+              activeColonyId={activeColonyId}
+              giveWorkOpen={giveWorkOpen}
+              setGiveWorkOpen={setGiveWorkOpen}
+              addingWork={addingWork}
+              onAddWork={handleAddWork}
+              goal={goal}
+              setGoal={setGoal}
+              projectBoard={projectBoard}
+              selectedBoardCard={selectedBoardCard}
+              selectedBoardCardId={selectedBoardCardId}
+              setSelectedBoardCardId={setSelectedBoardCardId}
+              boardSearch={boardSearch}
+              setBoardSearch={setBoardSearch}
+              visibleBoardCards={visibleBoardCards}
+              onAccept={handleAcceptItem}
+              onDismiss={handleDismissItem}
+              onDelete={handleDeleteItem}
+              onStart={openStartItem}
+              onOpenRun={(runId) => navigate(`/colony/${teamId}/run/${runId}`)}
+              onQueueCard={queueBoardCard}
+            />
 
-              {projectBoard?.configured && (projectBoard.cards || []).length > 0 && (
-                <div className="flex flex-col gap-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium text-gray-400">Work item</span>
-                    {selectedBoardCard && (
-                      <button type="button" onClick={() => setSelectedBoardCardId(null)} className="text-xs text-gray-500 hover:text-gray-300">unlink</button>
-                    )}
-                  </div>
-                  <div className="relative">
-                    <Search size={13} className="absolute left-3 top-2.5 text-gray-600" />
-                    <input
-                      value={boardSearch}
-                      onChange={e => setBoardSearch(e.target.value)}
-                      placeholder="Search issues and board tasks"
-                      className="w-full bg-gray-800 border border-gray-700 rounded-lg pl-8 pr-3 py-2 text-sm text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-600"
-                    />
-                  </div>
-                  <div className="max-h-44 overflow-y-auto rounded-lg border border-gray-800 divide-y divide-gray-800">
-                    {visibleBoardCards.map(card => {
-                      const selected = selectedBoardCardId === card.id;
-                      return (
-                        <button
-                          key={card.id}
-                          type="button"
-                          onClick={() => setSelectedBoardCardId(card.id)}
-                          className={`w-full text-left px-3 py-2 transition-colors ${selected ? 'bg-blue-950/30' : 'bg-gray-900/40 hover:bg-gray-800/50'}`}
-                        >
-                          <div className="flex items-center gap-2">
-                            <Link2 size={12} className={selected ? 'text-blue-300' : 'text-gray-600'} />
-                            <span className="text-xs font-medium text-gray-200 truncate flex-1">{card.title}</span>
-                            {card.number && <span className="text-xs text-gray-500">#{card.number}</span>}
-                          </div>
-                          <div className="mt-0.5 flex items-center gap-2 text-xs text-gray-600">
-                            <span>{card.status_label || card.status || 'backlog'}</span>
-                            {card.url && <span className="truncate">{card.url}</span>}
-                          </div>
-                        </button>
-                      );
-                    })}
-                    {visibleBoardCards.length === 0 && (
-                      <div className="px-3 py-3 text-xs text-gray-600 text-center">No matching work items</div>
-                    )}
-                  </div>
-                </div>
-              )}
-              {projectBoard?.configured && (projectBoard.cards || []).length === 0 && (
-                <p className="text-xs text-gray-600">No task board found — the operator will have the PM draft tasks from the README/PRD.</p>
-              )}
-              {!projectBoard?.configured && (
-                <p className="text-xs text-amber-400/80">{projectBoard?.error || 'No repository configured — edit the colony to set one.'}</p>
-              )}
-
-              <div className="flex flex-col gap-1.5">
-                <span className="text-xs font-medium text-gray-400">Direction</span>
-                <textarea value={goal} onChange={e => setGoal(e.target.value)} rows={2}
-                  placeholder={selectedBoardCard ? 'Optional notes for the selected work item…' : 'Describe what the team should work on…'}
-                  className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-600" />
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <span className="text-xs font-medium text-gray-400">Colony lead / base model</span>
-                <select value={model} onChange={e => setModel(e.target.value)} className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  {Object.entries(groupedModels).map(([prov, list]) => {
-                    // tools === false → the model can't drive colony agents; hide it here.
-                    const opts = (Array.isArray(list) ? list : []).filter(m => (cloudEnabled || (m.provider || prov) === 'ollama') && m.tools !== false);
-                    if (opts.length === 0) return null;
-                    return <optgroup key={prov} label={PROVIDER_LABEL[prov] || prov}>{opts.map(m => <option key={m.id} value={m.id}>{m.name || m.id}</option>)}</optgroup>;
-                  })}
-                </select>
-              </div>
-
-              <div className="rounded-lg border border-gray-800 bg-gray-950/30">
-                <button
-                  type="button"
-                  aria-expanded={launchAdvancedOpen}
-                  aria-controls="colony-launch-advanced"
-                  onClick={() => setLaunchAdvancedOpen(v => !v)}
-                  className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-gray-800/40 transition-colors"
-                >
-                  <div>
-                    <p className="text-xs font-medium text-gray-300">Advanced launch settings</p>
-                    <p className="text-xs text-gray-600 mt-0.5">
-                      {modelPlan ? 'Per-role model plan · ' : ''}{selectedWebhookId ? 'webhook trigger selected' : 'per-role model plan and webhook trigger'}
-                    </p>
-                  </div>
-                  <ChevronRight size={13} className={`text-gray-500 transition-transform ${launchAdvancedOpen ? 'rotate-90' : ''}`} />
-                </button>
-                {launchAdvancedOpen && (
-                  <div id="colony-launch-advanced" className="border-t border-gray-800 px-3 py-3">
-                    <div className="flex flex-col gap-4">
-                      <div className="flex flex-col gap-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-medium text-gray-400">Per-role model plan</span>
-                          <button type="button" onClick={handleProposeModels} disabled={proposing} className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 disabled:opacity-50">
-                            {proposing ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
-                            {modelPlan ? 'Re-propose plan' : 'Generate model plan'}
-                          </button>
-                        </div>
-                        {modelPlan && overview?.crew?.length > 0 && (
-                          <div className="rounded-lg border border-gray-800 overflow-hidden">
-                            <div className="px-3 py-1.5 bg-gray-900/60 text-xs text-gray-500 border-b border-gray-800">Model plan, editable</div>
-                            {[{ role_key: 'operator', display_name: 'Ari Morgan', role: 'Orchestrator' }, ...overview.crew].map(member => (
-                              <div key={member.role_key} className="flex items-center gap-2 px-3 py-1.5 border-b border-gray-800/60 last:border-0">
-                                {/* Show role + name so the model choice can be made by responsibility, not just persona name. */}
-                                <span className="flex flex-col w-40 flex-shrink-0 min-w-0" title={`${member.role || member.role_key}${member.display_name ? ` — ${member.display_name}` : ''}`}>
-                                  <span className="text-xs text-gray-300 truncate">{member.role || member.role_key}</span>
-                                  {member.display_name && member.display_name !== (member.role || '') && (
-                                    <span className="text-[10px] text-gray-500 truncate">{member.display_name}</span>
-                                  )}
-                                </span>
-                                <select value={modelPlan[member.role_key] || ''} onChange={e => setModelPlan(p => ({ ...p, [member.role_key]: e.target.value }))} className="flex-1 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500">
-                                  {models.map(m => <option key={m.id} value={m.id}>{m.name || m.id}</option>)}
-                                </select>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="flex flex-col gap-1.5 pt-3 border-t border-gray-800">
-                        <span className="text-xs font-medium text-gray-400">Webhook trigger</span>
-                        <select
-                          value={selectedWebhookId}
-                          onChange={e => setSelectedWebhookId(e.target.value)}
-                          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        >
-                          <option value="">No webhook selected</option>
-                          {webhooks.map(webhook => (
-                            <option key={webhook.id} value={webhook.id}>{webhook.name}</option>
-                          ))}
-                        </select>
-                        <div className="flex flex-wrap gap-1.5 items-center">
-                          {[['issue', 'New issue'], ['task', 'New task'], ['comment', 'New comment']].map(([key, label]) => {
-                            const on = triggerEvents.includes(key);
-                            return (
-                              <button key={key} type="button" onClick={() => setTriggerEvents(t => on ? t.filter(x => x !== key) : [...t, key])} className={`text-xs rounded-md px-2.5 py-1 border transition-colors ${on ? 'border-blue-500/50 bg-blue-500/10 text-blue-300' : 'border-gray-800 text-gray-500 hover:border-gray-700'}`}>
-                                {on ? '✓ ' : ''}{label}
-                              </button>
-                            );
-                          })}
-                        </div>
-                        {triggerEvents.includes('comment') && (
-                          <input
-                            value={commentToken}
-                            onChange={e => setCommentToken(e.target.value)}
-                            placeholder="@hive"
-                            className="w-40 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-xs text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-600"
-                          />
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {launchError && <p className="text-xs text-red-400">{launchError}</p>}
-              <Button onClick={handleLaunch} disabled={(!goal.trim() && !selectedBoardCard) || !model || launching || !!activeColonyId}>
-                {launching ? <><Loader2 size={13} className="animate-spin" /> Launching…</>
-                  : activeColonyId ? <><Loader2 size={13} className="animate-spin" /> A run is in progress…</>
-                  : <><Zap size={13} /> Launch run</>}
-              </Button>
-            </div>
-
-            {/* ── Runs ── */}
+            {/* ── History ── */}
             <div className="rounded-xl border border-gray-800 bg-gray-900/40 px-4 py-3">
               <div className="flex items-center gap-1.5 mb-2">
                 <Clock size={13} className="text-blue-400/70" />
@@ -289,7 +161,7 @@ function TeamView(page) {
                 <span className="text-xs text-gray-600">({overview?.runs?.length || 0})</span>
               </div>
               {(overview?.runs || []).length === 0 ? (
-                <p className="text-xs text-gray-600 py-2">No runs yet — pick a work item above and launch one.</p>
+                <p className="text-xs text-gray-600 py-2">No runs yet — give the team work above and hit Start.</p>
               ) : (
                 <div className="flex flex-col divide-y divide-gray-800/60">
                   {(overview?.runs || []).map(run => (
@@ -312,6 +184,8 @@ function TeamView(page) {
               )}
             </div>
 
+            <PerformanceStrip performance={overview?.performance} />
+
             <ArtifactsPanel artifacts={overview?.artifacts} onOpenArtifact={(runId, path) => setArtifactViewer({ runId, path })} />
 
             {/* Memory + Insights side by side — both are reference material,
@@ -326,6 +200,31 @@ function TeamView(page) {
           </div>
         )}
       </div>
+
+      {startItem && (
+        <StartRunModal
+          item={startItem}
+          direction={startDirection}
+          setDirection={setStartDirection}
+          model={model}
+          setModel={setModel}
+          models={models}
+          groupedModels={groupedModels}
+          cloudEnabled={cloudEnabled}
+          modelPlan={modelPlan}
+          setModelPlan={setModelPlan}
+          crew={overview?.crew || []}
+          proposing={proposing}
+          onProposeModels={handleProposeModels}
+          advancedOpen={launchAdvancedOpen}
+          setAdvancedOpen={setLaunchAdvancedOpen}
+          launching={launching}
+          error={launchError}
+          activeColonyId={activeColonyId}
+          onStart={handleStartItem}
+          onClose={() => setStartItem(null)}
+        />
+      )}
 
       {teamModal && (
         <TeamConfigModal
@@ -355,17 +254,41 @@ function TeamView(page) {
   );
 }
 
-// ── Main colony tab (/colony) ─────────────────────────────────────────────────
+// ── Roster (/colony) ──────────────────────────────────────────────────────────
+// The front door: every colony with live status, the Unrouted tray, and the
+// recipe catalog as a hiring hall of foundable ghost cards.
 function ColonyListView(page) {
-  const { navigate, teams, setTeams, recipes, recipeNames, teamModal, setTeamModal, handleDeleteTeam } = page;
+  const {
+    navigate, teams, setTeams, recipes, recipeNames, teamModal, setTeamModal,
+    handleDeleteTeam, unrouted, handleRouteUnrouted, handleDismissUnrouted,
+  } = page;
+
+  const foundableRecipes = recipes
+    .slice()
+    .sort((a, b) => String(a.category || 'zzz').localeCompare(String(b.category || 'zzz')) || a.name.localeCompare(b.name));
+
+  const hiringHall = (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-1.5">
+        <Sparkles size={13} className="text-gray-500" />
+        <span className="text-xs font-semibold text-gray-400">Hiring hall</span>
+        <span className="text-xs text-gray-600">— found a new colony from a recipe</span>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 max-w-5xl">
+        {foundableRecipes.map(recipe => (
+          <RecipeGhostCard key={recipe.id} recipe={recipe} onFound={() => setTeamModal({ presetRecipe: recipe.id })} />
+        ))}
+      </div>
+    </div>
+  );
 
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-3 px-6 py-3 border-b border-gray-800">
         <h1 className="text-lg font-semibold text-gray-100 flex items-center gap-2 flex-shrink-0">
-          <Users size={18} className="text-gray-400" /> Colony
+          <Users size={18} className="text-gray-400" /> Colonies
         </h1>
-        <span className="text-xs text-gray-600">Persistent teams — open one to see its crew, runs, and artifacts</span>
+        <span className="text-xs text-gray-600">Your teams, live — work flows to them; open one to manage its queue</span>
         <Button className="ml-auto flex-shrink-0" onClick={() => setTeamModal('new')}>
           <Plus size={14} /> New colony
         </Button>
@@ -373,30 +296,42 @@ function ColonyListView(page) {
 
       <div className="flex-1 min-h-0 overflow-y-auto p-5">
         {teams.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
-            <Users size={40} className="text-gray-700" />
-            <p className="text-gray-500 text-sm">No colonies yet</p>
-            <p className="text-gray-600 text-xs max-w-sm">A colony is a named team with its own repo, crew, and run history — create one to get started.</p>
-            <Button onClick={() => setTeamModal('new')}><Plus size={13} /> Create your first colony</Button>
+          <div className="flex flex-col gap-5">
+            <div className="flex flex-col items-center gap-2 text-center py-6">
+              <Users size={40} className="text-gray-700" />
+              <p className="text-gray-400 text-sm font-medium">Found your first colony</p>
+              <p className="text-gray-600 text-xs max-w-md">A colony is a persistent team with its own crew, repo, memory, and work queue. Pick a recipe below — founding takes a name and a repo.</p>
+            </div>
+            {hiringHall}
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 max-w-5xl">
-            {teams.map(t => (
-              <ColonyCard
-                key={t.id}
-                team={t}
-                recipeNames={recipeNames}
-                onOpen={() => navigate(`/colony/${t.id}`)}
-                onDelete={() => handleDeleteTeam(t)}
-              />
-            ))}
+          <div className="flex flex-col gap-5">
+            <UnroutedTray
+              items={unrouted}
+              teams={teams}
+              onRoute={handleRouteUnrouted}
+              onDismiss={handleDismissUnrouted}
+            />
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 max-w-5xl">
+              {teams.map(t => (
+                <ColonyCard
+                  key={t.id}
+                  team={t}
+                  recipeNames={recipeNames}
+                  onOpen={() => navigate(`/colony/${t.id}`)}
+                  onDelete={() => handleDeleteTeam(t)}
+                />
+              ))}
+            </div>
+            {hiringHall}
           </div>
         )}
       </div>
 
       {teamModal && (
         <TeamConfigModal
-          initial={teamModal === 'new' ? null : teamModal}
+          initial={teamModal === 'new' || teamModal?.presetRecipe ? null : teamModal}
+          presetRecipeId={teamModal?.presetRecipe || null}
           recipes={recipes}
           onClose={() => setTeamModal(null)}
           onSaved={(saved) => {

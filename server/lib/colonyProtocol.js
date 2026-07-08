@@ -79,8 +79,154 @@ const DEV_TEAM_ROLES = {
   devops_engineer:  { name: 'DevOps Engineer',  role: 'DevOps Engineer' },
 };
 
+// ── Strict flows for the expanded recipe catalog ──────────────────────────────
+// Each entry is a linear chain: steps run in order, and every step after the
+// first names the payload contract of the handoff INTO it. FLOWS/ROLE_META are
+// expanded from this table so adding a staged recipe is one chain declaration.
+// Role keys must match the recipe definition in recipeCatalog.js — a test
+// asserts the two files agree. Recipes absent here are lightweight: model-
+// planned, no enforced handoff protocol (getFlow → null, flow route → 404).
+const RECIPE_CHAINS = {
+  code_review: {
+    team: 'Code Review Crew',
+    steps: [
+      { key: 'review_lead', role: 'Review Lead' },
+      { key: 'implementation_reviewer', role: 'Implementation Reviewer', payload: 'Review Scope & File Inventory' },
+      { key: 'test_reviewer', role: 'Test Reviewer', payload: 'Implementation Findings & Severities' },
+      { key: 'security_reviewer', role: 'Security Reviewer', payload: 'Executed Test Results & Coverage Map' },
+      { key: 'review_synthesizer', role: 'Review Synthesizer', payload: 'Security Findings & Cleared Areas' },
+    ],
+  },
+  incident_response: {
+    team: 'Incident Response Team',
+    steps: [
+      { key: 'incident_commander', role: 'Incident Commander' },
+      { key: 'evidence_collector', role: 'Evidence Collector', payload: 'Severity Assessment & Evidence Priorities' },
+      { key: 'root_cause_analyst', role: 'Root Cause Analyst', payload: 'Timestamped Evidence Inventory' },
+      { key: 'fix_engineer', role: 'Fix Engineer', payload: 'Root Cause & Fix Direction' },
+      { key: 'verification_lead', role: 'Verification Lead', payload: 'Fix Diff & Verification Output' },
+      { key: 'comms_scribe', role: 'Comms Scribe', payload: 'Independent PASS/FAIL Verification Report' },
+    ],
+  },
+  docs_release: {
+    team: 'Docs Release Crew',
+    steps: [
+      { key: 'documentation_planner', role: 'Documentation Planner' },
+      { key: 'technical_writer', role: 'Technical Writer', payload: 'Documentation Plan & Outlines' },
+      { key: 'changelog_curator', role: 'Changelog Curator', payload: 'Written Docs & Verified Examples' },
+      { key: 'qa_editor', role: 'QA Editor', payload: 'Changelog Entry & Shipped-Changes Inventory' },
+      { key: 'publisher', role: 'Publisher', payload: 'Edited Docs & Accuracy Report' },
+    ],
+  },
+  security_review: {
+    team: 'Security Review Team',
+    steps: [
+      { key: 'threat_modeler', role: 'Threat Modeler' },
+      { key: 'appsec_reviewer', role: 'AppSec Reviewer', payload: 'Attack Surface Map & Ranked Threats' },
+      { key: 'dependency_auditor', role: 'Dependency Auditor', payload: 'Confirmed Findings & Exploit Scenarios' },
+      { key: 'remediation_engineer', role: 'Remediation Engineer', payload: 'Dependency Audit & Remediation Order' },
+      { key: 'security_signoff', role: 'Security Signoff', payload: 'Fixed Findings & Verification Output' },
+    ],
+  },
+  refactor_migration: {
+    team: 'Refactor & Migration Crew',
+    steps: [
+      { key: 'architect', role: 'Architect' },
+      { key: 'migration_planner', role: 'Migration Planner', payload: 'Target Architecture & Invariants' },
+      { key: 'refactor_engineer', role: 'Refactor Engineer', payload: 'Stepped Migration Plan & Verifications' },
+      { key: 'regression_qa', role: 'Regression QA', payload: 'Completed Steps & Changed Files' },
+      { key: 'release_coordinator', role: 'Release Coordinator', payload: 'Per-Invariant PASS/FAIL Report' },
+    ],
+  },
+  go_to_market_launch: {
+    team: 'Go-to-Market Launch Team',
+    steps: [
+      { key: 'market_analyst', role: 'Market Analyst' },
+      { key: 'positioning_strategist', role: 'Positioning Strategist', payload: 'Market Analysis & Priority Segments' },
+      { key: 'campaign_planner', role: 'Campaign Planner', payload: 'Positioning Statement & Message Pillars' },
+      { key: 'sales_enablement_lead', role: 'Sales Enablement Lead', payload: 'Phased Campaign Plan' },
+      { key: 'launch_pm', role: 'Launch PM', payload: 'Sales Enablement Kit' },
+      { key: 'metrics_analyst', role: 'Metrics Analyst', payload: 'Launch Runbook & Go/No-Go Criteria' },
+    ],
+  },
+  marketing_campaign: {
+    team: 'Marketing Campaign Team',
+    steps: [
+      { key: 'audience_researcher', role: 'Audience Researcher' },
+      { key: 'messaging_strategist', role: 'Messaging Strategist', payload: 'Audience Profile & Channel Evidence' },
+      { key: 'channel_planner', role: 'Channel Planner', payload: 'Core Message & Segment Variations' },
+      { key: 'content_producer', role: 'Content Producer', payload: 'Channel Allocation & Format Specs' },
+      { key: 'performance_analyst', role: 'Performance Analyst', payload: 'Produced Content Files' },
+    ],
+  },
+  sales_enablement: {
+    team: 'Sales Enablement Team',
+    steps: [
+      { key: 'buyer_researcher', role: 'Buyer Researcher' },
+      { key: 'pitch_strategist', role: 'Pitch Strategist', payload: 'Buyer Committee Map & Vocabulary' },
+      { key: 'objection_handler', role: 'Objection Handler', payload: 'Pitch Narrative & Discovery Questions' },
+      { key: 'collateral_writer', role: 'Collateral Writer', payload: 'Objection/Response Guide' },
+      { key: 'sales_coach', role: 'Sales Coach', payload: 'Collateral Assets' },
+    ],
+  },
+  revenue_operations: {
+    team: 'Revenue Operations Team',
+    steps: [
+      { key: 'funnel_analyst', role: 'Funnel Analyst' },
+      { key: 'crm_ops_specialist', role: 'CRM Ops Specialist', payload: 'Funnel Leak Analysis' },
+      { key: 'sales_process_designer', role: 'Sales Process Designer', payload: 'CRM Stage & Automation Spec' },
+      { key: 'forecast_analyst', role: 'Forecast Analyst', payload: 'Redesigned Sales Process' },
+      { key: 'revops_synthesizer', role: 'RevOps Synthesizer', payload: 'Forecast & Forecast Ritual' },
+    ],
+  },
+  customer_success: {
+    team: 'Customer Success Team',
+    steps: [
+      { key: 'account_researcher', role: 'Account Researcher' },
+      { key: 'health_score_analyst', role: 'Health Score Analyst', payload: 'Account Profiles & Stakeholder Maps' },
+      { key: 'playbook_designer', role: 'Playbook Designer', payload: 'Health Scores & Risk Drivers' },
+      { key: 'escalation_coordinator', role: 'Escalation Coordinator', payload: 'CS Playbooks & Trigger Mapping' },
+      { key: 'renewal_strategist', role: 'Renewal Strategist', payload: 'Escalation Framework & Worked Examples' },
+    ],
+  },
+  operations_improvement: {
+    team: 'Operations Improvement Team',
+    steps: [
+      { key: 'process_mapper', role: 'Process Mapper' },
+      { key: 'bottleneck_analyst', role: 'Bottleneck Analyst', payload: 'As-Is Process Map & Timings' },
+      { key: 'sop_writer', role: 'SOP Writer', payload: 'Ranked Bottlenecks & Root Causes' },
+      { key: 'automation_scout', role: 'Automation Scout', payload: 'SOPs & Addressed Bottlenecks' },
+      { key: 'operations_pm', role: 'Operations PM', payload: 'Automation Candidates & Build/Buy Calls' },
+    ],
+  },
+  vendor_procurement: {
+    team: 'Vendor Procurement Team',
+    steps: [
+      { key: 'requirements_analyst', role: 'Requirements Analyst' },
+      { key: 'vendor_researcher', role: 'Vendor Researcher', payload: 'Weighted Requirements & Criteria' },
+      { key: 'risk_reviewer', role: 'Risk Reviewer', payload: 'Scored Vendor Shortlist' },
+      { key: 'cost_analyst', role: 'Cost Analyst', payload: 'Per-Vendor Risk Assessment' },
+      { key: 'recommendation_writer', role: 'Recommendation Writer', payload: 'TCO Comparison & Assumptions' },
+    ],
+  },
+};
+
 const FLOWS = { development_team: DEV_TEAM_FLOW };
 const ROLE_META = { development_team: DEV_TEAM_ROLES };
+const TEAM_LABELS = { development_team: 'Development Team' };
+
+for (const [recipeId, chain] of Object.entries(RECIPE_CHAINS)) {
+  FLOWS[recipeId] = chain.steps.slice(1).map((step, i) => ({
+    from: chain.steps[i].key,
+    to: step.key,
+    payload: step.payload,
+    requires_human: false,
+  }));
+  ROLE_META[recipeId] = Object.fromEntries(
+    chain.steps.map(step => [step.key, { name: step.role, role: step.role }]),
+  );
+  TEAM_LABELS[recipeId] = chain.team;
+}
 
 function getFlow(recipeId) {
   return FLOWS[recipeId] || null;
@@ -118,7 +264,7 @@ function buildAgentCard(recipeId, roleKey, opts = {}) {
     name: opts.name || meta.name,
     role: meta.role,
     agent_id: opts.agentId || null,
-    description: `${meta.role} in a Hive Development Team. Communicates via the colony ` +
+    description: `${meta.role} in a Hive ${TEAM_LABELS[recipeId] || 'colony crew'}. Communicates via the colony ` +
       `blackboard and tool-based handoffs using the A2A/ACP protocol.`,
     capabilities: opts.tools || [],
     // What this agent accepts when invoked / handed off to.
@@ -444,6 +590,7 @@ module.exports = {
   CARD_SCHEMA_VERSION,
   DEV_TEAM_FLOW,
   DEV_TEAM_ROLES,
+  RECIPE_CHAINS,
   getFlow,
   hasProtocol,
   findEdge,

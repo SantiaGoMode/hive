@@ -16,6 +16,10 @@ const TOOLS = {
   ...require('./memoryTools'),
   ...require('./webTools'),
   ...require('./githubTools'),
+  ...require('./skillTools'),
+  ...require('./operatorTools'),
+  ...require('./adminTools'),
+  ...require('./mediaTools'),
 };
 
 function getToolDefinitions(enabledGroups = []) {

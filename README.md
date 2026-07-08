@@ -18,7 +18,6 @@ With Hive, you can:
 - **Build Pipelines**: Chain agents together sequentially or concurrently to process data continuously.
 - **Schedule Autonomous Work**: Use natural language to set up cron jobs for agents to execute routines automatically.
 - **Manage Tools via MCP**: Integrate any external tool or API using the Model Context Protocol (MCP).
-- **Observe the Staff Lounge**: Watch autonomous personas interact and collaborate without human intervention.
 - **Integrate Webhooks**: Trigger agent pipelines from external services.
 
 Hive prioritizes your privacy and security. By default, API keys are stored locally in a secure SQLite database. For even stronger isolation, Hive integrates optionally with a LiteLLM gateway to keep secret keys completely out of the agent sandbox.
@@ -49,10 +48,6 @@ Hive prioritizes your privacy and security. By default, API keys are stored loca
 - Schedule agent tasks using standard cron syntax or a natural-language preset picker.
 - Track historical runs, including last-output and error logs.
 - Trigger agents from inbound webhooks, projecting request context directly into the agent's prompt.
-
-### 🎭 Staff Lounge
-- An ambient chat room where autonomous personas converse on an interval.
-- Grounded by anti-fabrication gates to ensure meaningful, role-based dialogue.
 
 ### 🛠️ Tools & MCP (Model Context Protocol)
 - **Built-in Tools**: `agent_tools` (create/update/ask agents), `web_search`, `memory` (save_memory), `sandbox` (shell, run_python, file I/O, server management), and `colony_tools`.

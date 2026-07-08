@@ -127,6 +127,23 @@ export function parseBoardGoal(goal) {
 export const STATUS_DOT = { running: 'bg-blue-400 animate-pulse', done: 'bg-green-400', stopped: 'bg-gray-600', awaiting_tasks: 'bg-amber-400', error: 'bg-red-400' };
 export const STATUS_TEXT = { running: 'text-blue-400', done: 'text-green-400', stopped: 'text-gray-500', awaiting_tasks: 'text-amber-300', error: 'text-red-400' };
 
+// Live colony (team) status on the roster — derived server-side from runs.
+export const TEAM_STATUS_META = {
+  idle: { label: 'Idle', dot: 'bg-gray-600', text: 'text-gray-500', chip: 'border-gray-800 bg-gray-900/60 text-gray-400' },
+  working: { label: 'Working', dot: 'bg-blue-400 animate-pulse', text: 'text-blue-300', chip: 'border-blue-500/30 bg-blue-500/10 text-blue-300' },
+  blocked: { label: 'Blocked', dot: 'bg-amber-400 animate-pulse', text: 'text-amber-300', chip: 'border-amber-500/30 bg-amber-500/10 text-amber-300' },
+  'backed-up': { label: 'Backed up', dot: 'bg-orange-400', text: 'text-orange-300', chip: 'border-orange-500/30 bg-orange-500/10 text-orange-300' },
+};
+
+// Queue item status → chip styling for the Work panel.
+export const ITEM_STATUS_META = {
+  proposed: { label: 'Proposed', chip: 'border-purple-500/30 bg-purple-500/10 text-purple-300' },
+  queued: { label: 'Queued', chip: 'border-blue-500/30 bg-blue-500/10 text-blue-300' },
+  claimed: { label: 'Running', chip: 'border-green-500/30 bg-green-500/10 text-green-300' },
+  done: { label: 'Done', chip: 'border-gray-800 bg-gray-900/60 text-gray-500' },
+  dismissed: { label: 'Dismissed', chip: 'border-gray-800 bg-gray-900/60 text-gray-600' },
+};
+
 export function runLabel(run) {
   const item = parseBoardGoal(run.goal);
   const title = item

@@ -39,6 +39,10 @@ const ROLE_MCP_CATEGORIES = {
 };
 
 function mcpCategoriesForWorker(workerConfig) {
+  // Role metadata wins: catalog recipes declare their MCP needs explicitly.
+  if (Array.isArray(workerConfig._role_meta?.mcp_categories)) {
+    return workerConfig._role_meta.mcp_categories;
+  }
   const key = workerConfig.role_key;
   if (key && ROLE_MCP_CATEGORIES[key]) return ROLE_MCP_CATEGORIES[key];
   const hay = `${workerConfig.persona_role || ''} ${workerConfig.name || ''}`.toLowerCase();

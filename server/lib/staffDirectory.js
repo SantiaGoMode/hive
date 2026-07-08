@@ -29,13 +29,9 @@ function profileRowToJson(row) {
     skills: safeParse(row.skills, []),
     tools: safeParse(row.tools, []),
     model_preference: row.model_preference || '',
-    chat_model: row.chat_model || '',
     assigned_agent_id: row.assigned_agent_id || '',
     memory: row.memory || '',
     avatar_color: row.avatar_color || '#3b82f6',
-    chat_enabled: !!row.chat_enabled,
-    chat_interval_minutes: row.chat_interval_minutes || 10,
-    last_chat_at: row.last_chat_at || null,
     created_at: row.created_at,
     updated_at: row.updated_at,
     // Drift flags: whether the user customized these away from the seeded
@@ -67,22 +63,8 @@ function suggestionRowToJson(row) {
   };
 }
 
-function chatRowToJson(row) {
-  if (!row) return null;
-  return {
-    id: row.id,
-    author_type: row.author_type,
-    author_profile_id: row.author_profile_id || null,
-    content: row.content,
-    mentions: safeParse(row.mentions, []),
-    trigger_type: row.trigger_type,
-    created_at: row.created_at,
-  };
-}
-
 // Default personalities for the seeded personas — voice and working style,
-// distinct per role so lounge chat doesn't sound like one model talking to
-// itself. Users can edit or clear these per profile afterwards.
+// distinct per role. Users can edit or clear these per profile afterwards.
 const ROLE_PERSONALITIES = {
   business_analyst: 'Warm but precise. Asks "why" before "what" and restates vague asks as concrete requirements. Allergic to ambiguity; loves a crisp acceptance criterion. Keeps messages short and always ends with the one thing she still needs to know.',
   project_manager: 'Organized and calm, lives by the plan. Communicates in short, direct sentences; surfaces blockers early instead of sugar-coating. Gently pulls tangents back on topic and always names an owner and a next step.',
@@ -101,8 +83,8 @@ const ROLE_PERSONALITIES = {
 function seedStaffProfiles() {
   const insert = db.prepare(`
     INSERT OR IGNORE INTO staff_profiles
-      (id, recipe_id, role_key, display_name, role, system_prompt, personality, skills, tools, avatar_color, chat_interval_minutes, seeded_prompt, seeded_tools)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 10, ?, ?)
+      (id, recipe_id, role_key, display_name, role, system_prompt, personality, skills, tools, avatar_color, seeded_prompt, seeded_tools)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   // Drift repair: profiles whose prompt/tools still equal what the seeder wrote
   // (i.e. never user-edited) follow the CURRENT recipe definition. Without this,
@@ -116,13 +98,18 @@ function seedStaffProfiles() {
     UPDATE staff_profiles SET tools=?, seeded_tools=?, updated_at=unixepoch()
     WHERE recipe_id=? AND role_key=? AND tools = seeded_tools AND tools != ?
   `);
-
   for (const summary of listColonyRecipes()) {
     const recipe = getColonyRecipe(summary.id);
     if (!Array.isArray(recipe.roles)) continue;
     for (const role of recipe.roles) {
       const prompt = role.prompt || '';
       const tools = JSON.stringify(role.tools || []);
+      const personality = role.personality || ROLE_PERSONALITIES[role.key] || '';
+      const skills = JSON.stringify(
+        Array.isArray(role.skills) && role.skills.length
+          ? role.skills
+          : [role.role || role.name].filter(Boolean),
+      );
       insert.run(
         v4(),
         recipe.id,
@@ -130,8 +117,8 @@ function seedStaffProfiles() {
         role.agent_name || role.name,
         role.role || role.name,
         prompt,
-        ROLE_PERSONALITIES[role.key] || '',
-        JSON.stringify([role.role || role.name].filter(Boolean)),
+        personality,
+        skills,
         tools,
         role.color || '#3b82f6',
         prompt,
@@ -143,6 +130,33 @@ function seedStaffProfiles() {
       } catch (e) { logSwallowed('staffDirectory:syncSeededProfile', e, { role: role.key }); }
     }
   }
+
+  // One-time backfill (v2): profiles seeded before roles carried a persona
+  // (the expanded catalog initially seeded with empty personality and
+  // title-only skills) get the role's personality where still EMPTY and the
+  // role's skill assignments where skills are still the old seeded default.
+  // One-time by flag, like the v1 backfill below — users may intentionally
+  // clear a personality or trim skills afterwards, and that must stick.
+  try {
+    const done = db.prepare("SELECT value FROM app_settings WHERE key='staff_personas_seeded_v2'").get();
+    if (!done) {
+      const updPersonality = db.prepare("UPDATE staff_profiles SET personality=?, updated_at=unixepoch() WHERE recipe_id=? AND role_key=? AND personality=''");
+      const updSkills = db.prepare("UPDATE staff_profiles SET skills=?, updated_at=unixepoch() WHERE recipe_id=? AND role_key=? AND skills IN (?, '[]') AND skills != ?");
+      for (const summary of listColonyRecipes()) {
+        const recipe = getColonyRecipe(summary.id);
+        for (const role of recipe.roles || []) {
+          const personality = role.personality || ROLE_PERSONALITIES[role.key] || '';
+          if (personality) updPersonality.run(personality, recipe.id, role.key);
+          if (Array.isArray(role.skills) && role.skills.length) {
+            const skills = JSON.stringify(role.skills);
+            const legacyDefault = JSON.stringify([role.role || role.name].filter(Boolean));
+            updSkills.run(skills, recipe.id, role.key, legacyDefault, skills);
+          }
+        }
+      }
+      db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('staff_personas_seeded_v2', '1')").run();
+    }
+  } catch (e) { logSwallowed('staffDirectory:seedPersonasV2', e); }
 
   // One-time backfill: existing profiles seeded before personalities existed
   // get their role's default personality (only where still empty, and only
@@ -178,8 +192,8 @@ function createProfile(data = {}) {
   const id = v4();
   db.prepare(`
     INSERT INTO staff_profiles
-      (id, recipe_id, role_key, display_name, role, system_prompt, personality, skills, tools, avatar_color, model_preference, chat_interval_minutes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 10)
+      (id, recipe_id, role_key, display_name, role, system_prompt, personality, skills, tools, avatar_color, model_preference)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id, recipeId, roleKey, displayName, role,
     String(data.system_prompt || ''),
@@ -240,7 +254,7 @@ function getProfileByRole(recipeId, roleKey) {
 
 function normalizeProfilePatch(data = {}) {
   const patch = {};
-  for (const key of ['display_name', 'role', 'personality', 'system_prompt', 'model_preference', 'chat_model', 'assigned_agent_id', 'memory', 'avatar_color']) {
+  for (const key of ['display_name', 'role', 'personality', 'system_prompt', 'model_preference', 'assigned_agent_id', 'memory', 'avatar_color']) {
     if (Object.prototype.hasOwnProperty.call(data, key)) patch[key] = String(data[key] ?? '');
   }
   if (Object.prototype.hasOwnProperty.call(data, 'skills')) {
@@ -248,13 +262,6 @@ function normalizeProfilePatch(data = {}) {
   }
   if (Object.prototype.hasOwnProperty.call(data, 'tools')) {
     patch.tools = JSON.stringify(Array.isArray(data.tools) ? data.tools.map(String).filter(Boolean) : []);
-  }
-  if (Object.prototype.hasOwnProperty.call(data, 'chat_enabled')) {
-    patch.chat_enabled = data.chat_enabled ? 1 : 0;
-  }
-  if (Object.prototype.hasOwnProperty.call(data, 'chat_interval_minutes')) {
-    const minutes = Math.max(1, Math.min(1440, Number(data.chat_interval_minutes) || 10));
-    patch.chat_interval_minutes = Math.round(minutes);
   }
   return patch;
 }
@@ -273,7 +280,7 @@ function updateProfile(id, data) {
 
 // Prompt rendering for assigned skills lives in skillsBlock.js — shared with
 // per-agent skills (systemPrompt.js) so the two features can't drift.
-const { renderSkillsBlock } = require('./skillsBlock');
+const { renderSkillsManifest } = require('./skillsBlock');
 
 function splitMissionSuffix(systemPrompt) {
   const marker = '\n\n---\n[Colony Mission]';
@@ -358,6 +365,9 @@ function applyStaffProfilesToWorkerConfigs(recipeId, workerConfigs, modelPlan = 
     // design). A profile may ADD tools but must not strip these — a stale
     // profile snapshot once removed every worker's handoff tool.
     if (profile.tools.length) next.tools = [...new Set([...(config.tools || []), ...profile.tools])];
+    // Skills are now loaded on demand (manifest in the prompt + load_skill),
+    // so any role with assigned skills needs the skill-loader tool group.
+    if (profile.skills.length) next.tools = [...new Set([...(next.tools || config.tools || []), 'skills'])];
     if (profile.model_preference && !(modelPlan && modelPlan[config.role_key])) {
       next.model = profile.model_preference;
     }
@@ -366,7 +376,7 @@ function applyStaffProfilesToWorkerConfigs(recipeId, workerConfigs, modelPlan = 
     }
     const extra = [];
     if (profile.personality.trim()) extra.push(`[Personality]\n${profile.personality.trim()}`);
-    if (profile.skills.length) extra.push(`[Staff Skills]\n${renderSkillsBlock(profile.skills)}`);
+    if (profile.skills.length) extra.push(`[Staff Skills]\n${renderSkillsManifest(profile.skills)}`);
     if (profile.memory.trim()) extra.push(`[Staff Memory]\n${profile.memory.trim()}`);
     if (extra.length) next.system_prompt += `\n\n---\n${extra.join('\n\n')}\n---`;
     return next;
@@ -377,7 +387,7 @@ function staffPromptForAgent(profile, effective) {
   const basePrompt = profile.system_prompt || effective?.recipe_prompt || '';
   const extra = [];
   if (profile.personality.trim()) extra.push(`[Personality]\n${profile.personality.trim()}`);
-  if (profile.skills.length) extra.push(`[Staff Skills]\n${renderSkillsBlock(profile.skills)}`);
+  if (profile.skills.length) extra.push(`[Staff Skills]\n${renderSkillsManifest(profile.skills)}`);
   if (profile.memory.trim()) extra.push(`[Staff Memory]\n${profile.memory.trim()}`);
   return [
     basePrompt,
@@ -429,7 +439,6 @@ function agentConfigFromProfile(profile, overrides = {}, existing = null) {
   const model = String(overrides.model || '').trim()
     || profile.model_preference
     || existing?.model
-    || profile.chat_model
     || '';
   return {
     name: profile.display_name || 'Staff Agent',
@@ -928,182 +937,6 @@ function profileBundle(id) {
   };
 }
 
-function detectMentions(content, profiles = listProfiles()) {
-  const text = String(content || '').toLowerCase();
-  if (!text.includes('@')) return [];
-  return profiles.filter(profile => {
-    const candidates = [
-      profile.role_key,
-      profile.display_name,
-      profile.role,
-      ...profile.display_name.split(/\s+/),
-    ].filter(Boolean).map(v => `@${norm(v).replace(/\s+/g, '')}`);
-    const compact = norm(text).replace(/\s+/g, '');
-    return candidates.some(c => compact.includes(c));
-  });
-}
-
-function addChatMessage({ authorType = 'user', authorProfileId = null, content, mentions = [], triggerType = 'manual' }) {
-  const id = v4();
-  db.prepare(`
-    INSERT INTO staff_chat_messages (id, author_type, author_profile_id, content, mentions, trigger_type)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(id, authorType, authorProfileId, String(content || ''), JSON.stringify(mentions), triggerType);
-  if (authorProfileId) {
-    db.prepare('UPDATE staff_profiles SET last_chat_at=unixepoch() WHERE id=?').run(authorProfileId);
-  }
-  return chatRowToJson(db.prepare('SELECT * FROM staff_chat_messages WHERE id=?').get(id));
-}
-
-function listChatMessages(limit = 100) {
-  return db.prepare('SELECT * FROM staff_chat_messages ORDER BY created_at DESC LIMIT ?').all(Number(limit) || 100)
-    .reverse()
-    .map(chatRowToJson);
-}
-
-// Staff lounge chat, structured as a real multi-turn conversation. Small
-// models follow chat structure far better than one giant instruction block:
-// identity + rules live in the SYSTEM prompt, the lounge history is replayed
-// as alternating turns (own messages = assistant turns, everyone else's =
-// user turns), and the final user turn carries the instruction. This also
-// stops prompt text from leaking into replies ("You are Priya Shah, …").
-// Deliberately does NOT include the profile's work system_prompt — that
-// prompt is full of handoff/deliverable instructions and makes small models
-// role-play fake colony work.
-function buildStaffChatMessages(profile, triggerType, seedContent = '') {
-  const nameOf = (m) => m.author_profile_id
-    ? (getProfile(m.author_profile_id)?.display_name || 'Staff')
-    : (m.author_type === 'user' ? 'Cris (the human operator)' : 'System');
-  const colleagues = listProfiles()
-    .filter(p => p.id !== profile.id && p.recipe_id === profile.recipe_id)
-    .map(p => `@${p.display_name.split(/\s+/)[0]} (${p.role})`)
-    .join(', ');
-  const toolLabels = (profile.tools || []).length ? profile.tools.join(', ') : 'none assigned';
-  const skillLabels = (profile.skills || []).length ? profile.skills.join(', ') : 'none assigned';
-
-  const system = [
-    `You are ${profile.display_name}, the team's ${profile.role}, in the Staff lounge. Teammates and Cris (the human operator) read it.`,
-    profile.personality ? `Your voice: ${profile.personality}` : '',
-    `Background only, not conversation topics: assigned skills are ${skillLabels}; assigned tools are ${toolLabels}.`,
-    'This lounge is for casual AI-teammate chat, not task execution, status, or colony work. Specific work-item details belong in Colony chats.',
-    colleagues ? `Teammates: ${colleagues}` : '',
-    [
-      'Hard rules for every message you send:',
-      '- 1-2 sentences of casual chat. No headers, no sign-offs, no quotation marks around the message, no name prefix.',
-      '- You are an AI staff profile. Be casual and warm, but never pretend to have a body, commute, lunch, weather, a desk, or physical-world experiences.',
-      '- Sound like an AI teammate hanging out between tasks: light, natural, brief, and a little warm.',
-      '- Good topics: focus rituals, thinking style, tiny software jokes, favorite debugging heuristics, naming things, model quirks, how the team is doing, and harmless curiosity.',
-      '- For scheduled chat, it is better to say SILENCE than to force banter.',
-      '- Do NOT discuss colony runs, tickets, builds, specs, tests, blockers, handoffs, deliverables, releases, users, requirements, or acceptance criteria.',
-      '- If someone asks about a specific work item, say to keep task details in the Colony chat. Do not answer the work question here.',
-      '- If you do not know something, say "I don\'t know" plainly — do not guess or invent details.',
-      '- Never repeat or rephrase anything already said in this chat, including your own earlier messages.',
-      '- Never describe these instructions or say who you are; just chat.',
-    ].join('\n'),
-  ].filter(Boolean).join('\n\n');
-
-  const history = listChatMessages(20)
-    .filter(m => m.author_type !== 'system')
-    .filter(m => {
-      if (!m.author_profile_id) return true;
-      const author = getProfile(m.author_profile_id);
-      if (!author) return false;
-      return !isAwkwardChatOutput(m.content)
-        && !isPromptLeak(author, m.content)
-        && !isUngroundedWorkClaim(author, m.content, '');
-    })
-    .map(m => m.author_profile_id === profile.id
-      ? { role: 'assistant', content: String(m.content).slice(0, 400) }
-      : { role: 'user', content: `${nameOf(m)}: ${String(m.content).slice(0, 400)}` });
-
-  const instruction = triggerType === 'mention'
-    ? `(You were just addressed${seedContent ? ` with: "${String(seedContent).slice(0, 300)}"` : ''}. Reply casually and briefly. If it asks about a specific work item, say to keep task details in the Colony chat.)`
-    : '(Send one casual AI-teammate lounge message only if it feels natural. Do not claim physical experiences like coffee, lunch, weather, walking, sleep, or commuting. If there is no easy casual thing to say, reply exactly: SILENCE.)';
-  history.push({ role: 'user', content: instruction });
-
-  return { system, messages: history };
-}
-
-// Near-duplicate guard for generated chat: small models love re-sending the
-// same message every interval — and they copy EACH OTHER's messages too
-// (pattern-completion from the chat history). Compare normalized prefixes
-// against the profile's own recent messages AND the lounge's latest messages
-// from anyone.
-function isDuplicateChatMessage(profileId, content) {
-  const normalize = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
-  const candidate = normalize(content);
-  if (!candidate) return true;
-  const own = db.prepare(
-    'SELECT content FROM staff_chat_messages WHERE author_profile_id=? ORDER BY created_at DESC LIMIT 5',
-  ).all(profileId);
-  const anyone = db.prepare(
-    "SELECT content FROM staff_chat_messages WHERE author_type='profile' ORDER BY created_at DESC LIMIT 8",
-  ).all();
-  return [...own, ...anyone].some(r => {
-    const prev = normalize(r.content);
-    if (!prev) return false;
-    const len = Math.min(prev.length, candidate.length, 120);
-    return len >= 40 && prev.slice(0, len) === candidate.slice(0, len);
-  });
-}
-
-// Groundedness gate: phrases that claim work happened (meetings, handoffs,
-// builds, specs…) are only allowed when the claim is actually grounded in the
-// profile's memory or the message they're replying to. gemma-class small
-// models otherwise invent an entire fake standup within one message.
-const WORK_CLAIM_RE = /\b(stakeholder|handoff|deliverable|acceptance criteria|user stor(?:y|ies)|sprint|stand-?up|wrapp(?:ed|ing) up|kick(?:ed|ing)? off|just (?:finished|completed|wrapped)|review meeting|sync(?:ed)? with|pipeline requirements|(?:latest|new|the) build|build specs?|specs?\b|validation rules|transactions?|releases?|deploy(?:ment|ed|ing)?|regression|tickets?|bug report|test suite|test plan|requirements doc)\b/i;
-
-function isUngroundedWorkClaim(profile, content, seedContent = '') {
-  const match = String(content || '').match(WORK_CLAIM_RE);
-  if (!match) return false;
-  if (isColonyWorkChatContent(content)) return !/colony chat/i.test(String(content || ''));
-  const runFacts = profileRunContext(profile, 5)
-    .map(r => `${r.id} ${r.team_name || ''} ${r.goal || ''} ${r.status || ''} ${r.summary || ''}`)
-    .join('\n');
-  const grounding = `${profile.memory || ''}\n${runFacts}\n${seedContent || ''}`.toLowerCase();
-  if (!grounding.includes(match[0].toLowerCase())) return true;
-  const contentTokens = String(content || '').toLowerCase().match(/\b[a-z][a-z0-9_-]{4,}\b/g) || [];
-  const meaningful = contentTokens.filter(t => ![
-    'about', 'there', 'their', 'would', 'could', 'should', 'latest', 'build', 'today', 'right',
-    'thanks', 'think', 'still', 'ready', 'going', 'quick', 'before', 'after',
-  ].includes(t));
-  return meaningful.length > 0 && !meaningful.some(t => grounding.includes(t));
-}
-
-function isColonyWorkChatContent(content) {
-  return /\b(colony run|work item|ticket|issue|pull request|PR\b|build|specs?|test suite|regression|blocker|handoff|deliverable|release|requirement|acceptance criteria|deployment|pipeline|user stor(?:y|ies)|sprint|stand-?up)\b/i
-    .test(String(content || ''));
-}
-
-// Reject obvious prompt/meta leakage — small models occasionally echo their
-// instructions ("You are Priya Shah, the team's QA Engineer, chatting in…").
-function isPromptLeak(profile, content) {
-  const text = String(content || '');
-  return /\byou are\b[^.]{0,60}\b(team'?s|chatting|group chat|lounge)\b/i.test(text)
-    || new RegExp(`you are ${profile.display_name}`, 'i').test(text)
-    || /staff lounge|hard rules|these instructions/i.test(text);
-}
-
-function isAwkwardChatOutput(content) {
-  const text = String(content || '').trim();
-  if (!text) return true;
-  if (text.length > 700) return true;
-  if (/^(```|#{1,6}\s|[-*]\s|\d+[.)]\s)/.test(text)) return true;
-  if (/\b(as an ai|as a language model|system prompt|instruction says|hard rules)\b/i.test(text)) return true;
-  if (/\b(?:turn|message|chat|conversation)\s+\d+\b/i.test(text)) return true;
-  if (/\b(?:I will now|Let's roleplay|in character|as your)\b/i.test(text)) return true;
-  if (/\b(?:I'?m|I am|I was|I just|I need|I could use|I grabbed|I made|I brewed|I ate|I ordered|I walked|I slept|I woke|my desk|my commute|my lunch|my coffee|my tea|my sandwich|outside|weather)\b[^.]{0,80}\b(?:coffee|tea|lunch|sandwich|snack|walk|commute|desk|chair|weather|rain|snow|sunny|sleep|slept|nap|body|hands|eyes)\b/i.test(text)) return true;
-  if (isColonyWorkChatContent(text) && !/colony chat/i.test(text)) return true;
-  const lines = text.split(/\n+/).filter(Boolean);
-  if (lines.length > 3) return true;
-  return false;
-}
-
-function clearChatMessages() {
-  db.prepare('DELETE FROM staff_chat_messages').run();
-  // Restart the conversation clock so enabled profiles chat again soon.
-  db.prepare('UPDATE staff_profiles SET last_chat_at=NULL').run();
-}
 
 module.exports = {
   seedStaffProfiles,
@@ -1130,14 +963,4 @@ module.exports = {
   linkAssignedAgent,
   profileInteractions,
   profileBundle,
-  detectMentions,
-  addChatMessage,
-  listChatMessages,
-  buildStaffChatMessages,
-  isDuplicateChatMessage,
-  isUngroundedWorkClaim,
-  isColonyWorkChatContent,
-  isPromptLeak,
-  isAwkwardChatOutput,
-  clearChatMessages,
 };

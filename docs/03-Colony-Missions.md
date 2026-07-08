@@ -18,6 +18,49 @@ The `development_team` recipe consists of highly tuned prompts and specific tool
 
 ---
 
+## 1b. The Recipe Catalog
+
+Beyond `development_team`, Hive ships a catalog of presets (defined in `server/lib/recipeCatalog.js`) grouped by category. All of them appear dynamically in the colony/team UI, seed staff profiles automatically, and are model-planned per role. Recipes marked **strict** run an enforced handoff chain (each role must hand off to the next in order; the run cannot complete until the chain is done). The rest are **lightweight**: the operator plans mission-specific steps and delegates by expertise.
+
+**Engineering**
+- `code_review` *(strict)* — Review Lead → Implementation Reviewer → Test Reviewer → Security Reviewer → Review Synthesizer.
+- `incident_response` *(strict)* — Incident Commander → Evidence Collector → Root Cause Analyst → Fix Engineer → Verification Lead → Comms Scribe.
+- `docs_release` *(strict)* — Documentation Planner → Technical Writer → Changelog Curator → QA Editor → Publisher.
+- `security_review` *(strict)* — Threat Modeler → AppSec Reviewer → Dependency Auditor → Remediation Engineer → Security Signoff.
+- `refactor_migration` *(strict)* — Architect → Migration Planner → Refactor Engineer → Regression QA → Release Coordinator.
+
+**Research**
+- `research_brief` — Researcher, Source Critic, Synthesizer (founding recipe).
+- `data_analysis` — Data Analyst, Data Engineer, Statistician, Visualization Designer, Insight Synthesizer.
+
+**Business Strategy**
+- `product_discovery` — Market Researcher, Customer Researcher, Product Strategist, UX Prototyper, Opportunity Synthesizer.
+- `business_strategy` — Market Analyst, Competitive Analyst, Financial Modeler, Strategy Synthesizer, Executive Brief Writer.
+- `partnerships` — Partner Researcher, Strategic Fit Analyst, Deal Structurer, Risk Reviewer, Outreach Drafter.
+
+**Marketing**
+- `go_to_market_launch` *(strict)* — Market Analyst → Positioning Strategist → Campaign Planner → Sales Enablement Lead → Launch PM → Metrics Analyst.
+- `marketing_campaign` *(strict)* — Audience Researcher → Messaging Strategist → Channel Planner → Content Producer → Performance Analyst.
+- `content_marketing` — Editorial Strategist, SEO Researcher, Draft Writer, Editor, Distribution Planner.
+- `content_pipeline` — Brief Strategist, Researcher, Draft Writer, Editor, Publishing QA.
+
+**Sales**
+- `sales_enablement` *(strict)* — Buyer Researcher → Pitch Strategist → Objection Handler → Collateral Writer → Sales Coach.
+- `revenue_operations` *(strict)* — Funnel Analyst → CRM Ops Specialist → Sales Process Designer → Forecast Analyst → RevOps Synthesizer.
+
+**Customer**
+- `customer_success` *(strict)* — Account Researcher → Health Score Analyst → Playbook Designer → Escalation Coordinator → Renewal Strategist.
+- `support_operations` — Ticket Analyst, Knowledge Base Writer, Workflow Designer, Quality Reviewer, Support Ops Lead.
+
+**Operations**
+- `operations_improvement` *(strict)* — Process Mapper → Bottleneck Analyst → SOP Writer → Automation Scout → Operations PM.
+- `vendor_procurement` *(strict)* — Requirements Analyst → Vendor Researcher → Risk Reviewer → Cost Analyst → Recommendation Writer.
+- `hiring_pipeline` — Role Designer, Sourcing Strategist, Interview Architect, Candidate Ops Coordinator, Hiring Debrief Lead.
+
+Every role carries internal metadata (`capabilities`, `repo_access`, `network`, MCP categories, artifact expectations) that decides its model tier, whether the colony repo is mounted read-only or writable into its sandbox, whether it gets network egress, which MCP servers attach, and whether coding guidelines are injected. Business roles produce practical artifacts — briefs, campaign plans, SOPs, enablement kits, forecasts, playbooks, and executive summaries — without being treated as software engineers.
+
+---
+
 ## 2. The Orchestration Protocol
 
 When a Colony mission is launched with a user goal:

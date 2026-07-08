@@ -3,10 +3,17 @@ const { readAgent } = require('../agentParser');
 const db = require('../../db');
 const protocol = require('../colonyProtocol');
 const { logSwallowed } = require('../logSwallowed');
-const colonyModels = require('../colonyModels');
 const { readShared, writeShared } = require('./shared');
 // Lazy to avoid a load-time cycle with agentRunner (which requires the registry).
 const runAgentOnce = (...a) => require('../agentRunner').runAgentOnce(...a);
+// Lazy for the same reason (colonyRecipes → colonyProtocol → tools registry paths).
+const isCodingRoleKey = (recipeId, roleKey) => require('../colonyRecipes').isCodingRoleKey(recipeId, roleKey);
+
+// A worker "no output" turn: reached its round cap or fizzled without a final
+// answer. Such turns carry no work product worth capturing as a deliverable.
+function noOutputResponse(response) {
+  return response === '(no response)' || response === '(agent reached max tool rounds without a final answer)';
+}
 
 module.exports = {
   ask_agent: {
@@ -97,7 +104,7 @@ module.exports = {
       // Analysis roles (BA/PM/designer) deliver text and small files — 20 tool
       // rounds is pure fizzle budget for them; coding roles keep the full one.
       const budgetRole = colonyContext?.roleByAgentId?.get?.(resolvedId);
-      const roleMaxRounds = budgetRole && !colonyModels.CODING_ROLES.has(budgetRole)
+      const roleMaxRounds = budgetRole && !isCodingRoleKey(colonyContext?.recipeId, budgetRole)
         ? Math.min(maxRounds || 20, 8)
         : maxRounds;
 
@@ -111,6 +118,20 @@ module.exports = {
         if (colonyContext?.colonyId) {
           try { protocol.persistAgentHistory(colonyContext.colonyId, resolvedId, histories.get(resolvedId)); } catch (e) { logSwallowed('agentTools:persistHistory', e, { agentId: resolvedId }); }
         }
+      }
+
+      // Capture the crew's real work product. Protocol recipes assemble their
+      // deliverable from the handoff ledger, but non-protocol recipes (research,
+      // custom) have no ledger — without this the full report a worker produced
+      // is lost and only the operator's 2-4 sentence summary survives. Keep the
+      // latest substantial response per role so mark_goal_achieved can build a
+      // deliverable from it.
+      if (colonyContext && !noOutputResponse(response)) {
+        const reports = (colonyContext.workerReports ||= []);
+        const role = colonyContext.roleByAgentId?.get?.(resolvedId) || target.persona_role || '';
+        const existing = reports.find(r => r.agent_id === resolvedId);
+        if (existing) { existing.response = String(response); existing.role = role; }
+        else reports.push({ agent_id: resolvedId, agent_name: target.name, role, response: String(response) });
       }
 
       // Track which plan steps have been delegated to workers.
@@ -128,7 +149,7 @@ module.exports = {
         } catch (e) { logSwallowed('agentTools:markDelegated', e, { colonyId: colonyContext.colonyId }); }
       }
 
-      const noOutput = response === '(no response)' || response === '(agent reached max tool rounds without a final answer)';
+      const noOutput = noOutputResponse(response);
       // Consecutive silent turns per worker: after two, retrying is a doom loop
       // (observed: six identical re-delegations to a fizzling designer). The
       // warning below flips from "retry" to "move on".
@@ -229,7 +250,7 @@ module.exports = {
       // the prose as progress.
       const workerRoleKey = colonyContext?.roleByAgentId?.get?.(resolvedId);
       const proseOnly = !noOutput && callsMade === 0
-        && workerRoleKey && colonyModels.CODING_ROLES.has(workerRoleKey);
+        && workerRoleKey && isCodingRoleKey(colonyContext?.recipeId, workerRoleKey);
 
       return {
         agent_name: target.name,

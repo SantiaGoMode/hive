@@ -8,6 +8,9 @@
 const fs = require('fs');
 const protocol = require('../../lib/colonyProtocol');
 const db = require('../../db');
+const { getBus, maybeCleanup } = require('../../lib/colonyBus');
+const { logSwallowed } = require('../../lib/logSwallowed');
+const { notifyRoster } = require('../../lib/rosterBus');
 
 // Resolve a colony's seeded agents back to their protocol role keys by matching
 // each agent's persona_role to the role metadata for the colony's recipe. Used
@@ -34,7 +37,7 @@ const activeRuns = new Map();
 // Wall-clock safety cap. Now enforced inside runColony (so every launch path is
 // covered, not just POST); re-exported here from the single source for any route
 // that still references it.
-const { COLONY_MAX_DURATION_MS } = require('../../lib/colonyRunner');
+const { COLONY_MAX_DURATION_MS, runColony } = require('../../lib/colonyRunner');
 
 // SSE plumbing shared between POST / and GET /:id/stream.
 function sseHeaders(res) {
@@ -48,6 +51,72 @@ function sseHeaders(res) {
 function sseWrite(res, data) {
   if (!res.writableEnded) {
     res.write(`data: ${JSON.stringify(data)}\n\n`);
+  }
+}
+
+// Run a freshly created colony and stream its events to this response as SSE.
+// Shared by the two operator launch paths — POST /api/colony (legacy/direct)
+// and POST /api/colony/teams/:tid/queue/:itemId/start (queue Start step) — so
+// the abort/bus/status handling can't drift between them.
+async function runAndStreamColony(res, colonyId) {
+  sseHeaders(res);
+  const emit = (data) => sseWrite(res, data);
+  emit({ type: 'colony_id', colonyId });
+
+  const ac = new AbortController();
+  activeRuns.set(colonyId, ac);
+  notifyRoster('run_started', { run_id: colonyId });
+
+  // Wall-clock timeout is enforced inside runColony (covers every launch path),
+  // so this route runs no timer of its own.
+
+  // Subscribe this client to the per-colony bus. runColony publishes every
+  // event to the bus, so this listener sees the full stream; the seq guard
+  // drops duplicate log_entry replays.
+  const bus = getBus(colonyId);
+  let lastSeqSent = 0;
+  const listener = (event) => {
+    if (event.type === 'log_entry' && event.entry?.seq && event.entry.seq <= lastSeqSent) {
+      return;
+    }
+    if (event.type === 'log_entry' && event.entry?.seq > lastSeqSent) {
+      lastSeqSent = event.entry.seq;
+    }
+    emit(event);
+  };
+  bus.on('event', listener);
+
+  // Use res.on('close') — NOT req.on('close'). In Express 5 / Node HTTP, req 'close'
+  // fires as soon as the request body has been fully read (almost immediately for a
+  // small POST), which would falsely abort every run the instant it starts. res 'close'
+  // only fires when the response stream ends or the client actually disconnects.
+  res.on('close', () => {
+    if (!res.writableFinished) {
+      ac.abort();
+    }
+    bus.off('event', listener);
+    activeRuns.delete(colonyId);
+    maybeCleanup(colonyId);
+  });
+
+  try {
+    await runColony(colonyId, null, ac.signal);
+  } catch (e) {
+    // Safety net: runColony should handle its own errors internally, but if anything
+    // escapes (early throw before its try/catch, etc.), we must update the DB status
+    // so the colony doesn't stay stuck at 'running' forever.
+    const isAbort = e.name === 'AbortError' || ac.signal.aborted || e.message === 'Colony run was stopped';
+    const finalStatus = isAbort ? 'stopped' : 'error';
+    try {
+      db.prepare('UPDATE colonies SET status=?, updated_at=unixepoch() WHERE id=?').run(finalStatus, colonyId);
+    } catch (e2) { logSwallowed('colonyRoutes:persistStatus', e2, { colonyId }); }
+    emit({ type: isAbort ? 'done' : 'error', status: finalStatus, message: e.message });
+  } finally {
+    bus.off('event', listener);
+    activeRuns.delete(colonyId);
+    maybeCleanup(colonyId);
+    notifyRoster('run_finished', { run_id: colonyId });
+    if (!res.writableEnded) res.end();
   }
 }
 
@@ -67,6 +136,7 @@ module.exports = {
   COLONY_MAX_DURATION_MS,
   sseHeaders,
   sseWrite,
+  runAndStreamColony,
   getColonyRepoPath,
   setColonyRepoPath,
 };

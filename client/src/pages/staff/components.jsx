@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  AlertTriangle, ArrowRight, CheckCircle2, ChevronDown, Clock, MessageSquare, RefreshCw,
-  SlidersHorizontal, Trash2, X, XCircle,
+  AlertTriangle, CheckCircle2, ChevronDown, Clock,
+  SlidersHorizontal, X, XCircle,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { api } from '../../lib/api';
@@ -10,7 +10,6 @@ import { Button } from '../../components/ui/Button';
 import { Input, Textarea } from '../../components/ui/Input';
 import { formatDate } from '../../lib/utils';
 import { modelBadge } from '../../lib/modelLabels';
-import { toast } from '../../stores/toastStore';
 import { initials } from './utils';
 
 // Multi-select picker: toggleable option chips from a catalog, plus legacy
@@ -189,9 +188,6 @@ export function ProfileCard({ profile, active, onClick }) {
       </div>
       <div className="mt-2 flex items-center gap-1.5 flex-wrap">
         <span className="text-xs border border-gray-800 rounded px-1.5 py-0.5 text-gray-500">{profile.recipe_id}</span>
-        <span className={`text-xs border rounded px-1.5 py-0.5 ${profile.chat_enabled ? 'border-green-800/60 text-green-300' : 'border-gray-800 text-gray-600'}`}>
-          {profile.chat_enabled ? `${profile.chat_interval_minutes}m chat` : 'chat off'}
-        </span>
         {(profile.prompt_customized || profile.tools_customized) && (
           <span
             className="text-xs border border-amber-700/50 bg-amber-950/30 rounded px-1.5 py-0.5 text-amber-300"
@@ -253,113 +249,6 @@ export function Suggestion({ suggestion, onApply, onDismiss }) {
           </Button>
         </div>
       )}
-    </div>
-  );
-}
-
-export function StaffChat({ profilesById }) {
-  const [messages, setMessages] = useState([]);
-  const [text, setText] = useState('');
-  const [sending, setSending] = useState(false);
-  const bottomRef = useRef(null);
-
-  const load = useCallback(() => {
-    api.getStaffChat(100).then(data => setMessages(data.messages || [])).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    load();
-    const t = setInterval(load, 5000);
-    return () => clearInterval(t);
-  }, [load]);
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages.length]);
-
-  const send = async () => {
-    const v = text.trim();
-    if (!v) return;
-    setSending(true);
-    try {
-      await api.postStaffChat(v);
-      setText('');
-      load();
-    } catch (e) {
-      toast.error(e.message);
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const authorName = (message) => {
-    if (message.author_profile_id) return profilesById[message.author_profile_id]?.display_name || 'Staff';
-    return message.author_type === 'user' ? 'You' : 'System';
-  };
-
-  return (
-    <div className="border-t border-gray-800 bg-gray-950/30 pt-3">
-      <div className="flex items-center gap-2 mb-2">
-        <MessageSquare size={14} className="text-gray-500" />
-        <span className="text-sm font-semibold text-gray-200">Staff Chat</span>
-        <span className="text-xs text-gray-600">casual lounge chat; keep task details in Colony chats</span>
-        <Button size="sm" variant="ghost" className="ml-auto" onClick={load}>
-          <RefreshCw size={12} /> Refresh
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          className="text-gray-600 hover:text-red-400"
-          onClick={async () => {
-            if (!window.confirm('Clear all staff chat history? Staff will start chatting fresh.')) return;
-            try {
-              await api.clearStaffChat();
-              setMessages([]);
-              toast.success('Staff chat cleared');
-            } catch (e) {
-              toast.error(e.message);
-            }
-          }}
-        >
-          <Trash2 size={12} /> Clear
-        </Button>
-      </div>
-      <div className="h-72 overflow-y-auto rounded-lg border border-gray-800 bg-gray-900/40 px-3 py-2 flex flex-col gap-2">
-        {messages.length === 0 && <p className="text-sm text-gray-600 text-center py-8">No staff chat yet.</p>}
-        {messages.map(message => {
-          const profile = message.author_profile_id ? profilesById[message.author_profile_id] : null;
-          return (
-            <div key={message.id} className="flex items-start gap-2">
-              <span className="w-7 h-7 rounded flex items-center justify-center text-[10px] font-semibold text-white flex-shrink-0" style={{ background: profile?.avatar_color || '#374151' }}>
-                {message.author_type === 'user' ? 'You' : initials(authorName(message))}
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-medium text-gray-300">{authorName(message)}</span>
-                  <span className="text-xs text-gray-700">{message.trigger_type}</span>
-                  <span className="text-xs text-gray-700">{formatDate(message.created_at * 1000)}</span>
-                </div>
-                <div className="text-sm text-gray-300">
-                  <StaffMarkdown>{message.content}</StaffMarkdown>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-        <div ref={bottomRef} />
-      </div>
-      <div className="mt-2 flex items-center gap-2">
-        <input
-          value={text}
-          onChange={e => setText(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') send(); }}
-          placeholder="Water cooler chat… mention @Sam, @qa_engineer, or @Project Manager"
-          className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-600"
-        />
-        <Button size="sm" onClick={send} disabled={sending || !text.trim()}>
-          {sending ? 'Sending…' : <><ArrowRight size={12} /> Send</>}
-        </Button>
-      </div>
     </div>
   );
 }
@@ -564,8 +453,7 @@ export function StaffHistoryTab({ selected }) {
 }
 
 // Create a custom staff profile. Custom staff become candidates when the
-// operator staffs preset roles (matched by role title), and can be @mentioned
-// in Staff Chat like anyone else.
+// operator staffs preset roles (matched by role title).
 export function NewStaffModal({ onClose, onCreated }) {
   const [displayName, setDisplayName] = useState('');
   const [role, setRole] = useState('');

@@ -10,8 +10,7 @@ const colonyModels = require('../../lib/colonyModels');
 const { normalizeTriggerConfig } = require('../../lib/colonyTriggers');
 const colonyTeams = require('../../lib/colonyTeams');
 const db = require('../../db');
-const { logSwallowed } = require('../../lib/logSwallowed');
-const { activeRuns, sseHeaders, sseWrite, getColonyRepoPath } = require('./shared');
+const { activeRuns, runAndStreamColony, getColonyRepoPath } = require('./shared');
 
 module.exports = function registerLifecycleRoutes(router) {
   // POST /api/colony — create + immediately stream via SSE
@@ -51,67 +50,7 @@ module.exports = function registerLifecycleRoutes(router) {
 
     const colonyId = createColony(goal.trim(), model.trim(), recipeId, { repoPath, boardCard, cloudEnabled, githubWriteback, modelPlan, reasoningMode, triggerConfig, teamId: team?.id || null });
 
-    sseHeaders(res);
-
-    const emit = (data) => sseWrite(res, data);
-
-    emit({ type: 'colony_id', colonyId });
-
-    const ac = new AbortController();
-    activeRuns.set(colonyId, ac);
-
-    // Wall-clock timeout is enforced inside runColony (covers every launch path),
-    // so the POST route no longer runs its own timer.
-
-    // Subscribe this POST client to the per-colony bus. runColony publishes
-    // every event to the bus as well as calling the legacy onEvent callback,
-    // so we can drop the onEvent path here once every caller migrates. For now
-    // we keep it for safety. (The bus listener sees all events; onEvent is no-op
-    // to avoid duplicates.)
-    const bus = getBus(colonyId);
-    let lastSeqSent = 0;
-    const listener = (event) => {
-      if (event.type === 'log_entry' && event.entry?.seq && event.entry.seq <= lastSeqSent) {
-        return;
-      }
-      if (event.type === 'log_entry' && event.entry?.seq > lastSeqSent) {
-        lastSeqSent = event.entry.seq;
-      }
-      emit(event);
-    };
-    bus.on('event', listener);
-
-    // Use res.on('close') — NOT req.on('close'). In Express 5 / Node HTTP, req 'close'
-    // fires as soon as the request body has been fully read (almost immediately for a
-    // small POST), which would falsely abort every run the instant it starts. res 'close'
-    // only fires when the response stream ends or the client actually disconnects.
-    res.on('close', () => {
-      if (!res.writableFinished) {
-        ac.abort();
-      }
-      bus.off('event', listener);
-      activeRuns.delete(colonyId);
-      maybeCleanup(colonyId);
-    });
-
-    try {
-      await runColony(colonyId, null, ac.signal);
-    } catch (e) {
-      // Safety net: runColony should handle its own errors internally, but if anything
-      // escapes (early throw before its try/catch, etc.), we must update the DB status
-      // so the colony doesn't stay stuck at 'running' forever.
-      const isAbort = e.name === 'AbortError' || ac.signal.aborted || e.message === 'Colony run was stopped';
-      const finalStatus = isAbort ? 'stopped' : 'error';
-      try {
-        db.prepare('UPDATE colonies SET status=?, updated_at=unixepoch() WHERE id=?').run(finalStatus, colonyId);
-      } catch (e2) { logSwallowed('colonyRoutes:persistStatus', e2, { colonyId }); }
-      emit({ type: isAbort ? 'done' : 'error', status: finalStatus, message: e.message });
-    } finally {
-      bus.off('event', listener);
-      activeRuns.delete(colonyId);
-      maybeCleanup(colonyId);
-      if (!res.writableEnded) res.end();
-    }
+    await runAndStreamColony(res, colonyId);
   });
 
   // POST /api/colony/:id/stop

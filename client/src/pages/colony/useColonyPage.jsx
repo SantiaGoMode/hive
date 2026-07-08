@@ -25,17 +25,21 @@ export function useColonyPage() {
   const [overview, setOverview] = useState(null);   // { team, runs, crew, artifacts, performance, repo }
   const [loadingOverview, setLoadingOverview] = useState(false);
 
-  // ── Run-launch state (lives on the colony page) ─────────────────────────────
-  const [goal, setGoal] = useState('');
+  // ── Work queue state (the colony's inbox — colonies-first) ──────────────────
+  const [queue, setQueue] = useState([]);
+  const [unrouted, setUnrouted] = useState([]);   // roster tray: items no colony owns
+  const [giveWorkOpen, setGiveWorkOpen] = useState(false);
+  const [addingWork, setAddingWork] = useState(false);
+  const [startItem, setStartItem] = useState(null);        // queue item in the Start step
+  const [startDirection, setStartDirection] = useState('');
+
+  // ── Run-start state (collected in the queue item's Start step) ──────────────
+  const [goal, setGoal] = useState(''); // free-form direction in the give-work form
   const [model, setModel] = useState('');
   const [models, setModels] = useState([]);
   const [groupedModels, setGroupedModels] = useState({});
   const [modelPlan, setModelPlan] = useState(null);
   const [proposing, setProposing] = useState(false);
-  const [triggerEvents, setTriggerEvents] = useState(['issue', 'task']);
-  const [webhooks, setWebhooks] = useState([]);
-  const [selectedWebhookId, setSelectedWebhookId] = useState('');
-  const [commentToken, setCommentToken] = useState('@hive');
   const [projectBoard, setProjectBoard] = useState({ source: null, lanes: BOARD_LANES.map(l => l.id), cards: [] });
   const [selectedBoardCardId, setSelectedBoardCardId] = useState(null);
   const [boardSearch, setBoardSearch] = useState('');
@@ -132,7 +136,6 @@ export function useColonyPage() {
     api.getColonyTeams().then(setTeams).catch(() => {});
     api.getColonies().then(setColonies).catch(() => {});
     api.getColonyRecipes().then(setRecipes).catch(() => {});
-    api.getWebhooks().then(rows => setWebhooks(rows || [])).catch(() => {});
     api.getAllModels().then(g => setGroupedModels(g || {})).catch(() => {
       api.getModels().then(m => {
         setGroupedModels({ ollama: m.map(x => ({ id: x.name, provider: 'ollama', name: x.name })) });
@@ -155,12 +158,17 @@ export function useColonyPage() {
     api.getColonyTeam(teamId).then(setOverview).catch(() => setOverview(null));
   }, [teamId]);
 
-  // Load the colony overview + board when entering a colony page; refresh the
-  // teams list (and overview) when navigating back from a run.
+  const reloadQueue = useCallback(() => {
+    if (!teamId) return;
+    api.getTeamQueue(teamId).then(items => setQueue(items || [])).catch(() => {});
+  }, [teamId]);
+
+  // Load the colony overview + board + work queue when entering a colony page;
+  // refresh the teams list (and overview) when navigating back from a run.
   useEffect(() => {
     if (!teamId) {
       setOverview(null);
-      api.getColonyTeams().then(setTeams).catch(() => {});
+      setQueue([]);
       return;
     }
     if (!runId) {
@@ -170,11 +178,42 @@ export function useColonyPage() {
         .catch(() => setOverview(null))
         .finally(() => setLoadingOverview(false));
       api.getColonyTeamBoard(teamId).then(setProjectBoard).catch(() => {});
+      api.getTeamQueue(teamId).then(items => setQueue(items || [])).catch(() => {});
       setSelectedBoardCardId(null);
       setBoardSearch('');
+      setGiveWorkOpen(false);
+      setStartItem(null);
       setLaunchError('');
     }
   }, [teamId, runId]);
+
+  // Roster live updates (/colony): tail the roster SSE stream and refetch the
+  // teams + unrouted tray (debounced) whenever the server hints at a change.
+  useEffect(() => {
+    if (teamId) return; // roster page only
+    let closed = false;
+    let timer = null;
+    const ac = new AbortController();
+    const refetch = () => {
+      api.getColonyTeams().then(setTeams).catch(() => {});
+      api.getUnroutedQueue().then(items => setUnrouted(items || [])).catch(() => {});
+    };
+    refetch();
+    (async () => {
+      try {
+        const res = await api.streamColonyRoster(ac.signal);
+        if (!res.ok) return;
+        for await (const event of readSSEStream(res)) {
+          if (closed) break;
+          if (event.type === 'roster_changed') {
+            clearTimeout(timer);
+            timer = setTimeout(refetch, 400);
+          }
+        }
+      } catch { /* stream aborted on unmount/navigation */ }
+    })();
+    return () => { closed = true; ac.abort(); clearTimeout(timer); };
+  }, [teamId]);
 
   const selectedBoardCard = useMemo(
     () => (projectBoard.cards || []).find(card => card.id === selectedBoardCardId) || null,
@@ -275,6 +314,8 @@ export function useColonyPage() {
             ...prev,
             runs: (prev.runs || []).map(r => r.id === colonyId ? { ...r, status: newStatus } : r),
           } : prev);
+          // The claimed queue item is finished with its run.
+          setQueue(prev => prev.map(q => (q.run_id === colonyId && q.status === 'claimed') ? { ...q, status: 'done' } : q));
           api.getColony(colonyId).then(data => {
             setLoadedColony(prev => (
               prev?.id === colonyId || selectedIdRef.current === colonyId ? data : (prev ?? data)
@@ -362,11 +403,81 @@ export function useColonyPage() {
     };
   }, [selectedId, createEventProcessor, resetLiveState, setActiveColonyId]);
 
-  // ── Launch a run under the current colony ───────────────────────────────────
-  const handleLaunch = async () => {
+  // ── Give the colony work: add an item to its queue ──────────────────────────
+  const handleAddWork = async () => {
     const team = overview?.team;
-    if (!team || (!goal.trim() && !selectedBoardCard) || !model) return;
-    const sessionGoal = selectedBoardCard ? boardCardToGoal(selectedBoardCard, goal) : goal.trim();
+    if (!team || (!goal.trim() && !selectedBoardCard)) return;
+    setAddingWork(true);
+    try {
+      const item = await api.addTeamQueueItem(team.id, {
+        title: selectedBoardCard ? selectedBoardCard.title : goal.trim().split('\n')[0],
+        direction: goal,
+        board_card: selectedBoardCard || undefined,
+      });
+      setQueue(prev => [...prev, item]);
+      setGoal('');
+      setSelectedBoardCardId(null);
+      setBoardSearch('');
+      setGiveWorkOpen(false);
+    } catch (e) {
+      toast.error(`Failed to add work: ${e.message}`);
+    } finally {
+      setAddingWork(false);
+    }
+  };
+
+  const patchQueueItem = useCallback((itemId, patch) => {
+    setQueue(prev => prev.map(q => (q.id === itemId ? { ...q, ...patch } : q)));
+  }, []);
+
+  const handleAcceptItem = async (item) => {
+    try {
+      const updated = await api.updateTeamQueueItem(item.team_id, item.id, { status: 'queued' });
+      patchQueueItem(item.id, updated);
+    } catch (e) { toast.error(`Failed to accept item: ${e.message}`); }
+  };
+
+  const handleDismissItem = async (item) => {
+    try {
+      await api.updateTeamQueueItem(item.team_id, item.id, { status: 'dismissed' });
+      setQueue(prev => prev.filter(q => q.id !== item.id));
+    } catch (e) { toast.error(`Failed to dismiss item: ${e.message}`); }
+  };
+
+  const handleDeleteItem = async (item) => {
+    try {
+      await api.deleteTeamQueueItem(item.team_id, item.id);
+      setQueue(prev => prev.filter(q => q.id !== item.id));
+    } catch (e) { toast.error(`Failed to delete item: ${e.message}`); }
+  };
+
+  // ── Unrouted tray (roster) ──────────────────────────────────────────────────
+  const handleRouteUnrouted = async (item, targetTeamId) => {
+    try {
+      await api.updateQueueItem(item.id, { team_id: targetTeamId, status: 'queued' });
+      setUnrouted(prev => prev.filter(q => q.id !== item.id));
+      api.getColonyTeams().then(setTeams).catch(() => {});
+    } catch (e) { toast.error(`Failed to route item: ${e.message}`); }
+  };
+
+  const handleDismissUnrouted = async (item) => {
+    try {
+      await api.updateQueueItem(item.id, { status: 'dismissed' });
+      setUnrouted(prev => prev.filter(q => q.id !== item.id));
+    } catch (e) { toast.error(`Failed to dismiss item: ${e.message}`); }
+  };
+
+  // ── Start step: a queued item becomes a run ─────────────────────────────────
+  const openStartItem = (item) => {
+    setStartItem(item);
+    setStartDirection(item.direction || '');
+    setLaunchError('');
+  };
+
+  const handleStartItem = async () => {
+    const team = overview?.team;
+    const item = startItem;
+    if (!team || !item || !model) return;
     setLaunching(true);
     setLaunchError('');
     resetLiveState();
@@ -379,21 +490,10 @@ export function useColonyPage() {
 
     try {
       const baseModel = (modelPlan && modelPlan.operator) || model;
-      const triggerConfig = selectedWebhookId && triggerEvents.length > 0
-        ? {
-            webhook_id: selectedWebhookId,
-            repo: projectBoard?.repo || undefined,
-            event_types: triggerEvents,
-            comment_token: commentToken || '@hive',
-          }
-        : undefined;
-      const res = await api.launchColony(sessionGoal, baseModel, team.recipe_id, {
-        teamId: team.id,
-        boardCard: selectedBoardCard || undefined,
-        cloudEnabled: team.cloud_enabled,
-        githubWriteback: team.github_writeback,
-        modelPlan: modelPlan || undefined,
-        triggerConfig,
+      const res = await api.startTeamQueueItem(team.id, item.id, {
+        direction: startDirection,
+        model: baseModel,
+        model_plan: modelPlan || undefined,
       }, launchAc.signal);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -401,7 +501,13 @@ export function useColonyPage() {
       }
 
       setLaunching(false);
-      setGoal('');
+      setStartItem(null);
+
+      // Mirror of the server-side goal (queue.js buildGoalFromItem) for the
+      // optimistic run stub shown until the real row loads.
+      const sessionGoal = item.board_card
+        ? boardCardToGoal(item.board_card, startDirection)
+        : (startDirection.trim() || item.title);
 
       const processEvent = createEventProcessor({
         mode: 'live',
@@ -414,6 +520,7 @@ export function useColonyPage() {
           };
           setColonies(prev => [stub, ...prev]);
           setOverview(prev => prev ? { ...prev, runs: [stub, ...(prev.runs || [])] } : prev);
+          patchQueueItem(item.id, { status: 'claimed', run_id: colonyId });
           // Jump straight to the run page — this component stays mounted, so
           // the launch stream keeps flowing.
           navigate(`/colony/${team.id}/run/${colonyId}`);
@@ -565,11 +672,15 @@ export function useColonyPage() {
     teamModal, setTeamModal,
     overview, setOverview, loadingOverview, reloadOverview,
     artifactViewer, setArtifactViewer,
-    // launch form
+    // work queue
+    queue, reloadQueue, unrouted,
+    giveWorkOpen, setGiveWorkOpen, addingWork, handleAddWork,
+    handleAcceptItem, handleDismissItem, handleDeleteItem,
+    handleRouteUnrouted, handleDismissUnrouted,
+    startItem, setStartItem, openStartItem, startDirection, setStartDirection, handleStartItem,
+    // run-start inputs (Start step)
     goal, setGoal, model, setModel, models, groupedModels, cloudEnabled,
     modelPlan, setModelPlan, proposing, handleProposeModels,
-    triggerEvents, setTriggerEvents, webhooks, selectedWebhookId, setSelectedWebhookId,
-    commentToken, setCommentToken,
     projectBoard, selectedBoardCard, selectedBoardCardId, setSelectedBoardCardId,
     boardSearch, setBoardSearch, visibleBoardCards,
     launching, launchError, launchAdvancedOpen, setLaunchAdvancedOpen,
@@ -578,7 +689,7 @@ export function useColonyPage() {
     isLive, streamingByAgent, livePlan, liveBlockers, livePrUrl,
     displayBlockers, displayPrUrl, activeColonyId,
     // actions
-    handleLaunch, handleStop, handleExport, handleDeleteRun, handleDeleteTeam,
+    handleStop, handleExport, handleDeleteRun, handleDeleteTeam,
     saveTeamMemory,
   };
 }

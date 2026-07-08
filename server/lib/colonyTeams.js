@@ -7,6 +7,7 @@
 const db = require('../db');
 const { DEFAULT_RECIPE_ID, getColonyRecipe } = require('./colonyRecipes');
 const staffDirectory = require('./staffDirectory');
+const workItems = require('./colonyWorkItems');
 const { logSwallowed } = require('./logSwallowed');
 
 function newId() {
@@ -71,6 +72,42 @@ function getTeam(id) {
   return rowToTeam(db.prepare('SELECT * FROM colony_teams WHERE id=?').get(id));
 }
 
+// Live roster status (colonies-first spec, R1): idle / working / blocked,
+// derived from the team's runs. "Blocked" = the active run has posted a
+// blocker to its blackboard — the closest existing signal for "needs a human".
+function liveStatusForTeam(teamId) {
+  const active = db.prepare(
+    "SELECT id, goal, created_at FROM colonies WHERE team_id=? AND status='running' ORDER BY created_at DESC LIMIT 1",
+  ).get(teamId);
+  let status = 'idle';
+  if (active) {
+    status = 'working';
+    try {
+      const blocked = db.prepare(
+        "SELECT 1 FROM colony_blackboard WHERE colony_id=? AND entry_type='blocker' LIMIT 1",
+      ).get(active.id);
+      if (blocked) status = 'blocked';
+    } catch (e) { logSwallowed('colonyTeams:liveStatus', e, { teamId }); }
+  }
+  return { status, active_run: active || null };
+}
+
+// Most recent run deliverable that actually shipped something.
+function lastArtifactForTeam(teamId) {
+  const rows = db.prepare(
+    'SELECT id, goal, deliverable, created_at FROM colonies WHERE team_id=? AND deliverable IS NOT NULL ORDER BY created_at DESC LIMIT 5',
+  ).all(teamId);
+  for (const r of rows) {
+    const d = safeParse(r.deliverable, null);
+    const files = Array.isArray(d?.artifacts) ? d.artifacts : [];
+    const links = Array.isArray(d?.links) ? d.links : [];
+    if (files.length || links.length) {
+      return { run_id: r.id, goal: r.goal, created_at: r.created_at, file: files[0] || null, link: links[0] || null };
+    }
+  }
+  return null;
+}
+
 function listTeams() {
   return db.prepare('SELECT * FROM colony_teams ORDER BY created_at ASC').all().map(row => {
     const team = rowToTeam(row);
@@ -78,7 +115,14 @@ function listTeams() {
     const last = db.prepare(
       'SELECT id, status, goal, created_at FROM colonies WHERE team_id=? ORDER BY created_at DESC LIMIT 1',
     ).get(team.id);
-    return { ...team, stats, last_run: last || null };
+    const live = liveStatusForTeam(team.id);
+    let queue = { proposed: 0, queued: 0, claimed: 0, depth: 0 };
+    try { queue = workItems.queueCountsForTeam(team.id); } catch (e) { logSwallowed('colonyTeams:queueCounts', e, { teamId: team.id }); }
+    return {
+      ...team, stats, last_run: last || null,
+      status: live.status, active_run: live.active_run, queue,
+      last_artifact: lastArtifactForTeam(team.id),
+    };
   });
 }
 
@@ -104,13 +148,21 @@ function updateTeam(id, data = {}) {
   if (!keys.length) return existing;
   db.prepare(`UPDATE colony_teams SET ${keys.map(k => `${k}=?`).join(', ')}, updated_at=unixepoch() WHERE id=?`)
     .run(...keys.map(k => patch[k]), id);
+  // Let subscribers (e.g. the Discord relay) reflect renames/description edits
+  // in the team's forum thread. Identity-only fields matter here; cloud/repo
+  // flags don't change the thread's presentation.
+  if (patch.name !== undefined || patch.description !== undefined || patch.recipe_id !== undefined || patch.repo_path !== undefined) {
+    try { require('./rosterBus').notifyRoster('team_updated', { team_id: id }); } catch { /* roster is best-effort */ }
+  }
   return getTeam(id);
 }
 
 // Deleting a team deletes its runs too (and their agents/protocol rows) —
-// the runs have no meaning outside their colony.
+// the runs have no meaning outside their colony. Open work items are released
+// (not deleted) back to the Unrouted tray: work survives team changes.
 function deleteTeam(id) {
   const { deleteColony } = require('./colonyRunner');
+  try { workItems.releaseTeamItems(id); } catch (e) { logSwallowed('colonyTeams:releaseItems', e, { teamId: id }); }
   const runs = db.prepare('SELECT id FROM colonies WHERE team_id=?').all(id);
   for (const r of runs) {
     try { deleteColony(r.id); } catch (e) { logSwallowed('colonyTeams:deleteRun', e, { colonyId: r.id }); }
@@ -149,8 +201,13 @@ function teamOverview(id) {
     if (!d) continue;
     const links = Array.isArray(d.links) ? d.links : [];
     const files = Array.isArray(d.artifacts) ? d.artifacts : [];
-    if (links.length || files.length) {
-      artifacts.push({ run_id: r.id, goal: r.goal, created_at: r.created_at, links, files });
+    // Text deliverables (research/analysis, and any repo-less run) produce a
+    // full report rather than files on disk. Surface it as a first-class,
+    // viewable artifact so the crew's actual output is never lost to a repo path
+    // that doesn't exist.
+    const hasReport = typeof d.report === 'string' && d.report.trim().length > 0;
+    if (links.length || files.length || hasReport) {
+      artifacts.push({ run_id: r.id, goal: r.goal, created_at: r.created_at, links, files, report: hasReport });
     }
     // Cross-run insights: operator improvement reports + failed acceptance
     // criteria. This is the view the run page can't give you — patterns
@@ -240,5 +297,6 @@ module.exports = {
   deleteTeam,
   teamOverview,
   runStatsForTeam,
+  liveStatusForTeam,
   appendTeamMemory,
 };

@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const staff = require('../lib/staffDirectory');
-const staffScheduler = require('../lib/staffScheduler');
 
 router.get('/profiles', (req, res) => {
   const profiles = staff.listProfiles().map(profile => ({
@@ -88,39 +87,6 @@ router.post('/suggestions/:id/dismiss', (req, res) => {
 
 router.post('/suggestions/sync', (req, res) => {
   res.json({ suggestions: staff.syncSuggestionsFromEvidence() });
-});
-
-router.get('/chat', (req, res) => {
-  res.json({ messages: staff.listChatMessages(req.query.limit || 100) });
-});
-
-router.post('/chat', (req, res) => {
-  const content = String(req.body?.content || '').trim();
-  if (!content) return res.status(400).json({ error: 'content is required' });
-  const profiles = staff.listProfiles();
-  const mentions = staff.detectMentions(content, profiles).map(p => p.id);
-  const message = staff.addChatMessage({
-    authorType: 'user',
-    content,
-    mentions,
-    triggerType: 'manual',
-  });
-  setImmediate(() => {
-    staffScheduler.generateMentionResponses(message).catch(() => {});
-  });
-  res.status(201).json({ message, mentions });
-});
-
-// DELETE /api/staff/chat — wipe the lounge history and restart the
-// conversation clock so enabled profiles begin chatting fresh.
-router.delete('/chat', (req, res) => {
-  staff.clearChatMessages();
-  res.json({ success: true });
-});
-
-router.post('/chat/tick', async (req, res) => {
-  const messages = await staffScheduler.tick();
-  res.json({ messages });
 });
 
 module.exports = router;

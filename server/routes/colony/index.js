@@ -25,6 +25,7 @@ const { activeRuns } = require('./shared');
 
 require('./meta')(router);
 require('./teams')(router);
+require('./queue')(router); // /teams/:tid/queue*, /queue/*, /roster/* — before /:id
 require('./runs')(router);
 require('./lifecycle')(router);
 require('./protocol')(router);
@@ -47,6 +48,9 @@ router.delete('/:id', async (req, res) => {
   }
   try {
     deleteColony(id);
+    // A claimed queue item whose run is deleted goes back to queued —
+    // deleting the run doesn't delete the work.
+    require('../../lib/colonyWorkItems').releaseRunItems(id);
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });

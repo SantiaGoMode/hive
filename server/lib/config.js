@@ -22,6 +22,7 @@
 //   LLM_GATEWAY_URL / LLM_GATEWAY_KEY   LiteLLM gateway — resolved in providers/index.js gatewayConfig()
 // Secrets (env wins over DB setting; resolved in secrets.js / providers):
 //   ANTHROPIC_API_KEY · OPENAI_API_KEY · GEMINI_API_KEY · NGROK_AUTHTOKEN
+//   DISCORD_BOT_TOKEN — Discord bridge bot token (lib/discord)
 // MCP server env references can point at any env var, for example BRAVE_API_KEY
 // when the Brave Search MCP preset is configured with env:BRAVE_API_KEY.
 //   GITHUB_TOKEN / GITHUB_PERSONAL_ACCESS_TOKEN / GH_TOKEN — resolved by githubToken() below

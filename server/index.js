@@ -14,7 +14,6 @@ const express = require('express');
 const cors = require('cors');
 const { createWebSocketServer } = require('./lib/websocket');
 require('./lib/scheduler');
-require('./lib/staffScheduler');
 const schedulerLifecycle = require('./lib/schedulerLifecycle');
 const mcpManager = require('./lib/mcpClient');
 const ngrokService = require('./lib/ngrokService');
@@ -144,7 +143,7 @@ server.listen(PORT, async () => {
 
   try {
     require('./lib/staffDirectory').seedStaffProfiles();
-    schedulerLifecycle.startAll(['scheduler', 'staffScheduler']);
+    schedulerLifecycle.startAll(['scheduler']);
     logger.info('startup', 'scheduler_lifecycle_done', { services: schedulerLifecycle.statuses() });
   } catch (e) {
     logger.error('startup', 'scheduler_lifecycle_failed', { error: e.message });
@@ -168,6 +167,15 @@ server.listen(PORT, async () => {
     logger.info('startup', 'sandbox_done');
   } catch (e) {
     logger.error('startup', 'sandbox_failed', { error: e.message });
+  }
+  // Discord bridge (docs/specs/discord-bridge.md) — after MCP so the Steward
+  // can offer connected MCP tool groups. No-ops without a bot token.
+  try {
+    const discord = require('./lib/discord');
+    await discord.start();
+    logger.info('startup', 'discord_done', { status: discord.status().state });
+  } catch (e) {
+    logger.error('startup', 'discord_failed', { error: e.message });
   }
   logger.info('startup', 'complete');
 });

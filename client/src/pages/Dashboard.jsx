@@ -99,7 +99,7 @@ function OperationalHealthPanel({ models }) {
   const logs = (metrics?.recent_logs || []).filter(l => l.level === 'warn' || l.level === 'error').slice(-5).reverse();
   const lifecycleEntries = Object.values(metrics?.scheduler_lifecycle || {});
   const schedulerErrors = lifecycleEntries.filter(s => s?.last_error || s?.status_error);
-  const schedulerRunning = lifecycleEntries.length ? lifecycleEntries.some(s => s.running) : !!metrics?.staff_scheduler?.started;
+  const schedulerRunning = lifecycleEntries.some(s => s.running);
   const gatewayOk = !!gateway?.enabled && gateway.reachable === true;
   const gatewayWarn = !gateway?.enabled || gateway.reachable == null;
 

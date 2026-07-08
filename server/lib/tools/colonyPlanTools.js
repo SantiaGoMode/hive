@@ -322,6 +322,41 @@ module.exports = {
         }
         deliverable = protocol.buildDeliverable(colonyContext.colonyId, recipeId, trimmed);
       }
+
+      // Non-protocol recipes (research, custom) have no handoff ledger to
+      // assemble a deliverable from, so the crew's actual work product — the
+      // synthesizer's report, the researcher's findings — would be lost, leaving
+      // only the operator's short summary. Build a deliverable from the captured
+      // worker outputs so the full report survives and reaches the UI + Discord.
+      if (!deliverable && !missionFailed) {
+        const reports = Array.isArray(colonyContext.workerReports) ? colonyContext.workerReports : [];
+        if (reports.length) {
+          const linkRe = /https?:\/\/[^\s")\]]+/g;
+          const report = reports[reports.length - 1].response || '';
+          const links = [...new Set((reports.map(r => r.response).join('\n').match(linkRe) || []))];
+          deliverable = {
+            summary: trimmed,
+            flow_complete: true,
+            handoffs: [],
+            artifacts: [],
+            links,
+            report,
+            contributions: reports.map(r => ({ agent: r.agent_name, role: r.role })),
+          };
+        }
+      }
+
+      // Generated media (images/audio) written to the run's artifact dir by the
+      // media tools are first-class artifacts — fold them into the deliverable so
+      // the overview and Discord relay surface and upload them.
+      const generated = Array.isArray(colonyContext.generatedArtifacts) ? colonyContext.generatedArtifacts : [];
+      if (generated.length) {
+        deliverable = deliverable || { summary: trimmed, flow_complete: false, handoffs: [], artifacts: [], links: [] };
+        const names = generated.map(g => g.name).filter(Boolean);
+        deliverable.artifacts = [...new Set([...(deliverable.artifacts || []), ...names])];
+        deliverable.media = generated.map(g => ({ name: g.name, kind: g.kind, mime: g.mime }));
+      }
+
       const workaroundRows = protocol.readBlackboard(colonyContext.colonyId, { limit: 500 })
         .filter(entry => entry.meta?.workaround_report)
         .map(entry => ({
@@ -333,6 +368,14 @@ module.exports = {
       if (workaroundRows.length > 0) {
         deliverable = deliverable || { summary: trimmed, flow_complete: false, handoffs: [], artifacts: [], links: [] };
         deliverable.workarounds = workaroundRows;
+      }
+
+      // Mirror a text report into the run's artifact dir so it downloads in the
+      // overview and uploads to Discord alongside any generated media — one
+      // source of truth for "what files did this run produce".
+      if (deliverable?.report && String(deliverable.report).trim()) {
+        try { require('../colonyArtifacts').saveArtifact(colonyContext.colonyId, 'report.md', String(deliverable.report)); }
+        catch { /* artifact mirror is best-effort */ }
       }
 
       const finalSummary = missionFailed ? `⚠ MISSION CONCLUDED AS FAILED (all remaining steps blocked): ${trimmed}` : trimmed;

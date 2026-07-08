@@ -241,6 +241,7 @@ function processWebhookEvent(event, opts = {}) {
 
     if (startRun) {
       enqueueTriggeredRun(triggeredColonyId);
+      try { require('./rosterBus').notifyRoster('run_started', { run_id: triggeredColonyId }); } catch { /* roster is best-effort */ }
     }
   }
 

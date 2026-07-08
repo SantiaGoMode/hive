@@ -2,7 +2,7 @@ import { createElement, useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Trash2, RefreshCw, CheckCircle, XCircle, Loader, ChevronRight,
-  Sun, Moon, Type, Cpu, Square, Wifi, WifiOff, MemoryStick, Play, Link2, Wrench,
+  Sun, Moon, Type, Cpu, Square, Wifi, WifiOff, MemoryStick, Play, Link2, Wrench, Bot,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { Button } from '../components/ui/Button';
@@ -45,6 +45,28 @@ function GatewayStatus({ status, loading }) {
       <XCircle size={11} /> {status.message || 'Gateway unreachable'}
     </span>
   );
+}
+
+function DiscordBridgeStatus({ status }) {
+  if (!status) return null;
+  if (status.state === 'connected') {
+    if (status.setup_required) {
+      return (
+        <span className="text-xs text-amber-300 flex items-center gap-1">
+          <span className="w-2 h-2 rounded-full bg-amber-400" /> Setup needed{status.guild ? ` (${status.guild})` : ''}
+        </span>
+      );
+    }
+    return (
+      <span className="text-xs text-green-400 flex items-center gap-1">
+        <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" /> Connected{status.guild ? ` (${status.guild})` : ''}
+      </span>
+    );
+  }
+  if (status.state === 'error') {
+    return <span className="text-xs text-red-400">Error: {status.error}</span>;
+  }
+  return <span className="text-xs text-gray-500">Disabled</span>;
 }
 
 function money(value) {
@@ -673,6 +695,26 @@ export function SettingsPage() {
               </div>
             </div>
           </AdvancedDisclosure>
+        </div>
+
+        <div className="pt-4 border-t border-gray-800 flex flex-col gap-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-medium text-gray-200 flex items-center gap-2"><Bot size={16} className="text-blue-400" /> Discord Bridge</h3>
+              <p className="text-xs text-gray-500 mt-1">Chat with the Steward, direct colonies from forum threads, and get health alerts in your private Discord server.</p>
+            </div>
+            <DiscordBridgeStatus status={metrics?.discord} />
+          </div>
+          <Input
+            label="Bot Token"
+            type="password"
+            value={config.discord_bot_token || ''}
+            onChange={e => setConfig(c => ({ ...c, discord_bot_token: e.target.value }))}
+            placeholder={config.discord_bot_token_from_env ? 'Provided by DISCORD_BOT_TOKEN' : 'Discord bot token (Message Content intent required)'}
+          />
+          <p className="text-xs text-gray-600 -mt-2">
+            After saving, invite the bot to your server and run <code className="bg-gray-800 px-1 rounded">/hive setup</code> there. The bot ignores normal messages until setup claims an owner and binds a general channel.
+          </p>
         </div>
 
         <Button onClick={handleSave} disabled={saving} className="mt-2 w-fit">

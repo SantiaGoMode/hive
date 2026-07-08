@@ -19,15 +19,18 @@
 // blackboard and tool-catalogue guidance stay in websocket.js) is deliberately left
 // to the caller so both sites keep producing exactly the prompt they produce today.
 
-const { renderSkillsBlock } = require('./skillsBlock');
+const { renderSkillsManifest } = require('./skillsBlock');
 
 const DEFAULT_USER_PROMPT = 'Be helpful, direct, and concise.';
 
 // Per-agent skills from the catalog (agents.skills), rendered for every
 // surface that goes through this scaffold: chat, pipelines, schedules,
 // sub-agents. Staff-profile skills are injected separately by staffDirectory.
+// Only a lean manifest (names + descriptions) goes in — the agent pulls each
+// skill's full body on demand with load_skill, so unused skills never cost
+// context. agentRunner grants the skills loader whenever agent.skills is set.
 function skillsSection(agent) {
-  const block = renderSkillsBlock(agent?.skills);
+  const block = renderSkillsManifest(agent?.skills);
   return block ? `\n\n---\n[Skills]\n${block}\n---` : '';
 }
 

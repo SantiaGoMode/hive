@@ -11,7 +11,7 @@ const DASH_DIR = path.join(os.homedir(), '.hive');
 
 // Secret settings are never returned in cleartext. The UI shows the mask and
 // only sends a new value when the user actually edits the field.
-const SECRET_KEYS = ['anthropic_api_key', 'openai_api_key', 'gemini_api_key', 'ngrok_authtoken', 'llm_gateway_key', 'hive_auth_token'];
+const SECRET_KEYS = ['anthropic_api_key', 'openai_api_key', 'gemini_api_key', 'ngrok_authtoken', 'llm_gateway_key', 'hive_auth_token', 'discord_bot_token'];
 const SECRET_ENV = {
   anthropic_api_key: ['ANTHROPIC_API_KEY'],
   openai_api_key: ['OPENAI_API_KEY'],
@@ -19,6 +19,7 @@ const SECRET_ENV = {
   ngrok_authtoken: ['NGROK_AUTHTOKEN'],
   llm_gateway_key: ['LLM_GATEWAY_KEY'],
   hive_auth_token: ['HIVE_AUTH_TOKEN'],
+  discord_bot_token: ['DISCORD_BOT_TOKEN'],
 };
 
 function maskSecret(value) {
@@ -52,7 +53,7 @@ function clearStoredSecrets() {
 }
 
 function writeConfig(body = {}) {
-  const allowed = ['ollama_url', 'theme', 'accent_color', 'font_size', 'ngrok_authtoken', 'ngrok_domain', 'ngrok_enabled', 'webhook_public_url', 'llm_gateway_url', 'hive_allowed_origins', ...SECRET_KEYS];
+  const allowed = ['ollama_url', 'theme', 'accent_color', 'font_size', 'ngrok_authtoken', 'ngrok_domain', 'ngrok_enabled', 'webhook_public_url', 'llm_gateway_url', 'hive_allowed_origins', 'discord_health_repo', ...SECRET_KEYS];
   const stmt = db.prepare('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)');
   let changed = false;
   for (const key of allowed) {

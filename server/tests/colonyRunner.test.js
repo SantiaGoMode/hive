@@ -931,6 +931,131 @@ describe('runColony — recipes', () => {
     assert.equal(colony.log.filter(e => e.kind === 'tool_call' && e.tool === 'ask_agent').length, 3);
     assert.equal(colony.log.filter(e => e.kind === 'tool_call' && e.tool === 'create_agent').length, 0);
   });
+
+  it('runs a strict catalog recipe (marketing_campaign) through its enforced handoff chain', async () => {
+    // Generic seeded-operator path: no per-recipe branch exists for this recipe.
+    // Workers end their turn with "<X> handoff: …" text, which the ask_agent
+    // auto-handoff fallback records onto the ledger, advancing the flow.
+    const protocol = require('../lib/colonyProtocol');
+    const flow = protocol.getFlow('marketing_campaign');
+    const roleOrder = [flow[0].from, ...flow.map(e => e.to)];
+    let operatorCalls = 0;
+    const crewIds = {};
+
+    fakeOllama.handler = async (_req, parsed) => {
+      const system = parsed.messages?.[0]?.content || '';
+      if (system.includes('Marketing Campaign Team Operator')) {
+        operatorCalls++;
+        if (Object.keys(crewIds).length === 0) {
+          for (const key of roleOrder) {
+            crewIds[key] = system.match(new RegExp(`\\[role_key: ${key}\\] -> agent_id: "([^"]+)"`))?.[1];
+          }
+        }
+        if (operatorCalls === 1) {
+          return ollamaToolCall('set_plan', {
+            steps: roleOrder.map((key, i) => ({ id: String(i + 1), description: `${key} work`, assigned_to: key })),
+          });
+        }
+        // Delegate strictly in flow order; steps for roles with an outgoing
+        // edge auto-complete from their handoffs.
+        const round = operatorCalls - 2;
+        if (round < roleOrder.length - 1) {
+          return ollamaToolCall('ask_agent', { agent_id: crewIds[roleOrder[round]], message: `Do your ${roleOrder[round]} work and hand off.` });
+        }
+        // Terminal role has no outgoing edge, so its step is driven manually:
+        // in_progress → ask_agent → done, then complete the goal.
+        const terminal = roleOrder[roleOrder.length - 1];
+        const terminalStep = String(roleOrder.length);
+        if (round === roleOrder.length - 1) return ollamaToolCall('update_plan_step', { id: terminalStep, status: 'in_progress' });
+        if (round === roleOrder.length) return ollamaToolCall('ask_agent', { agent_id: crewIds[terminal], message: `Do your ${terminal} work.` });
+        if (round === roleOrder.length + 1) return ollamaToolCall('update_plan_step', { id: terminalStep, status: 'done' });
+        return ollamaToolCall('mark_goal_achieved', { summary: 'Campaign package complete.' });
+      }
+      if (system.includes('You are the Audience Researcher')) return ollamaText('Audience research handoff: profile and channel evidence attached.');
+      if (system.includes('You are the Messaging Strategist')) return ollamaText('Messaging handoff: core message and variations attached.');
+      if (system.includes('You are the Channel Planner')) return ollamaText('Channel plan handoff: allocation and specs attached.');
+      if (system.includes('You are the Content Producer')) return ollamaText('Content handoff: produced files listed.');
+      if (system.includes('You are the Performance Analyst')) return ollamaText('Final performance framework: metrics and checkpoints attached.');
+      return ollamaText('unexpected request');
+    };
+
+    const id = createColony('Strict business recipe test', 'fake-model', 'marketing_campaign');
+    createdColonies.push(id);
+    await runColony(id, () => {}, null);
+
+    const colony = getColony(id);
+    if (colony.status !== 'done') {
+      assert.fail(`error=${colony.log.find(e => e.kind === 'error')?.message || '(none)'} log=${JSON.stringify(colony.log.slice(-8))}`);
+    }
+    assert.equal(colony.summary, 'Campaign package complete.');
+
+    // Seeded roster, not created agents.
+    const roles = colony.agents.map(a => a.persona_role);
+    for (const title of ['Audience Researcher', 'Messaging Strategist', 'Channel Planner', 'Content Producer', 'Performance Analyst']) {
+      assert.ok(roles.includes(title), `${title} should be seeded`);
+    }
+    assert.ok(roles.includes('Marketing Campaign Team Operator'));
+    assert.equal(colony.log.filter(e => e.kind === 'tool_call' && e.tool === 'create_agent').length, 0);
+
+    // The full handoff chain is on the ledger (auto-recorded from worker output).
+    const ledger = protocol.listHandoffs(id);
+    for (const edge of flow) {
+      assert.ok(
+        ledger.some(h => h.from_agent === edge.from && h.to_agent === edge.to && h.protocol_status === 'ok'),
+        `missing handoff ${edge.from}→${edge.to}`,
+      );
+    }
+    const completion = protocol.flowCompletion(id, 'marketing_campaign');
+    assert.equal(completion.terminal_reached, true);
+  });
+
+  it('runs a lightweight catalog recipe (business_strategy) with seeded workers and plan completion', async () => {
+    let operatorCalls = 0;
+    const crewIds = {};
+    fakeOllama.handler = async (_req, parsed) => {
+      const system = parsed.messages?.[0]?.content || '';
+      if (system.includes('Business Strategy Crew Operator')) {
+        operatorCalls++;
+        if (!crewIds.market_analyst) {
+          crewIds.market_analyst = system.match(/\[role_key: market_analyst\] -> agent_id: "([^"]+)"/)?.[1];
+          crewIds.executive_brief_writer = system.match(/\[role_key: executive_brief_writer\] -> agent_id: "([^"]+)"/)?.[1];
+        }
+        if (operatorCalls === 1) {
+          return ollamaToolCall('set_plan', {
+            steps: [
+              { id: '1', description: 'Establish the market facts', assigned_to: 'market_analyst' },
+              { id: '2', description: 'Write the executive brief', assigned_to: 'executive_brief_writer' },
+            ],
+          });
+        }
+        if (operatorCalls === 2) return ollamaToolCall('update_plan_step', { id: '1', status: 'in_progress' });
+        if (operatorCalls === 3) return ollamaToolCall('ask_agent', { agent_id: crewIds.market_analyst, message: 'Establish the market facts.' });
+        if (operatorCalls === 4) return ollamaToolCall('update_plan_step', { id: '1', status: 'done' });
+        if (operatorCalls === 5) return ollamaToolCall('update_plan_step', { id: '2', status: 'in_progress' });
+        if (operatorCalls === 6) return ollamaToolCall('ask_agent', { agent_id: crewIds.executive_brief_writer, message: 'Write the executive brief.' });
+        if (operatorCalls === 7) return ollamaToolCall('update_plan_step', { id: '2', status: 'done' });
+        return ollamaToolCall('mark_goal_achieved', { summary: 'Strategy brief delivered.' });
+      }
+      if (system.includes('You are the Market Analyst')) return ollamaText('Market facts: sourced findings attached.');
+      if (system.includes('You are the Executive Brief Writer')) return ollamaText('Executive brief: recommendation and evidence trail attached.');
+      return ollamaText('unexpected request');
+    };
+
+    const id = createColony('Lightweight business recipe test', 'fake-model', 'business_strategy');
+    createdColonies.push(id);
+    await runColony(id, () => {}, null);
+
+    const colony = getColony(id);
+    if (colony.status !== 'done') {
+      assert.fail(`error=${colony.log.find(e => e.kind === 'error')?.message || '(none)'} log=${JSON.stringify(colony.log.slice(-8))}`);
+    }
+    assert.equal(colony.summary, 'Strategy brief delivered.');
+    assert.ok(colony.plan?.steps?.every(s => s.status === 'done'));
+    assert.equal(colony.log.filter(e => e.kind === 'tool_call' && e.tool === 'create_agent').length, 0);
+    // Lightweight: no protocol flow, no handoff enforcement.
+    const protocol = require('../lib/colonyProtocol');
+    assert.equal(protocol.getFlow('business_strategy'), null);
+  });
 });
 
 describe('runColony — plan tools and goal gating', () => {

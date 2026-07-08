@@ -127,6 +127,25 @@ export const api = {
   deleteColonyTeam: (id) => req('DELETE', `/colony/teams/${id}`),
   getColonyTeamBoard: (id) => req('GET', `/colony/teams/${id}/board`),
 
+  // Colony work queue — work flows to colonies as items (proposed → queued →
+  // claimed); starting a queued item is the primary launch path.
+  getTeamQueue: (id) => req('GET', `/colony/teams/${id}/queue`),
+  addTeamQueueItem: (id, data) => req('POST', `/colony/teams/${id}/queue`, data),
+  updateTeamQueueItem: (id, itemId, data) => req('PUT', `/colony/teams/${id}/queue/${itemId}`, data),
+  deleteTeamQueueItem: (id, itemId) => req('DELETE', `/colony/teams/${id}/queue/${itemId}`),
+  // Start streams SSE — caller consumes the fetch Response like launchColony
+  startTeamQueueItem: (id, itemId, body, signal) =>
+    fetch(`${BASE}/colony/teams/${id}/queue/${itemId}/start`, {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(body || {}),
+      signal,
+    }),
+  getUnroutedQueue: () => req('GET', '/colony/queue/unrouted'),
+  updateQueueItem: (itemId, data) => req('PUT', `/colony/queue/${itemId}`, data),
+  // Roster change hints (SSE) — refetch teams/queues on events
+  streamColonyRoster: (signal) => fetch(`${BASE}/colony/roster/stream`, { method: 'GET', headers: authHeaders(), signal }),
+
   // Colony runs
   getColonies: () => req('GET', '/colony'),
   getColonyRecipes: () => req('GET', '/colony/recipes'),
@@ -135,6 +154,15 @@ export const api = {
   getColonyProjectBoard: () => req('GET', '/colony/project-board'),
   getColony: (id) => req('GET', `/colony/${id}`),
   getColonyArtifact: (id, path) => req('GET', `/colony/${id}/artifact?path=${encodeURIComponent(path)}`),
+  // Direct URL to an artifact's raw bytes (for <img>/<audio> src and downloads).
+  // The auth token rides as a query param since element src can't send headers.
+  colonyArtifactRawUrl: (id, path, { download = false } = {}) => {
+    const params = new URLSearchParams({ path, raw: '1' });
+    if (download) params.set('download', '1');
+    const token = getHiveAuthToken();
+    if (token) params.set('hive_token', token);
+    return `${BASE}/colony/${id}/artifact?${params.toString()}`;
+  },
   stopColony: (id) => req('POST', `/colony/${id}/stop`),
   deleteColony: (id) => req('DELETE', `/colony/${id}`),
   // Communication protocol surfaces
@@ -182,10 +210,6 @@ export const api = {
   syncStaffSuggestions: () => req('POST', '/staff/suggestions/sync'),
   applyStaffSuggestion: (id, proposed_value) => req('POST', `/staff/suggestions/${id}/apply`, proposed_value !== undefined ? { proposed_value } : {}),
   dismissStaffSuggestion: (id) => req('POST', `/staff/suggestions/${id}/dismiss`),
-  getStaffChat: (limit = 100) => req('GET', `/staff/chat?limit=${encodeURIComponent(limit)}`),
-  postStaffChat: (content) => req('POST', '/staff/chat', { content }),
-  clearStaffChat: () => req('DELETE', '/staff/chat'),
-  tickStaffChat: () => req('POST', '/staff/chat/tick'),
 
   // Skills catalog + tool options
   getSkills: () => req('GET', '/skills'),

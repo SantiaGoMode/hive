@@ -31,7 +31,14 @@ async function runAgentOnce(targetAgent, userMessages, ollamaUrl, depth, ws = nu
 
   // toolsOverride (non-empty array) lets callers (pipeline steps, schedules) supply
   // a specific tool list that takes precedence over the agent's own configuration.
-  const effectiveTools = (toolsOverride?.length > 0) ? toolsOverride : (targetAgent.tools || []);
+  let effectiveTools = (toolsOverride?.length > 0) ? toolsOverride : (targetAgent.tools || []);
+  // Skills are injected as a lean manifest and pulled on demand — so any agent
+  // with assigned skills must be able to reach load_skill, regardless of how its
+  // tool groups were configured. Add the loader here, the one point every run
+  // funnels through.
+  if (targetAgent.skills?.length && !effectiveTools.includes('skills')) {
+    effectiveTools = [...effectiveTools, 'skills'];
+  }
   const targetTools = effectiveTools.length > 0 ? getToolDefinitions(effectiveTools) : [];
 
   const messages = [{ role: 'system', content: systemContent }, ...userMessages];

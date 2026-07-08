@@ -168,8 +168,27 @@ async function fetchSpendLogs(gw, limit) {
     headers: gw.key ? { Authorization: `Bearer ${gw.key}` } : undefined,
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
-  if (!res.ok) throw new Error(`Gateway spend logs returned HTTP ${res.status}`);
+  if (!res.ok) {
+    const error = new Error(`Gateway spend logs returned HTTP ${res.status}`);
+    error.status = res.status;
+    throw error;
+  }
   return rowsFromPayload(await res.json());
+}
+
+// Translate a fetch failure into an instruction the Settings panel can show —
+// the raw error still goes to logSwallowed for debugging.
+function spendUnavailableMessage(error) {
+  if (error?.status === 401 || error?.status === 403) {
+    return `The gateway rejected Hive's key (HTTP ${error.status}). Enter your LiteLLM master key as the LLM Gateway key in Settings → Model Providers (or set LLM_GATEWAY_KEY) — spend is only tracked for authenticated requests.`;
+  }
+  if (error?.status) {
+    return `Gateway spend logs returned HTTP ${error.status}. Spend tracking requires the LiteLLM master key and the Postgres service — see gateway/README.md “Spend tracking & budgets”.`;
+  }
+  if (error?.name === 'TimeoutError' || error?.name === 'AbortError') {
+    return 'The gateway did not respond in time. Check that the LiteLLM container is running (gateway/run-gateway.sh) and the gateway URL is correct.';
+  }
+  return 'Could not reach the gateway at the configured URL. Check that the LiteLLM container is running (gateway/run-gateway.sh) and the gateway URL is correct.';
 }
 
 async function getGatewaySpendSummary({ force = false, limit = 500 } = {}) {
@@ -198,7 +217,7 @@ async function getGatewaySpendSummary({ force = false, limit = 500 } = {}) {
     return lastSummary;
   } catch (error) {
     logSwallowed('gatewaySpend:fetchSpendLogs', error);
-    lastSummary = emptySummary(gw, error.message || String(error));
+    lastSummary = emptySummary(gw, spendUnavailableMessage(error));
     lastSummary.reachable = false;
     return lastSummary;
   }

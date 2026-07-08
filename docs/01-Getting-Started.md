@@ -58,6 +58,7 @@ Hive behavior is heavily driven by process environment variables. These can be s
 | `HIVE_MUTATION_RATE_WINDOW_MS` | `60000` | The window in milliseconds for the rate limit. |
 | `HIVE_MAX_TRIGGERED_COLONY_RUNS` | `2` | Number of concurrent Colony runs allowed to be triggered by Webhooks to prevent runaway costs. |
 | `LLM_GATEWAY_URL` | *None* | Used alongside `LLM_GATEWAY_KEY` to route traffic through LiteLLM. |
+| `LLM_GATEWAY_KEY` | *None* | The key Hive presents to the gateway. **Required once the LiteLLM master key is enabled** (set it to the same value) — without it, gateway calls get HTTP 401 and the spend panel shows zeros. See `gateway/README.md` → "Spend tracking & budgets". |
 
 ---
 

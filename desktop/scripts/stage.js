@@ -36,7 +36,7 @@ if (!fs.existsSync(path.join(clientDist, 'index.html'))) {
 }
 
 console.log('staging ->', staging);
-fs.rmSync(staging, { recursive: true, force: true });
+fs.rmSync(staging, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 fs.mkdirSync(staging, { recursive: true });
 
 // Server source (no tests) + manifests + client build.

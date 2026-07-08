@@ -1,6 +1,7 @@
 const protocol = require('./colonyProtocol');
-const { resolveRoleModel, CODING_ROLES } = require('./colonyModels');
+const { resolveRoleModel, isCodingRole } = require('./colonyModels');
 const { codingGuidelinesBlock } = require('./codingGuidelines');
+const { CATALOG_RECIPES } = require('./recipeCatalog');
 
 const CUSTOM_AUTO_RECIPE_ID = 'custom_auto';
 // Product default. Post-redesign, a colony is a seeded, protocol-driven crew —
@@ -26,6 +27,7 @@ const RECIPES = {
     roles: [
       {
         key: 'business_analyst',
+        skills: ['Requirements Elicitation', 'User Story Writing'],
         name: 'Business Analyst',
         agent_name: 'Maya Chen',
         role: 'Business Analyst',
@@ -51,6 +53,7 @@ When delegated work:
       },
       {
         key: 'project_manager',
+        skills: ['Sprint Planning', 'Stakeholder Status Updates'],
         name: 'Project Manager',
         agent_name: 'Jordan Lee',
         role: 'Project Manager',
@@ -99,6 +102,7 @@ When delegated the closing RETROSPECTIVE:
       },
       {
         key: 'ui_ux_designer',
+        skills: ['UX Prototyping'],
         name: 'UI/UX Designer',
         agent_name: 'Avery Brooks',
         role: 'UI/UX Designer',
@@ -124,6 +128,7 @@ When delegated work:
       },
       {
         key: 'software_developer',
+        skills: ['Debugging Methodology', 'Refactoring Discipline', 'Git Hygiene'],
         name: 'Software Developer',
         agent_name: 'Sam Rivera',
         role: 'Software Developer',
@@ -162,6 +167,7 @@ When delegated work:
       },
       {
         key: 'qa_engineer',
+        skills: ['Unit Test Design', 'Integration Testing'],
         name: 'QA Engineer',
         agent_name: 'Priya Shah',
         role: 'QA Engineer',
@@ -194,6 +200,7 @@ When delegated work:
       },
       {
         key: 'devops_engineer',
+        skills: ['CI/CD Pipeline Design', 'Incident Response'],
         name: 'DevOps Engineer',
         agent_name: 'Nico Alvarez',
         role: 'DevOps Engineer',
@@ -238,6 +245,7 @@ When delegated work:
     roles: [
       {
         key: 'researcher',
+        skills: ['Web Research & Verification'],
         name: 'Researcher',
         agent_name: 'Iris Morgan',
         role: 'Researcher',
@@ -262,6 +270,7 @@ When delegated a research task:
       },
       {
         key: 'source_critic',
+        skills: ['Web Research & Verification'],
         name: 'Source Critic',
         agent_name: 'Theo Grant',
         role: 'Source Critic',
@@ -280,6 +289,7 @@ When delegated a critique task:
       },
       {
         key: 'synthesizer',
+        skills: ['Executive Brief Writing', 'Technical Documentation'],
         name: 'Synthesizer',
         agent_name: 'Lena Ortiz',
         role: 'Synthesizer',
@@ -296,16 +306,39 @@ When delegated a synthesis task:
 - Be direct about uncertainty.
 - End with "Final brief" followed by the complete deliverable.`,
       },
+      {
+        key: 'media_producer',
+        skills: ['Image Generation', 'Voice Synthesis'],
+        name: 'Media Producer',
+        agent_name: 'Marco Reyes',
+        role: 'Media Producer',
+        color: '#e11d48',
+        tools: ['media', 'sandbox_files', 'memory'],
+        prompt: `You are the Media Producer in a Hive Research Mission crew.
+
+Your job is to give the brief visual and audio form.
+
+When delegated media work:
+- Generate a summarizing image or diagram with generate_image using a specific, well-crafted prompt.
+- Produce a short spoken audio summary of the brief with generate_speech when it adds value.
+- Name each file clearly; every generated file is auto-saved to the run artifacts and posted to Discord.
+- End with "Media handoff" listing the generated file names and what each conveys.`,
+      },
     ],
   },
+
+  // Expanded technical + business catalog (code_review, incident_response,
+  // go_to_market_launch, …) — defined compactly in recipeCatalog.js.
+  ...CATALOG_RECIPES,
 };
 
 function listColonyRecipes() {
-  return Object.values(RECIPES).map(({ id, name, summary, placeholder, roles }) => ({
+  return Object.values(RECIPES).map(({ id, name, summary, placeholder, category, roles }) => ({
     id,
     name,
     summary,
     placeholder,
+    category: category || null,
     roles: roles.map(role => ({
       key: role.key,
       name: role.name,
@@ -322,6 +355,17 @@ function getColonyRecipe(recipeId) {
 
 function isCustomAutoRecipe(recipeId) {
   return getColonyRecipe(recipeId).id === CUSTOM_AUTO_RECIPE_ID;
+}
+
+// Capability lookup by (recipeId, roleKey) for call sites that only have a
+// role key (e.g. per-agent round budgets). Prefers the role's declared
+// capabilities metadata; falls back to the legacy CODING_ROLES set for roles
+// without a recipe definition (custom staff, custom_auto workers).
+function isCodingRoleKey(recipeId, roleKey) {
+  if (!roleKey) return false;
+  const recipe = recipeId ? RECIPES[recipeId] : null;
+  const role = recipe?.roles?.find(r => r.key === roleKey);
+  return isCodingRole(role || roleKey);
 }
 
 // Compose the per-role Communication Protocol instructions injected into each
@@ -388,12 +432,21 @@ function buildRecipeWorkerConfigs(recipe, goal, model, modelPlan = null) {
     temperature: role.key === 'researcher' ? 0.2 : 0.35,
     max_tokens: 4096,
     context_length: 16384,
+    // Internal role metadata for the seeding pipeline (repo mounts, sandbox
+    // network, MCP categories). Underscore-prefixed like _staff_profile_id;
+    // writeAgent ignores unknown fields so it never persists.
+    _role_meta: {
+      capabilities: role.capabilities || null,
+      repo_access: role.repo_access ?? null,
+      network: role.network ?? null,
+      mcp_categories: Array.isArray(role.mcp) ? role.mcp : null,
+    },
     system_prompt: `${role.prompt}
 
 ---
 [Colony Mission] ${goal}
 [Crew Use Case] ${recipe.name}
----${protocolPromptBlock(recipe.id, role.key)}${CODING_ROLES.has(role.key) ? codingGuidelinesBlock() : ''}`,
+---${protocolPromptBlock(recipe.id, role.key)}${isCodingRole(role) ? codingGuidelinesBlock() : ''}`,
   }));
 }
 
@@ -574,7 +627,115 @@ ${workerLines}
 ${model}`;
   }
 
-  return null;
+  return genericSeededOperatorPrompt(goal, model, recipe, workerLines, { reviewLine });
+}
+
+// Generic operator prompt for every seeded recipe without a bespoke branch
+// above. Two shapes: strict recipes (a protocol flow exists) get enforced
+// flow-order delegation; lightweight recipes get expertise-matched, plan-
+// driven delegation. New catalog recipes must NOT add per-recipe branches —
+// they are served by this path.
+function genericSeededOperatorPrompt(goal, model, recipe, workerLines, { reviewLine }) {
+  const strict = protocol.hasProtocol(recipe.id);
+  const artifactLines = recipe.roles
+    .filter(role => role.artifact_expectations)
+    .map(role => `- ${role.role} (${role.key}): ${role.artifact_expectations}`);
+  const artifactSection = artifactLines.length
+    ? `\n## Expected artifacts\nThe crew must produce PRACTICAL deliverables, not chat. Hold each role to its artifact:\n${artifactLines.join('\n')}\n`
+    : '';
+  const expertiseLines = recipe.roles
+    .map(role => `   ${role.key} → ${role.role}`)
+    .join('\n');
+
+  const header = `You are a Hive ${recipe.name} Operator. You coordinate a seeded specialist crew using normal professional delivery expectations.
+
+MISSION / WORK CONTEXT:
+${goal}
+
+## Crew
+${workerLines}
+
+## Your tools
+- set_plan: define the mission checklist
+- add_plan_step: append a step if the mission reveals extra necessary work
+- update_plan_step: mark a step in_progress, done, or blocked
+- ask_agent: delegate to the exact worker agent_id listed above
+- blackboard_read / blackboard_write: read and append to the shared context layer
+- mark_goal_achieved: call once the mission is complete
+- report_workaround: record app, tool, model, access, or workflow issues that forced a workaround so the final report can tell the user how Hive should improve`;
+
+  const hardRules = `## Hard rules
+- Do not create agents. Your crew already exists — never call create_agent, update_agent, or delete_agent.
+- Respond ONLY in English — every message, note, and summary. (Multilingual
+  models drift languages mid-run and produce unreadable round messages.)
+- Use only the exact agent_id values listed above; address roles by their role_key in instructions.
+- Do not do substantive role work yourself. Delegate to the right crew member.
+- NEVER mark a step done when its work failed or was skipped — set it blocked with a note.
+- Keep the final deliverable grounded in the worker handoffs.
+- Final summary must mention any report_workaround notes so the user knows what to improve in Hive.
+
+## Worker model
+${model}`;
+
+  if (strict) {
+    const flow = protocol.getFlow(recipe.id);
+    const flowLines = flow
+      .map(e => `  ${e.from} → ${e.to}   (${e.payload})`)
+      .join('\n');
+    return `${header}
+- You have NO handoff tool: handoffs belong to workers. Each worker calls handoff()
+  itself when its work is done — you start and advance the flow with ask_agent only.
+
+## Communication Protocol (A2A/ACP)
+This crew follows a structured Communication Protocol. Workers share state on a
+shared Blackboard and pass control with explicit, tool-based handoffs. The
+handoff flow is fixed and preconditions are ENFORCED:
+
+${flowLines}
+
+${reviewLine}
+${artifactSection}
+## Delivery protocol
+1. Call set_plan first with 3-6 steps that map DIRECTLY to this mission — nothing
+   more. ASSIGN EACH STEP to the role whose EXPERTISE matches the work (set
+   assigned_to to the role_key):
+${expertiseLines}
+2. Delegate STRICTLY in flow order, one role at a time, starting with ${flow[0].from}.
+   A downstream role's preconditions are not met until the upstream handoff is on
+   record — never skip ahead, and never ask a role to do another role's work.
+   If a role has little to do for THIS mission, ask it for a brief review of its
+   area and an immediate handoff — the chain must complete, but the scope must not
+   grow to give every role "real" work.
+3. Tell each worker to read the Blackboard, do its role's work, and finish with a
+   handoff() to the next role in the flow. The worker's handoff carries the payload contract.
+4. Plan steps auto-complete when a handoff is accepted. Use update_plan_step only
+   for blocked steps or extra steps that do not map to a handoff.
+5. If a worker returns a protocol violation (unknown task, failed precondition,
+   not-understood), resolve the gap — re-delegate to the missing upstream role —
+   instead of retrying the same handoff.
+6. Hold every role to its expected artifact: a handoff whose deliverable does not
+   exist as a file or concrete payload is not done — re-delegate demanding it.
+7. If the crew works around missing access, weak tools, model limitations, or manual steps, call report_workaround with the issue, workaround, impact, and product recommendation.
+8. Call mark_goal_achieved only after EVERY role has completed its handoff — the
+   full chain must be on record (it is enforced; the call fails listing any
+   missing handoffs).
+
+${hardRules}`;
+  }
+
+  return `${header}
+${artifactSection}
+## Mission protocol
+1. Call set_plan first with 3-6 concrete, mission-specific steps. Do not use a generic fixed template if the goal needs something else.
+2. Delegate each step to the role whose expertise matches (address roles by role_key):
+${expertiseLines}
+3. Mark each step in_progress before delegation, and mark it done only after the worker returns usable output.
+4. Hold every role to its expected artifact: prose claiming the work is "complete" without the deliverable is not done — re-delegate demanding it.
+5. Add a plan step if the mission uncovers necessary follow-up work.
+6. If the crew works around missing access, weak tools, model limitations, or manual steps, call report_workaround with the issue, workaround, impact, and product recommendation.
+7. Call mark_goal_achieved with a concise summary only after all plan steps are done.
+
+${hardRules}`;
 }
 
 function recipeInitialMessage(recipe) {
@@ -591,6 +752,7 @@ module.exports = {
   listColonyRecipes,
   getColonyRecipe,
   isCustomAutoRecipe,
+  isCodingRoleKey,
   buildRecipeWorkerConfigs,
   recipeOrchestratorPrompt,
   recipeInitialMessage,

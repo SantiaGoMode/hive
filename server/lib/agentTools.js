@@ -2,7 +2,7 @@
 // split into a registry + per-domain tool modules under ./tools/ and the agent
 // runner (runAgentOnce). This module preserves the original public API so every
 // existing caller (websocket, colonyRunner, pipelineRunner, scheduler,
-// webhookActions, skills route, staffScheduler) keeps working unchanged.
+// webhookActions, skills route) keeps working unchanged.
 const { runAgentOnce } = require('./agentRunner');
 const { getToolDefinitions, executeTool, builtInToolCatalog } = require('./tools/registry');
 const { readMemory, readShared, isPermissionError } = require('./tools/shared');
