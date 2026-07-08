@@ -76,6 +76,8 @@ const TOOLS = [
   { id: 'memory', label: 'Persistent Memory', desc: 'Remember things across conversations. The agent can save notes, user preferences, and context to a MEMORY.md file in its workspace.' },
   { id: 'web_search', label: 'Web Search', desc: 'Built-in Ollama web_search/web_fetch. Requires Ollama web access via ollama signin.' },
   { id: 'sandbox', label: 'Sandbox', desc: 'Isolated Docker container for safe code execution. Gives the agent shell access, Python (run_python), and file read/write — all contained away from your system.' },
+  { id: 'media', label: 'Media Generation', desc: 'Generate images (FLUX.2-klein) and speech (Orpheus) locally via Ollama. Results render inline in chat and download from the agent\'s artifacts.' },
+  { id: 'skills', label: 'Skill Loader', desc: 'Browse the skill catalog and pull a skill\'s full instructions on demand mid-conversation (list_skills / load_skill).' },
 ];
 
 
