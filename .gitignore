@@ -20,6 +20,7 @@ client/dist/
 PRD-*.md
 TODO.md
 docs/AUDIT.md
+design_concepts/
 
 # Colony run exports
 colony_output/
