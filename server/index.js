@@ -2,9 +2,11 @@ const { logger } = require('./lib/logger');
 
 process.on('unhandledRejection', (reason) => {
   logger.error('process', 'unhandledRejection', { reason: reason?.message || String(reason) });
+  shutdown('unhandledRejection', 1);
 });
 process.on('uncaughtException', (err) => {
   logger.error('process', 'uncaughtException', { error: err?.message || String(err) });
+  shutdown('uncaughtException', 1);
 });
 
 const http = require('http');
@@ -43,10 +45,58 @@ if (!config.authToken()) {
 
 const app = express();
 const server = http.createServer(app);
+let ready = false;
+let shuttingDown = false;
+
+async function shutdown(reason = 'signal', exitCode = 0) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  ready = false;
+  logger.info('process', 'shutdown_started', { reason });
+
+  try { schedulerLifecycle.stopAll(); } catch (error) { logger.warn('process', 'scheduler_stop_failed', { error: error.message }); }
+  try { require('./lib/colonyOutbox').stop(); } catch {}
+  try { require('./lib/databaseMaintenance').stop(); } catch {}
+  try { await require('./lib/discord').stop(); } catch (error) { logger.warn('process', 'discord_stop_failed', { error: error.message }); }
+  try { await ngrokService.stopTunnel(); } catch (error) { logger.warn('process', 'ngrok_stop_failed', { error: error.message }); }
+  try {
+    for (const id of Array.from(mcpManager.clients.keys())) mcpManager.disconnect(id);
+  } catch (error) { logger.warn('process', 'mcp_stop_failed', { error: error.message }); }
+
+  const force = setTimeout(() => {
+    try { server.closeAllConnections?.(); } catch {}
+    process.exit(exitCode);
+  }, 8_000);
+  force.unref?.();
+  server.close(() => {
+    clearTimeout(force);
+    try { db.close(); } catch {}
+    process.exit(exitCode);
+  });
+}
+
+process.once('SIGTERM', () => shutdown('SIGTERM', 0));
+process.once('SIGINT', () => shutdown('SIGINT', 0));
+
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('Content-Security-Policy', [
+    "default-src 'self'", "script-src 'self'", "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' blob: data:", "media-src 'self' blob:",
+    "font-src 'self' data:", "connect-src 'self' ws: wss:",
+    "object-src 'none'", "base-uri 'none'", "frame-ancestors 'none'",
+  ].join('; '));
+  next();
+});
 
 app.use(createOriginGuard());
 app.use(cors(createCorsOptions()));
 app.use(express.json({
+  limit: '100kb',
   verify: (req, res, buf) => {
     req.rawBody = buf;
   }
@@ -55,6 +105,9 @@ app.use(express.json({
 // the server is ready; it exposes nothing beyond the app version.
 app.get('/healthz', (req, res) => {
   res.json({ ok: true, version: require('../package.json').version });
+});
+app.get('/readyz', (req, res) => {
+  res.status(ready ? 200 : 503).json({ ok: ready, version: require('../package.json').version });
 });
 
 app.use('/api', requireHiveAuth());
@@ -92,9 +145,17 @@ if (SERVE_CLIENT) {
   });
 }
 
+app.use('/api', (req, res) => res.status(404).json({ error: 'API endpoint not found' }));
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  logger.error('http', 'request_failed', { method: req.method, path: req.path, error: err?.message || String(err) });
+  return res.status(err?.status || 500).json({ error: err?.status && err.status < 500 ? err.message : 'Internal server error' });
+});
+
 createWebSocketServer(server);
 
 const PORT = config.port();
+const HOST = config.bindHost();
 
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
@@ -108,9 +169,10 @@ server.on('error', (err) => {
   }
 });
 
-server.listen(PORT, async () => {
+server.listen(PORT, HOST, async () => {
   logger.info('server', 'listening', {
     port: PORT,
+    host: HOST,
     ...(SERVE_CLIENT
       ? { url: `http://localhost:${PORT}` }
       : { hint: 'No client build found — run "npm run build" to serve the UI from this port, or use "npm run dev".' }),
@@ -136,11 +198,14 @@ server.listen(PORT, async () => {
     }
   }
 
-  // Reset any colonies left in 'running' state from a previous crashed/restarted server
-  const orphaned = db.prepare("UPDATE colonies SET status='stopped', updated_at=unixepoch() WHERE status='running'").run();
-  if (orphaned.changes > 0) {
-    logger.info('startup', 'reset_orphaned_runs', { count: orphaned.changes });
-  }
+  // Colony execution is durable. A restarted process reclaims queued/leased
+  // jobs instead of declaring every in-flight mission stopped.
+  const recovered = require('./lib/colonyJobs').recover();
+  if (recovered > 0) logger.info('startup', 'recovered_colony_runs', { count: recovered });
+  const recoveredWebhookActions = require('./lib/webhookActions').recoverPendingActions();
+  if (recoveredWebhookActions > 0) logger.info('startup', 'recovered_webhook_actions', { count: recoveredWebhookActions });
+  require('./lib/colonyOutbox').start();
+  require('./lib/databaseMaintenance').start();
 
   try {
     require('./lib/staffDirectory').seedStaffProfiles();
@@ -179,4 +244,5 @@ server.listen(PORT, async () => {
     logger.error('startup', 'discord_failed', { error: e.message });
   }
   logger.info('startup', 'complete');
+  ready = true;
 });

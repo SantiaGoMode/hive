@@ -7,18 +7,18 @@ import { MarkdownContent } from '../MarkdownContent';
 import { cn, formatDate } from '../../lib/utils';
 import { chatSendState } from '../../lib/frontendRegression';
 import { toast } from '../../stores/toastStore';
-import { getHiveAuthToken } from '../../lib/api';
+import { downloadAuthenticated } from '../../lib/api';
+import { useAuthenticatedUrl } from '../../hooks/useAuthenticatedUrl';
 
 // A media-producing tool (generate_image/generate_speech) returns { url, mime }.
-// Append the auth token so an <img>/<audio> src can load it (element src can't
-// send headers), and only treat same-origin /api/artifacts urls as media.
+// Only treat same-origin artifact URLs as media. The component fetches them
+// with an auth header and gives the element an in-memory Blob URL.
 function mediaSrc(result) {
   const url = result?.url;
   const mime = result?.mime || '';
   if (!url || typeof url !== 'string' || !url.startsWith('/api/artifacts/')) return null;
   if (!/^(image|audio|video)\//.test(mime)) return null;
-  const token = getHiveAuthToken();
-  return { src: token ? `${url}${url.includes('?') ? '&' : '?'}hive_token=${encodeURIComponent(token)}` : url, mime };
+  return { url, mime };
 }
 
 // ── Copy button ───────────────────────────────────────────────────────────────
@@ -63,6 +63,7 @@ function ToolCallCard({ name, args, result, serverName }) {
   const hasError = result?.error;
   const { displayName, mcpServer } = parseMcpToolName(name, serverName);
   const media = mediaSrc(result);
+  const mediaUrl = useAuthenticatedUrl(media?.url);
   return (
     <div className="border border-gray-700 rounded-lg overflow-hidden text-xs mt-2">
       <button
@@ -82,14 +83,14 @@ function ToolCallCard({ name, args, result, serverName }) {
       {media && (
         <div className="bg-gray-900 px-3 py-2 border-t border-gray-800">
           {media.mime.startsWith('image/') ? (
-            <img src={media.src} alt={result.artifact || 'generated image'} className="max-w-full rounded" />
+            <img src={mediaUrl} alt={result.artifact || 'generated image'} className="max-w-full rounded" />
           ) : media.mime.startsWith('audio/') ? (
-            <audio controls src={media.src} className="w-full" />
+            <audio controls src={mediaUrl} className="w-full" />
           ) : (
-            <video controls src={media.src} className="max-w-full rounded" />
+            <video controls src={mediaUrl} className="max-w-full rounded" />
           )}
-          <a href={`${result.url}?download=1${getHiveAuthToken() ? `&hive_token=${encodeURIComponent(getHiveAuthToken())}` : ''}`}
-             className="mt-1 inline-block text-blue-300 hover:underline">Download {result.artifact}</a>
+          <button type="button" onClick={() => downloadAuthenticated(`${result.url}?download=1`, result.artifact)}
+             className="mt-1 inline-block text-blue-300 hover:underline">Download {result.artifact}</button>
         </div>
       )}
       {open && (

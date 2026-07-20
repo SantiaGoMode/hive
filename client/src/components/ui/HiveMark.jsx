@@ -1,3 +1,6 @@
+// Hive brand mark — a honeycomb "flower of 7" (six cream cells around a dark
+// honey core on an amber tile). Kept in lockstep with the desktop app icon
+// (desktop/assets/hive-icon.svg) and the browser favicon (public/favicon.svg).
 export function HiveMark({ size = 32, className = '', title = 'Hive' }) {
   return (
     <svg
@@ -10,39 +13,29 @@ export function HiveMark({ size = 32, className = '', title = 'Hive' }) {
       xmlns="http://www.w3.org/2000/svg"
     >
       {title && <title>{title}</title>}
-      <rect x="3" y="3" width="58" height="58" rx="14" fill="#20180f" />
-      <path
-        d="M16 43.5C16 29.3 22.9 18 32 18s16 11.3 16 25.5C48 49 43.5 53 38 53H26c-5.5 0-10-4-10-9.5Z"
-        fill="#F59E0B"
-      />
-      <path
-        d="M20.7 32.1c2.6-1.7 6.8-2.8 11.3-2.8s8.7 1.1 11.3 2.8M18.1 39.4c3.3-2.1 8.4-3.4 13.9-3.4s10.6 1.3 13.9 3.4M19 46.4c3.2-1.8 7.9-2.8 13-2.8s9.8 1 13 2.8"
-        fill="none"
-        stroke="#78350F"
-        strokeLinecap="round"
-        strokeWidth="3"
-        opacity=".58"
-      />
-      <path
-        d="M23.4 23.5c2.3-2.2 5.2-3.5 8.6-3.5s6.3 1.3 8.6 3.5c-2.4 1.1-5.3 1.7-8.6 1.7s-6.2-.6-8.6-1.7Z"
-        fill="#FDE68A"
-        opacity=".9"
-      />
-      <ellipse cx="32" cy="44.3" rx="5.7" ry="7" fill="#241204" />
-      <path
-        d="M24.4 13.6 29 11l4.6 2.6v5.2L29 21.4l-4.6-2.6v-5.2Zm12 0L41 11l4.6 2.6v5.2L41 21.4l-4.6-2.6v-5.2Z"
-        fill="#FBBF24"
-        stroke="#FEF3C7"
-        strokeWidth="1.2"
-      />
-      <path
-        d="M13.6 25.6c2.3-4.1 6.7-5.7 10.7-3.8M50.4 25.6c-2.3-4.1-6.7-5.7-10.7-3.8"
-        fill="none"
-        stroke="#FEF3C7"
-        strokeLinecap="round"
-        strokeWidth="3"
-        opacity=".7"
-      />
+      <defs>
+        <linearGradient id="hm-bg" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#FBBF24" />
+          <stop offset="0.55" stopColor="#F59E0B" />
+          <stop offset="1" stopColor="#D97706" />
+        </linearGradient>
+        <linearGradient id="hm-cell" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#FFFDF7" />
+          <stop offset="1" stopColor="#FCE8B6" />
+        </linearGradient>
+        <linearGradient id="hm-core" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#B45309" />
+          <stop offset="1" stopColor="#7C3A06" />
+        </linearGradient>
+      </defs>
+      <rect width="64" height="64" rx="14" fill="url(#hm-bg)" />
+      <path d="M38.7,28.1L32.0,24.3L25.3,28.1L25.3,35.9L32.0,39.7L38.7,35.9Z" fill="url(#hm-core)" />
+      <path d="M53.6,28.1L46.9,24.3L40.2,28.1L40.2,35.9L46.9,39.7L53.6,35.9Z" fill="url(#hm-cell)" />
+      <path d="M23.8,28.1L17.1,24.3L10.4,28.1L10.4,35.9L17.1,39.7L23.8,35.9Z" fill="url(#hm-cell)" />
+      <path d="M46.2,15.2L39.4,11.4L32.7,15.2L32.7,23.0L39.4,26.8L46.2,23.0Z" fill="url(#hm-cell)" />
+      <path d="M31.3,15.2L24.6,11.4L17.8,15.2L17.8,23.0L24.6,26.8L31.3,23.0Z" fill="url(#hm-cell)" />
+      <path d="M46.2,41.0L39.4,37.2L32.7,41.0L32.7,48.8L39.4,52.6L46.2,48.8Z" fill="url(#hm-cell)" />
+      <path d="M31.3,41.0L24.6,37.2L17.8,41.0L17.8,48.8L24.6,52.6L31.3,48.8Z" fill="url(#hm-cell)" />
     </svg>
   );
 }

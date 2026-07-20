@@ -2,9 +2,9 @@
 
 **A self-hosted, local-first AI agent dashboard.** Build specialized agents, chat with them in real time, run multi-agent missions, chain them into pipelines, and schedule autonomous work — all on your machine. Run completely offline via [Ollama](https://ollama.com) with no account required, or integrate cloud models (Anthropic, OpenAI, Gemini) securely using your own API keys.
 
-![local-first](https://img.shields.io/badge/local--first-AI-blue) ![node](https://img.shields.io/badge/node-%E2%89%A518-green) ![license](https://img.shields.io/badge/license-ISC-lightgrey)
+![local-first](https://img.shields.io/badge/local--first-AI-blue) ![node](https://img.shields.io/badge/node-%E2%89%A522-green) ![license](https://img.shields.io/badge/license-ISC-lightgrey)
 
-![Hive dashboard](docs/screenshots/dashboard.png)
+![Hive dashboard](<docs/screenshots/1. Agents Tab  - Home.png>)
 
 ---
 
@@ -82,7 +82,8 @@ Hive is organized as a monorepo:
 - **Local-First Secrets**: `~/.hive` permissions are strictly `0700` and the database `hive.db` is `0600`. Secrets are masked in the UI.
 - **Sandbox Hardening**: Agent sandboxes run in Docker containers with `--cap-drop=ALL`, `no-new-privileges`, CPU/memory caps, and **no network access** by default.
 - **Authentication**: Gated by `HIVE_AUTH_TOKEN`. A random token is generated on first boot for UI authentication.
-- **Rate Limiting**: Bounded rate limiters on mutating requests and concurrent webhook runs.
+- **External automation**: Enabled webhooks require their own secret, retain only allowlisted delivery metadata, and share bounded automation concurrency. Unattended runs do not inherit repo/GitHub write authority.
+- **Rate Limiting**: Bounded rate limiters protect mutating API requests and incoming webhook deliveries.
 
 ### Optional Hardening: Gateway + Environment-Backed Secrets
 For enterprise-grade security, you can isolate API keys completely:
@@ -94,14 +95,14 @@ For enterprise-grade security, you can isolate API keys completely:
 ## Getting Started
 
 ### Prerequisites
-- [Node.js](https://nodejs.org) ≥ 18
+- [Node.js](https://nodejs.org) ≥ 22 (current LTS recommended)
 - [Ollama](https://ollama.com) running locally (`ollama serve`) with at least one model pulled (e.g., `ollama pull qwen2.5:7b`).
 - *(Optional)* [Docker](https://www.docker.com) for secure agent sandboxing and LiteLLM gateway.
 
 ### 1. Desktop App (Recommended)
-Download the installer from [GitHub Releases](https://github.com/SantiaGoMode/hive/releases) (macOS `.dmg`, Linux `.AppImage`, Windows `.exe`). The setup wizard handles model connection and starter agent creation automatically.
+Download the installer from [GitHub Releases](https://github.com/SantiaGoMode/hive/releases) (macOS `.dmg` or Linux `.AppImage`/`.deb`). Windows packaging remains available for local builds but is not published until Authenticode signing is configured. The setup wizard handles model connection and starter agent creation automatically.
 
-*(Note for macOS: if Gatekeeper blocks the app, run `xattr -dr com.apple.quarantine /Applications/Hive.app`)*
+Production macOS releases are Developer ID signed and notarized. If Gatekeeper rejects a release artifact, do not bypass quarantine; verify the release checksum and report the rejected version.
 
 ### 2. From Source
 Clone the repository and install dependencies:
@@ -125,6 +126,8 @@ npm run build && npm start
 Access the dashboard at `http://localhost:3001`.
 
 *On first boot, Hive will check your environment, help you connect models, and generate a `HIVE_AUTH_TOKEN` (saved to `~/.hive/auth_token`) for login.*
+
+Hive creates protected online SQLite backups under `~/.hive/backups` (seven daily backups by default). Check integrity through `/api/system/database/integrity`. To restore, stop Hive and run `npm run db:restore -- <backup-name> --confirm-stopped`; the utility validates the backup and preserves the current database before replacement.
 
 ---
 

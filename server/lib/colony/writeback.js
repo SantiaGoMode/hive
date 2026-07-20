@@ -1,10 +1,9 @@
 // Git write-back for colony runs: commit, push the colony branch, and open a
-// Draft PR for the user to review. This is ALWAYS the last act of a run when the
-// agents produced real work — it runs for done AND stopped runs so partial work
-// is never stranded uncommitted on a local branch.
+// Draft PR for successful repository-writing runs. Review/comment permission is
+// handled separately below and never grants branch/commit/PR permission.
 const protocol = require('../colonyProtocol');
 const db = require('../../db');
-const { detectGitHubRepo, createDraftPR, postIssueComment, buildBoardComment } = require('../githubBoard');
+const { detectGitHubRepo, createDraftPR, createPullRequestReview, postIssueComment, buildBoardComment } = require('../githubBoard');
 const { logSwallowed } = require('../logSwallowed');
 const { getColony } = require('./persistence');
 const {
@@ -13,23 +12,39 @@ const {
   gitDefaultBranch,
   gitHasUncommittedChanges,
   gitBranchHasNewCommits,
+  gitBranchHasNewCommitsSince,
 } = require('./git');
+
+function reviewTargetFromRow(row) {
+  try {
+    const card = row?.board_card ? JSON.parse(row.board_card) : null;
+    return card?.review_target || null;
+  } catch {
+    return null;
+  }
+}
+
+function publishCompareRef(row) {
+  const target = reviewTargetFromRow(row);
+  return target?.local_ref || target?.head_sha || null;
+}
 
 // Build the run-scoped performWriteback(status) closure.
 // `ctx` = { colonyId, colonyBranch, addEntry, onEvent, state }
 // `state` carries the mutable run values set as the run progresses:
-//   { row, githubWriteback, goalSummary }
+  //   { row, githubPublish, goalSummary }
 function createPerformWriteback(ctx) {
   const { colonyId, colonyBranch, addEntry, onEvent, state } = ctx;
 
   return async (status) => {
-    const { row, githubWriteback, goalSummary } = state;
-    if (!githubWriteback || !row?.repo_path) return;
+    const { row, githubPublish, goalSummary } = state;
+    if (!githubPublish || status !== 'done' || !row?.repo_path) return;
+    const compareRef = publishCompareRef(row);
     const hasPublishableWork = gitHasUncommittedChanges(row.repo_path)
-      || gitBranchHasNewCommits(row.repo_path);
+      || (compareRef ? gitBranchHasNewCommitsSince(row.repo_path, compareRef) : gitBranchHasNewCommits(row.repo_path));
     if (!hasPublishableWork) {
       if (status === 'done') {
-        addEntry({ kind: 'writeback', message: '⚠️ No file changes were produced on the colony branch — nothing to push or open a PR for. The agents completed the flow without committing real work.' });
+        addEntry({ kind: 'writeback', message: '✅ No repository changes were produced — nothing to push or open a PR for. This is a valid no-change outcome.' });
         onEvent({ type: 'writeback', phase: 'no_changes', branch: colonyBranch });
       }
       return;
@@ -47,15 +62,15 @@ function createPerformWriteback(ctx) {
       const goalLine = String(goalSummary || row.goal || 'Colony completed')
         .split('\n').map(l => l.trim()).filter(l => l && !/^\[.*\]$/.test(l))[0] || 'Colony completed';
       const commitMsg = `feat(colony): ${goalLine.slice(0, 72)}\n\nColony ID: ${colonyId}`;
-      const pushRes = await gitCommitAndPush(row.repo_path, colonyBranch, commitMsg);
+      const pushRes = await gitCommitAndPush(row.repo_path, colonyBranch, commitMsg, compareRef ? { compareRef } : {});
       if (!pushRes.pushed) {
-        addEntry({ kind: 'writeback', message: '⚠️ Nothing to publish: after excluding secret files, the branch has no commits beyond the default branch. No push or PR.' });
+        addEntry({ kind: 'writeback', message: `⚠️ Nothing to publish: after excluding secret files, the branch has no commits beyond ${compareRef || 'the default branch'}. No push or PR.` });
         onEvent({ type: 'writeback', phase: 'no_changes', branch: colonyBranch });
         return;
       }
 
       let diffStat = '';
-      try { diffStat = gitExec(['diff', '--stat', `origin/${base}...HEAD`], row.repo_path).slice(0, 2000); } catch {
+      try { diffStat = gitExec(['diff', '--stat', `${compareRef || `origin/${base}`}...HEAD`], row.repo_path).slice(0, 2000); } catch {
         try { diffStat = gitExec(['diff', '--stat', `${base}...HEAD`], row.repo_path).slice(0, 2000); } catch (e) { logSwallowed('colonyRunner:diffStat', e, { colonyId }); }
       }
 
@@ -120,7 +135,7 @@ function createPerformWriteback(ctx) {
 function emitVerifiedOutcome({ colonyId, row, state, colonyBranch, addEntry }) {
   try {
     const facts = {
-      writeback_enabled: !!state.githubWriteback,
+      writeback_enabled: !!state.githubPublish,
       pr_url: state.prUrl || null,
       branch: null,
       new_commits: false,
@@ -130,12 +145,16 @@ function emitVerifiedOutcome({ colonyId, row, state, colonyBranch, addEntry }) {
     if (!row?.repo_path) {
       parts.push('no repository is attached to this run — any claimed code changes, commits, or PRs do not exist');
     } else {
+      const compareRef = publishCompareRef(row);
       try { facts.branch = gitExec(['rev-parse', '--abbrev-ref', 'HEAD'], row.repo_path).trim(); } catch { /* not a git repo */ }
       try { facts.uncommitted_files = gitExec(['status', '--porcelain'], row.repo_path).split('\n').filter(Boolean).length; } catch { /* ignore */ }
-      facts.new_commits = gitBranchHasNewCommits(row.repo_path, gitDefaultBranch(row.repo_path));
+      facts.compare_ref = compareRef || gitDefaultBranch(row.repo_path);
+      facts.new_commits = compareRef
+        ? gitBranchHasNewCommitsSince(row.repo_path, compareRef)
+        : gitBranchHasNewCommits(row.repo_path, gitDefaultBranch(row.repo_path));
       parts.push(facts.writeback_enabled
         ? `write-back enabled (branch "${colonyBranch}")`
-        : 'write-back DISABLED — Hive created no branch, commit, or PR');
+        : 'write-back DISABLED — Hive will not commit, push, or open a PR');
       parts.push(facts.pr_url ? `Draft PR: ${facts.pr_url}` : 'pull request: NONE');
       parts.push(facts.new_commits ? 'new commits: yes' : 'new commits: none');
       parts.push(`uncommitted changes in working tree: ${facts.uncommitted_files} file(s)`);
@@ -147,6 +166,42 @@ function emitVerifiedOutcome({ colonyId, row, state, colonyBranch, addEntry }) {
   } catch (e) {
     logSwallowed('colonyRunner:verifiedOutcome', e, { colonyId });
     return null;
+  }
+}
+
+function reviewEventForReport(text) {
+  const normalized = String(text || '').toLowerCase();
+  if (/request[- ]changes|changes requested|verdict:\s*request/.test(normalized)) return 'REQUEST_CHANGES';
+  if (/approve[- ]with[- ]nits|approve with nits/.test(normalized)) return 'COMMENT';
+  if (/verdict:\s*approve\b|\bapproved?\b/.test(normalized)) return 'APPROVE';
+  return 'COMMENT';
+}
+
+// Code-review recipes post their verdict on the ORIGINAL pull request. They do
+// not branch from that PR or open a child PR. If GitHub refuses a formal review
+// (for example, a token cannot approve its own PR), fall back to a PR comment so
+// the report is still delivered without mutating repository contents.
+async function postPullRequestReview({ colonyId, row, state, addEntry, onEvent }) {
+  if (!state.githubReview || row?.recipe_id !== 'code_review') return null;
+  const target = reviewTargetFromRow(row);
+  const repoInfo = row.repo_path ? detectGitHubRepo(row.repo_path) : null;
+  if (!target?.number || !repoInfo) return null;
+  const fresh = getColony(colonyId);
+  const report = String(fresh?.deliverable?.report || fresh?.summary || '').trim();
+  if (!report) return null;
+  const body = `### 🐝 Hive Colony code review\n\n${report}`.slice(0, 60_000);
+  const event = reviewEventForReport(report);
+  try {
+    const review = await createPullRequestReview({ owner: repoInfo.owner, repo: repoInfo.repo, number: target.number, body, event });
+    const url = review?.html_url || target.url || null;
+    addEntry({ kind: 'writeback', message: `💬 Posted ${event.toLowerCase().replace('_', ' ')} review to PR #${target.number}`, review_url: url });
+    onEvent({ type: 'writeback', phase: 'pr_review', url, review_event: event });
+    return review;
+  } catch (reviewError) {
+    const comment = await postIssueComment({ owner: repoInfo.owner, repo: repoInfo.repo, number: target.number, body });
+    addEntry({ kind: 'writeback', message: `💬 Posted review report as a comment on PR #${target.number} (formal review unavailable: ${reviewError.message})`, comment_url: comment?.html_url || null });
+    onEvent({ type: 'writeback', phase: 'pr_review_comment', url: comment?.html_url || null });
+    return comment;
   }
 }
 
@@ -172,4 +227,4 @@ async function postBoardComment(ctx) {
   }
 }
 
-module.exports = { createPerformWriteback, postBoardComment, emitVerifiedOutcome };
+module.exports = { createPerformWriteback, postBoardComment, postPullRequestReview, reviewEventForReport, emitVerifiedOutcome };

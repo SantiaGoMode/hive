@@ -67,7 +67,7 @@ function throwIfAborted(signal) {
   if (signal?.aborted) throw abortError();
 }
 
-async function runPipelineById(pipelineId, input, { emit = null, hivePath = null, signal = null } = {}) {
+async function runPipelineById(pipelineId, input, { emit = null, hivePath = null, signal = null, runContext = null } = {}) {
   const row = db.prepare('SELECT * FROM pipelines WHERE id = ?').get(pipelineId);
   if (!row) throw new Error('Pipeline not found');
 
@@ -137,7 +137,7 @@ async function runPipelineById(pipelineId, input, { emit = null, hivePath = null
         try {
           throwIfAborted(signal);
           const thinkingParts = [];
-          const runCtx = { source: 'pipeline', onThinking: (t) => thinkingParts.push(t) };
+          const runCtx = { ...(runContext || {}), source: runContext?.source || 'pipeline', onThinking: (t) => thinkingParts.push(t) };
           const output = await runAgentOnce(agent, [{ role: 'user', content: prompt }], ollamaUrl, 0, null, resolvedHivePath, toolsOverride, undefined, signal, runCtx);
           throwIfAborted(signal);
           const entry = { step: idx, label, agent_name: agent.name, status: 'done', output, ...(thinkingParts.length ? { thinking: thinkingParts.join('\n\n') } : {}), duration_ms: Date.now() - stepStart, group: g };
@@ -179,7 +179,7 @@ async function runPipelineById(pipelineId, input, { emit = null, hivePath = null
           try {
             throwIfAborted(signal);
             const thinkingParts = [];
-            const runCtx = { source: 'pipeline', onThinking: (t) => thinkingParts.push(t) };
+            const runCtx = { ...(runContext || {}), source: runContext?.source || 'pipeline', onThinking: (t) => thinkingParts.push(t) };
             const output = await runAgentOnce(agent, [{ role: 'user', content: prompt }], ollamaUrl, 0, null, resolvedHivePath, toolsOverride, undefined, signal, runCtx);
             throwIfAborted(signal);
             const entry = { step: idx, label, agent_name: agent.name, status: 'done', output, ...(thinkingParts.length ? { thinking: thinkingParts.join('\n\n') } : {}), duration_ms: Date.now() - stepStart, group: g };

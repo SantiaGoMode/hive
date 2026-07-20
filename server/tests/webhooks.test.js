@@ -18,6 +18,7 @@ describe('Webhooks API', () => {
   let webhookId;
   let envWebhookId;
   let envSignedWebhookId;
+  let disabledWebhookId;
   const oldWebhookSecret = process.env.HIVE_TEST_WEBHOOK_SECRET;
 
   after(() => {
@@ -34,6 +35,10 @@ describe('Webhooks API', () => {
         db.prepare('DELETE FROM webhook_events WHERE webhook_id = ?').run(envSignedWebhookId);
         db.prepare('DELETE FROM webhooks WHERE id = ?').run(envSignedWebhookId);
       }
+      if (disabledWebhookId) {
+        db.prepare('DELETE FROM webhook_events WHERE webhook_id = ?').run(disabledWebhookId);
+        db.prepare('DELETE FROM webhooks WHERE id = ?').run(disabledWebhookId);
+      }
       if (oldWebhookSecret === undefined) delete process.env.HIVE_TEST_WEBHOOK_SECRET;
       else process.env.HIVE_TEST_WEBHOOK_SECRET = oldWebhookSecret;
     } catch (e) {}
@@ -49,6 +54,24 @@ describe('Webhooks API', () => {
     // Raw secrets are never echoed back — only a masked placeholder.
     assert.equal(res.body.secret, '••••••••cret');
     webhookId = res.body.id;
+  });
+
+  it('requires a secret before a webhook can be enabled', async () => {
+    await request(app)
+      .post('/api/webhooks')
+      .send({ name: 'Unsafe Webhook', enabled: true })
+      .expect(400);
+
+    const created = await request(app)
+      .post('/api/webhooks')
+      .send({ name: 'Disabled Webhook', enabled: false })
+      .expect(201);
+    disabledWebhookId = created.body.id;
+
+    await request(app)
+      .put(`/api/webhooks/${disabledWebhookId}`)
+      .send({ enabled: true })
+      .expect(400);
   });
 
   it('lists webhooks', async () => {
@@ -106,6 +129,31 @@ describe('Webhooks API', () => {
     assert.equal(res.body.success, true);
   });
 
+  it('does not accept secrets in query strings or retain credential headers', async () => {
+    await request(app)
+      .post(`/api/webhooks/incoming/${webhookId}?secret=test-secret`)
+      .send({ unsafe: true })
+      .expect(401);
+
+    const delivery = `redaction-${Date.now()}`;
+    await request(app)
+      .post(`/api/webhooks/incoming/${webhookId}`)
+      .set('authorization', 'Bearer test-secret')
+      .set('x-api-key', 'test-secret')
+      .set('cookie', 'session=secret')
+      .set('x-github-delivery', delivery)
+      .set('x-github-event', 'ping')
+      .send({ safe: true })
+      .expect(202);
+
+    const stored = db.prepare('SELECT headers FROM webhook_events WHERE id=?').get(delivery);
+    const headers = JSON.parse(stored.headers);
+    assert.equal(headers.authorization, undefined);
+    assert.equal(headers['x-api-key'], undefined);
+    assert.equal(headers.cookie, undefined);
+    assert.equal(headers['x-github-event'], 'ping');
+  });
+
   it('accepts incoming webhook using an env secret reference', async () => {
     process.env.HIVE_TEST_WEBHOOK_SECRET = 'env-secret-value';
 
@@ -155,7 +203,7 @@ describe('Webhooks API', () => {
   it('fetches webhook events', async () => {
     const res = await request(app).get(`/api/webhooks/${webhookId}/events`).expect(200);
     assert.ok(Array.isArray(res.body));
-    assert.equal(res.body.length, 3); // github, basic token, and masked-writeback
+    assert.equal(res.body.length, 4); // github, basic token, redaction, and masked-writeback
     const ghEvent = res.body.find(e => e.event_type === 'issues');
     assert.ok(ghEvent, 'should find github event');
     assert.deepEqual(ghEvent.payload, { action: 'opened', issue: { number: 42 } });

@@ -31,6 +31,8 @@ module.exports = function registerTeamRoutes(router) {
         recipeId: req.body?.recipe_id || DEFAULT_RECIPE_ID,
         repoPath: repoPath || null,
         cloudEnabled: !!req.body?.cloud_enabled,
+        githubReview: !!req.body?.github_review,
+        githubPublish: !!req.body?.github_publish,
         githubWriteback: !!req.body?.github_writeback,
       });
       res.json(team);

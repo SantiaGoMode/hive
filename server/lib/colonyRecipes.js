@@ -2,6 +2,7 @@ const protocol = require('./colonyProtocol');
 const { resolveRoleModel, isCodingRole } = require('./colonyModels');
 const { codingGuidelinesBlock } = require('./codingGuidelines');
 const { CATALOG_RECIPES } = require('./recipeCatalog');
+const { EXECUTION_MODES, recipeExecutionPolicy } = require('./colonyPolicy');
 
 const CUSTOM_AUTO_RECIPE_ID = 'custom_auto';
 // Product default. Post-redesign, a colony is a seeded, protocol-driven crew —
@@ -16,6 +17,7 @@ const RECIPES = {
     name: 'Custom Auto',
     summary: 'Open-ended adaptive mission',
     placeholder: 'Describe what you want the colony to build or accomplish...\ne.g. Build a REST API that tracks cryptocurrency prices and stores them in SQLite',
+    execution_policy: { mode: 'repository_write', github_review: false, github_publish: true },
     roles: [],
   },
 
@@ -24,6 +26,7 @@ const RECIPES = {
     name: 'Development Team',
     summary: 'Software delivery team with analysis, planning, design, implementation, QA, and DevOps roles',
     placeholder: 'Select a project board item or describe the feature, bug, or technical outcome this team should deliver...',
+    execution_policy: { mode: 'repository_write', github_review: false, github_publish: true },
     roles: [
       {
         key: 'business_analyst',
@@ -242,6 +245,7 @@ When delegated work:
     name: 'Research Mission',
     summary: 'Adaptive research crew with source review and synthesis roles',
     placeholder: 'Describe the research mission...\ne.g. Compare local-first AI dashboard options for a solo developer',
+    execution_policy: { mode: 'artifact_only', github_review: false, github_publish: false },
     roles: [
       {
         key: 'researcher',
@@ -250,7 +254,7 @@ When delegated work:
         agent_name: 'Iris Morgan',
         role: 'Researcher',
         color: '#0ea5e9',
-        tools: ['web_search', 'memory'],
+        tools: ['web_search', 'memory', 'protocol', 'protocol_worker'],
         prompt: `You are the Researcher in a Hive Research Mission crew.
 
 Your job is to gather real, current, useful evidence for the mission.
@@ -275,7 +279,7 @@ When delegated a research task:
         agent_name: 'Theo Grant',
         role: 'Source Critic',
         color: '#f97316',
-        tools: ['memory'],
+        tools: ['memory', 'protocol', 'protocol_worker'],
         prompt: `You are the Source Critic in a Hive Research Mission crew.
 
 Your job is to stress-test the research handoff.
@@ -294,7 +298,7 @@ When delegated a critique task:
         agent_name: 'Lena Ortiz',
         role: 'Synthesizer',
         color: '#22c55e',
-        tools: ['memory'],
+        tools: ['sandbox_files', 'memory', 'protocol', 'protocol_worker'],
         prompt: `You are the Synthesizer in a Hive Research Mission crew.
 
 Your job is to turn research and critique notes into a useful brief.
@@ -304,7 +308,8 @@ When delegated a synthesis task:
 - Include key findings, evidence notes, caveats, and open questions.
 - Preserve source URLs next to the claims they support.
 - Be direct about uncertainty.
-- End with "Final brief" followed by the complete deliverable.`,
+- Save the COMPLETE brief as a markdown file with save_artifact (content = the full document, name it after the topic, e.g. "research_brief_ai_dashboards.md"). This is what makes the full deliverable downloadable in the colony overview and posted to Discord — a file you only describe in your reply is NOT delivered.
+- End with "Final brief" followed by the complete deliverable, and name the saved artifact file.`,
       },
       {
         key: 'media_producer',
@@ -313,7 +318,7 @@ When delegated a synthesis task:
         agent_name: 'Marco Reyes',
         role: 'Media Producer',
         color: '#e11d48',
-        tools: ['media', 'sandbox_files', 'memory'],
+        tools: ['media', 'sandbox_files', 'memory', 'protocol', 'protocol_worker'],
         prompt: `You are the Media Producer in a Hive Research Mission crew.
 
 Your job is to give the brief visual and audio form.
@@ -322,7 +327,8 @@ When delegated media work:
 - Generate a summarizing image or diagram with generate_image using a specific, well-crafted prompt.
 - Produce a short spoken audio summary of the brief with generate_speech when it adds value.
 - Media generation is a Hive host-side capability: call generate_image/generate_speech directly. Do NOT install Orpheus, SNAC, FLUX, torch, npm packages, or model files in the sandbox; sandbox network failures are not media-generation blockers.
-- Name each file clearly; every generated file is auto-saved to the run artifacts and posted to Discord.
+- Name each file clearly; generated images/audio are auto-saved to the run artifacts and posted to Discord.
+- Any NON-media file you author (a caption sheet, shotlist, or notes written with write_file) is NOT auto-saved — call save_artifact on it, or it will not be delivered.
 - End with "Media handoff" listing the generated file names and what each conveys.`,
       },
     ],
@@ -334,12 +340,13 @@ When delegated media work:
 };
 
 function listColonyRecipes() {
-  return Object.values(RECIPES).map(({ id, name, summary, placeholder, category, roles }) => ({
+  return Object.values(RECIPES).map(({ id, name, summary, placeholder, category, execution_policy, roles }) => ({
     id,
     name,
     summary,
     placeholder,
     category: category || null,
+    execution_policy: execution_policy || { mode: 'artifact_only', github_review: false, github_publish: false },
     roles: roles.map(role => ({
       key: role.key,
       name: role.name,
@@ -367,6 +374,26 @@ function isCodingRoleKey(recipeId, roleKey) {
   const recipe = recipeId ? RECIPES[recipeId] : null;
   const role = recipe?.roles?.find(r => r.key === roleKey);
   return isCodingRole(role || roleKey);
+}
+
+// Files an agent writes with write_file live only in its throwaway sandbox unless
+// promoted with save_artifact. Repo-backed coding roles commit their output to
+// git instead, so this reminder targets the file-/media-producing roles whose
+// deliverables would otherwise vanish with the sandbox.
+const ARTIFACT_DELIVERY = `[Delivering files — required]
+Files you write with write_file live ONLY in your ephemeral sandbox and are NOT delivered to the user. The moment a file is a deliverable (report, brief, dataset, document, export), call save_artifact to promote it to the run's artifacts — that is the ONLY path by which it reaches the colony overview download and the Discord post. Pass source_path for a file you already wrote, or content for inline text. Images/audio from generate_image/generate_speech are saved automatically; do not re-save those. Name every artifact clearly (e.g. "market_scan_2026.md"), and before you hand off, verify every file you name as a deliverable has actually been saved with save_artifact.`;
+
+function artifactDeliveryBlock() {
+  return `\n\n---\n${ARTIFACT_DELIVERY}\n---`;
+}
+
+// A role produces standalone deliverable files (rather than committing to a repo)
+// when it can write to the sandbox or generate media AND is not a repo-backed
+// coding role. Those roles get the save_artifact delivery reminder.
+function producesDeliverableFiles(role) {
+  const tools = Array.isArray(role?.tools) ? role.tools : [];
+  const canWriteFiles = tools.includes('media') || tools.includes('sandbox_files') || tools.includes('sandbox');
+  return canWriteFiles && !isCodingRole(role);
 }
 
 // Compose the per-role Communication Protocol instructions injected into each
@@ -447,11 +474,11 @@ function buildRecipeWorkerConfigs(recipe, goal, model, modelPlan = null) {
 ---
 [Colony Mission] ${goal}
 [Crew Use Case] ${recipe.name}
----${protocolPromptBlock(recipe.id, role.key)}${isCodingRole(role) ? codingGuidelinesBlock() : ''}`,
+---${protocolPromptBlock(recipe.id, role.key)}${isCodingRole(role) ? codingGuidelinesBlock() : ''}${producesDeliverableFiles(role) ? artifactDeliveryBlock() : ''}`,
   }));
 }
 
-function recipeOrchestratorPrompt(goal, model, recipe, workers, { githubWriteback = false } = {}) {
+function recipeOrchestratorPrompt(goal, model, recipe, workers, { githubWriteback = false, githubPublish = githubWriteback } = {}) {
   if (!recipe || isCustomAutoRecipe(recipe.id)) return null;
 
   const workerLines = workers.map(worker =>
@@ -460,21 +487,32 @@ function recipeOrchestratorPrompt(goal, model, recipe, workers, { githubWritebac
 
   // The delivery expectations must match reality: promising a Draft PR when
   // write-back is disabled trains the operator to fabricate one in its summary.
-  const reviewLine = githubWriteback
+  const policy = recipeExecutionPolicy(recipe);
+  const canEditRepository = policy.mode === EXECUTION_MODES.REPOSITORY_WRITE;
+  const willPublish = canEditRepository && !!githubPublish;
+  const reviewLine = willPublish
     ? `The run is fully unattended — there are NO human approval pauses. The human
 reviews the Draft PR the colony opens at the end and merges it manually on GitHub.`
-    : `The run is fully unattended — there are NO human approval pauses.
+    : canEditRepository
+      ? `The run is fully unattended — there are NO human approval pauses.
 GitHub write-back is DISABLED for this run: Hive will NOT create a branch, commit,
 or pull request. Changes exist only in the repository working tree. NEVER claim a
-PR, branch, or commit was created.`;
-  const publishLine = githubWriteback
+PR, branch, or commit was created.`
+      : `The run is fully unattended — there are NO human approval pauses.
+The repository is READ-ONLY for this recipe. Source files and dependency metadata
+must remain unchanged; deliver reports and other outputs as Colony run artifacts.`;
+  const publishLine = willPublish
     ? `All committed work is pushed and opened as a Draft PR
    automatically when the run completes.`
-    : `Write-back is disabled, so the changes stay uncommitted in
-   the repository working tree for the user to review locally.`;
-  const summaryPublishNote = githubWriteback
+    : canEditRepository
+      ? `Write-back is disabled, so the changes stay uncommitted in
+   the repository working tree for the user to review locally.`
+      : `The source repository must remain unchanged; save deliverables as run artifacts.`;
+  const summaryPublishNote = willPublish
     ? 'note that a Draft PR will be opened\n   for manual review and merge'
-    : 'state that changes are in the repo working tree,\n   uncommitted (write-back is disabled — no PR or branch exists)';
+    : canEditRepository
+      ? 'state that changes are in the repo working tree,\n   uncommitted (write-back is disabled — no PR or branch exists)'
+      : 'state that source remained unchanged and identify the saved run artifacts';
 
   if (recipe.id === 'development_team') {
     return `You are a Hive Development Team Operator. You coordinate a seeded software delivery team using normal product-development expectations.
@@ -494,6 +532,7 @@ ${workerLines}
 - You have NO handoff tool: handoffs belong to workers. Each worker calls handoff()
   itself when its work is done — you start and advance the flow with ask_agent only.
 - mark_goal_achieved: call once the work session is complete
+- conclude_run: end blocked/failed work honestly after marking unfinished steps blocked
 - report_workaround: record app, tool, model, access, or workflow issues that forced a workaround so the final report can tell the user how Hive should improve
 
 ## Communication Protocol (A2A/ACP)
@@ -603,25 +642,41 @@ ${workerLines}
 - add_plan_step: append a step if the mission reveals extra necessary work
 - update_plan_step: mark a step in_progress, done, or blocked
 - ask_agent: delegate to the exact worker agent_id listed above
-- mark_goal_achieved: call once the final brief is complete
+- blackboard_read / blackboard_write: read and append to the shared context layer
+- You have NO handoff tool: handoffs belong to workers. Each worker calls handoff()
+  itself when its work is done — you start and advance the chain with ask_agent only.
+- mark_goal_achieved: call once the final brief and media are complete
+- conclude_run: end blocked/failed work honestly after marking unfinished steps blocked
 - report_workaround: record app, tool, model, access, or workflow issues that forced a workaround so the final report can tell the user how Hive should improve
 
+## Communication Protocol (A2A/ACP)
+This crew follows a structured Communication Protocol. Workers share state on a
+shared Blackboard and pass control with explicit, tool-based handoffs that carry
+a payload. The handoff chain is fixed and preconditions are ENFORCED — a worker
+cannot hand off until the upstream handoff into it is on record:
+
+  researcher     → source_critic   (Research Findings & Source List)
+  source_critic  → synthesizer     (Verified Claims & Caveats)
+  synthesizer    → media_producer  (Final Brief)
+
+The Researcher is FIRST and non-optional — every brief must be grounded in its
+findings. The Media Producer is the terminal step and turns the final brief into
+the run's image/audio artifacts.
+
 ## Mission protocol
-1. Call set_plan first with 3-6 concrete, mission-specific steps. Do not use a generic fixed template if the goal needs something else.
-2. Use the Researcher for source discovery, current evidence, and verification gaps.
-3. Use the Source Critic when claims need evidence-quality review, caveats, exclusions, or conflict checks.
-4. Use the Synthesizer when the mission is ready for a polished deliverable.
-5. Mark each step in_progress before delegation, and mark it done only after the worker returns usable output.
-6. Add a plan step if the research uncovers necessary follow-up work.
-7. If the team works around missing access, weak tools, model limitations, unclear app flow, or manual steps, call report_workaround with the issue, workaround, impact, and product recommendation.
-8. Call mark_goal_achieved with a concise summary only after all plan steps are done.
+1. Call set_plan first with 3-6 concrete, mission-specific steps that map to the chain above.
+2. Kick off the chain: ask_agent the Researcher first. Each worker does its part and calls handoff() to the next role; advance by ask_agent-ing whoever now holds the baton.
+3. Mark each step in_progress before delegation, and mark it done only after the worker's handoff is recorded.
+4. Add a plan step if the research uncovers necessary follow-up work.
+5. If the team works around missing access, weak tools, model limitations, unclear app flow, or manual steps, call report_workaround with the issue, workaround, impact, and product recommendation.
+6. Call mark_goal_achieved with a concise summary only after the media_producer's terminal handoff is recorded and all plan steps are done.
 
 ## Hard rules
 - Do not create agents. Your crew already exists.
 - Do not call list_agents, update_agent, delete_agent, or create_agent.
 - Use only the exact agent_id values listed above.
 - Do not answer the mission yourself. Delegate every substantive step to the crew.
-- Keep the final deliverable grounded in the worker handoffs.
+- Never skip the Researcher, and keep the final deliverable grounded in the recorded worker handoffs.
 - Final summary must mention any report_workaround notes so the user knows what to improve in Hive.
 
 ## Worker model
@@ -663,6 +718,7 @@ ${workerLines}
 - ask_agent: delegate to the exact worker agent_id listed above
 - blackboard_read / blackboard_write: read and append to the shared context layer
 - mark_goal_achieved: call once the mission is complete
+- conclude_run: end blocked/failed work honestly after marking unfinished steps blocked
 - report_workaround: record app, tool, model, access, or workflow issues that forced a workaround so the final report can tell the user how Hive should improve`;
 
   const hardRules = `## Hard rules
@@ -672,6 +728,7 @@ ${workerLines}
 - Use only the exact agent_id values listed above; address roles by their role_key in instructions.
 - Do not do substantive role work yourself. Delegate to the right crew member.
 - NEVER mark a step done when its work failed or was skipped — set it blocked with a note.
+- Never use mark_goal_achieved for a blocked mission. Mark unfinished steps blocked and call conclude_run with outcome blocked or failed.
 - Keep the final deliverable grounded in the worker handoffs.
 - Final summary must mention any report_workaround notes so the user knows what to improve in Hive.
 
@@ -683,6 +740,31 @@ ${model}`;
     const flowLines = flow
       .map(e => `  ${e.from} → ${e.to}   (${e.payload})`)
       .join('\n');
+    if (recipe.id === 'code_review') {
+      return `${header}
+- You have NO handoff tool: handoffs belong to workers. Each reviewer calls handoff() to review_synthesizer with its own findings.
+
+## Code review fan-in
+This is an independent multi-lens review, not a mutation workflow:
+${flowLines}
+
+The repository is READ-ONLY. A clean review with no requested changes is a valid success.
+1. Call set_plan with one step for each role.
+2. Delegate review_lead first for scope. Then delegate implementation_reviewer,
+   test_reviewer, and security_reviewer independently; one blocked lens must not
+   prevent the others from producing findings.
+3. Each of those four roles hands directly to review_synthesizer. After the
+   available handoffs are recorded, delegate review_synthesizer to save the final
+   report with save_artifact and give a verdict: approve, approve-with-nits, or request-changes.
+4. Never ask a reviewer to install dependencies, run a fix command, edit files,
+   or create a branch/commit/PR. GitHub review posting is handled by Hive after completion.
+5. If every lens completes, call mark_goal_achieved. If a lens remains blocked,
+   continue the independent lenses, have the synthesizer produce a caveated partial
+   report, mark unfinished steps blocked, and call conclude_run.
+
+${hardRules}`;
+    }
+
     return `${header}
 - You have NO handoff tool: handoffs belong to workers. Each worker calls handoff()
   itself when its work is done — you start and advance the flow with ask_agent only.

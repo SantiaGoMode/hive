@@ -121,6 +121,20 @@ describe('claim + reconcile', () => {
     assert.equal(after.status, 'queued');
     assert.equal(after.run_id, null);
   });
+
+  it('returns blocked and failed runs to the queue instead of marking their work done', () => {
+    for (const status of ['blocked', 'failed']) {
+      const item = makeItem({ title: `Retry ${status}` });
+      const runId = createColony(`Run ${status}`, 'llama3');
+      workItems.claimWorkItem(item.id, runId);
+      db.prepare('UPDATE colonies SET status=?, outcome=? WHERE id=?').run(status, status, runId);
+      assert.equal(workItems.getWorkItem(item.id).status, 'claimed');
+      workItems.reconcileClaimedItems();
+      const after = workItems.getWorkItem(item.id);
+      assert.equal(after.status, 'queued');
+      assert.equal(after.run_id, null);
+    }
+  });
 });
 
 describe('release semantics', () => {

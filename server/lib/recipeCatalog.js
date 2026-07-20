@@ -85,7 +85,7 @@ function defineRole(teamName, strict, def, index) {
   };
 }
 
-function defineRecipe({ id, name, category, summary, placeholder, strict = false, roles }) {
+function defineRecipe({ id, name, category, summary, placeholder, strict = false, executionPolicy = null, roles }) {
   return {
     id,
     name,
@@ -93,6 +93,7 @@ function defineRecipe({ id, name, category, summary, placeholder, strict = false
     summary,
     placeholder,
     strict,
+    execution_policy: executionPolicy || { mode: 'artifact_only', github_review: false, github_publish: false },
     roles: roles.map((def, i) => defineRole(name, strict, def, i)),
   };
 }
@@ -106,13 +107,16 @@ const RECIPE_DEFS = [
     summary: 'Structured multi-lens code review: scope, implementation, tests, security, and a synthesized verdict',
     placeholder: 'Point the crew at the change to review...\ne.g. Review the pending changes on the current branch for correctness, test coverage, and security',
     strict: true,
+    executionPolicy: { mode: 'read_only', github_review: true, github_publish: false },
     roles: [
       {
         key: 'review_lead', title: 'Review Lead', agent: 'Dana Whitfield',
         caps: ['coding'], repo: 'read',
         mission: 'to scope the review so every reviewer knows exactly what changed and what matters.',
         duties: [
-          'Read the diff/changed files in the repository workspace and inventory what actually changed.',
+          'Read project_context first. If it includes review_target/changed_files, treat that PR metadata as authoritative and do not invent another diff range.',
+          'Read the diff/changed files in the repository workspace with status awareness and inventory what actually changed.',
+          'Do not read deleted/removed files from the head working tree. For status D/removed entries, inspect the diff or base revision and mark them as deletions.',
           'Classify the change (feature, fix, refactor, config) and flag the riskiest areas for deeper review.',
           'List the files each downstream reviewer must read and the questions they must answer.',
           'Do NOT review the code yourself — you set the scope; the specialists judge it.',
@@ -135,10 +139,11 @@ const RECIPE_DEFS = [
       },
       {
         key: 'test_reviewer', title: 'Test Reviewer', agent: 'Elif Kaya',
-        caps: ['coding'], repo: 'write', network: 'bridge',
+        caps: ['coding'], repo: 'read', network: 'bridge',
         mission: 'to verify the change is actually tested — by running the tests, not reading them.',
         duties: [
           'RUN the relevant test suite with shell and paste the real output; a PASS claim without output is a defect.',
+          'The reviewed repository is mounted read-only. NEVER run npm install, npm audit fix, formatters, generators, or any command that changes source files or lockfiles. If dependencies are unavailable, report that verification gap instead of installing them.',
           'Map each behavior the change introduces to a test that exercises it; list untested behaviors.',
           'Check tests assert outcomes, not implementation details, and would fail if the change regressed.',
         ],
@@ -160,13 +165,14 @@ const RECIPE_DEFS = [
       },
       {
         key: 'review_synthesizer', title: 'Review Synthesizer', agent: 'Priya Nand',
-        caps: ['writing', 'analysis'], repo: 'write', files: true,
-        artifact: 'the full review report to docs/reviews/<change>-review.md',
+        caps: ['writing', 'analysis'], repo: null, files: true,
+        artifact: 'the full review report as a Colony run artifact named <change>-review.md',
         mission: 'to merge every reviewer’s findings into one actionable verdict.',
         duties: [
           'Consolidate all upstream findings, dedupe overlaps, and resolve conflicting judgments explicitly.',
           'Order findings by severity with the evidence each reviewer cited.',
           'Give a clear verdict: approve, approve-with-nits, or request-changes — and what must change to pass.',
+          'A clean review is a valid result. When no changes are required, say so explicitly and still save the report with save_artifact.',
         ],
         handoff: 'Final review verdict',
         handoffContents: 'the verdict, the ordered findings list, and the review report file path',
@@ -181,6 +187,7 @@ const RECIPE_DEFS = [
     summary: 'Staged incident handling: command, evidence, root cause, fix, verification, and comms',
     placeholder: 'Describe the incident: what broke, when it started, and what you observe...\ne.g. API latency spiked 10x after last night’s deploy; error rate climbing',
     strict: true,
+    executionPolicy: { mode: 'repository_write', github_review: false, github_publish: true },
     roles: [
       {
         key: 'incident_commander', title: 'Incident Commander', agent: 'Rosa Delgado',
@@ -265,6 +272,7 @@ const RECIPE_DEFS = [
     summary: 'Documentation delivery chain: plan, write, curate the changelog, edit, and publish',
     placeholder: 'Describe the documentation to produce or update...\ne.g. Document the new webhooks API and update the changelog for v2.3',
     strict: true,
+    executionPolicy: { mode: 'repository_write', github_review: false, github_publish: true },
     roles: [
       {
         key: 'documentation_planner', title: 'Documentation Planner', agent: 'Nora Lindqvist',
@@ -338,6 +346,7 @@ const RECIPE_DEFS = [
     summary: 'Security assessment chain: threat model, appsec review, dependency audit, remediation, and signoff',
     placeholder: 'Describe the scope to assess...\ne.g. Security-review the authentication and file-upload paths before the beta launch',
     strict: true,
+    executionPolicy: { mode: 'repository_write', github_review: false, github_publish: true },
     roles: [
       {
         key: 'threat_modeler', title: 'Threat Modeler', agent: 'Leila Nasser',
@@ -410,6 +419,7 @@ const RECIPE_DEFS = [
     summary: 'Staged refactor/migration: architecture, plan, implementation, regression QA, and release coordination',
     placeholder: 'Describe the refactor or migration...\ne.g. Migrate the API layer from Express callbacks to async handlers without behavior changes',
     strict: true,
+    executionPolicy: { mode: 'repository_write', github_review: false, github_publish: true },
     roles: [
       {
         key: 'architect', title: 'Architect', agent: 'Isabel Fontaine',

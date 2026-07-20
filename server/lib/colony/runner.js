@@ -18,16 +18,21 @@ const {
   recipeInitialMessage,
 } = require('../colonyRecipes');
 const db = require('../../db');
+const config = require('../config');
 const { logSwallowed } = require('../logSwallowed');
+const { EXECUTION_MODES, recipeExecutionPolicy, statusForOutcome, isSuccessfulOutcome } = require('../colonyPolicy');
 
 const { runModelPreflightAndCheckout } = require('./preflight');
 const { maybeRunBootstrap } = require('./bootstrap');
 const { persistLog, drainPendingDirections, parseField } = require('./persistence');
 const { makeFakeWs, makeColonyEventHandler } = require('./events');
-const { createPerformWriteback, postBoardComment, emitVerifiedOutcome } = require('./writeback');
+const { createPerformWriteback, postBoardComment, postPullRequestReview, emitVerifiedOutcome } = require('./writeback');
 const { seedRecipeWorkers, createOrchestrator } = require('./seeding');
 const { buildRoundNudge } = require('./loop');
 const { updateColonyMemoryAfterRun } = require('./memory');
+const { gitTreeSnapshot, gitRemoveReviewWorktree } = require('./git');
+const runEvents = require('./runEvents');
+const colonyOutbox = require('../colonyOutbox');
 
 // Keep the last N entries in the single `colonies.log` TEXT field. Long runs
 // trim oldest entries — by seq number, so clients can still tell if they
@@ -42,11 +47,21 @@ const LOG_MAX_ENTRIES = 1000;
 // bursts within the window collapse into one trailing write. Terminal points
 // call flush() directly, so nothing is lost on completion.
 const LOG_FLUSH_INTERVAL_MS = 400;
-// Wall-clock safety cap for a run, enforced INSIDE runColony so every launch
-// path gets it — POST, bootstrap-accept, and webhook triggers alike (the POST
-// route's own timer only covered POST). A stuck model or a worker in an infinite
-// tool loop otherwise pins resources and a triggered-run semaphore slot forever.
-const COLONY_MAX_DURATION_MS = 30 * 60 * 1000; // 30 minutes
+// Inactivity backstop for a run, enforced INSIDE runColony so every launch path
+// gets it — POST, bootstrap-accept, and webhook triggers alike. A stuck model
+// or a worker in an infinite tool loop otherwise pins resources and a triggered-
+// run semaphore slot forever. This is an INACTIVITY window (reset on every run
+// event), not an absolute cap: a slow-but-progressing run is never killed — the
+// old absolute 30-min cap aborted runs that were about to finish.
+const COLONY_MAX_DURATION_MS = 30 * 60 * 1000; // default window: 30 minutes of no progress
+
+// Effective inactivity window, tunable via the colony_timeout_minutes setting.
+// Clamped so a bad value can't disable the backstop or pin resources for days.
+function colonyTimeoutMs() {
+  const raw = parseInt(String(config.getSetting('colony_timeout_minutes', '')).trim(), 10);
+  const mins = Number.isFinite(raw) && raw > 0 ? raw : COLONY_MAX_DURATION_MS / 60000;
+  return Math.min(Math.max(mins, 5), 720) * 60 * 1000; // 5 min … 12 h
+}
 // Safety caps — prevent runaway resource use.
 // MAX_WORKERS_PER_COLONY: hard cap on agents the orchestrator can spawn.
 //   The orchestrator prompt already suggests 2–4, but a buggy model can loop
@@ -89,14 +104,23 @@ async function runColony(colonyId, onEventArg, signal) {
   signal = ac.signal;
   runningColonies.set(colonyId, ac);
 
-  const logEntries = [];
+  const persistedAtStart = db.prepare('SELECT log, capabilities, context_budget, plan FROM colonies WHERE id=?').get(colonyId);
+  let existingLog = [];
+  try { existingLog = JSON.parse(persistedAtStart?.log || '[]'); } catch { existingLog = []; }
+  const logEntries = Array.isArray(existingLog) ? existingLog.slice(-LOG_MAX_ENTRIES) : [];
   let logDirty = false;
-  let seqCounter = 0;
+  let seqCounter = Math.max(
+    runEvents.lastSequence(colonyId),
+    ...logEntries.map(entry => Number(entry?.seq) || 0),
+  );
+  let touchActivity = () => {}; // reset the inactivity backstop; wired once armed
 
   // Every event goes to: (a) the per-colony event bus for resumable SSE,
   // (b) the legacy onEvent callback if supplied (used by tests and the old
-  // direct-streaming path). Either can be absent.
+  // direct-streaming path). Either can be absent. Every event also counts as
+  // run progress, resetting the inactivity backstop.
   const onEvent = (event) => {
+    touchActivity();
     try { publish(colonyId, event); } catch (e) { logSwallowed('colonyRunner:publish', e, { colonyId }); }
     if (onEventArg) {
       try { onEventArg(event); } catch (e) { logSwallowed('colonyRunner:onEvent', e, { colonyId }); }
@@ -129,26 +153,42 @@ async function runColony(colonyId, onEventArg, signal) {
   const addEntry = (entry) => {
     const e = { ...entry, ts: Date.now(), seq: ++seqCounter };
     logEntries.push(e);
+    try { runEvents.appendRunEvent(colonyId, 'log_entry', e, e.seq); }
+    catch (error) { logSwallowed('colonyRunner:appendEvent', error, { colonyId, seq: e.seq }); }
     logDirty = true;
     onEvent({ type: 'log_entry', entry: e });
     scheduleFlush();
   };
 
-  // Wall-clock backstop (see COLONY_MAX_DURATION_MS). Cleared in finally.
-  const runTimeout = setTimeout(() => {
-    try { addEntry({ kind: 'error', message: `Colony exceeded the wall-clock limit of ${Math.round(COLONY_MAX_DURATION_MS / 60000)} minutes and was aborted.` }); }
-    catch (e) { logSwallowed('colonyRunner:timeout', e, { colonyId }); }
-    try { ac.abort(); } catch {} /* abort is best-effort */
-  }, COLONY_MAX_DURATION_MS);
+  // Inactivity backstop (see COLONY_MAX_DURATION_MS / colonyTimeoutMs). Reset on
+  // every run event via touchActivity(), so a run making steady progress is
+  // never aborted; only a genuinely stuck run (no events for the whole window)
+  // is killed. Cleared in finally.
+  const IDLE_LIMIT_MS = colonyTimeoutMs();
+  let timedOut = false;
+  let runTimeout = null;
+  const armIdleTimer = () => {
+    if (timedOut) return;
+    if (runTimeout) clearTimeout(runTimeout);
+    runTimeout = setTimeout(() => {
+      timedOut = true;
+      try { addEntry({ kind: 'error', message: `Colony made no progress for ${Math.round(IDLE_LIMIT_MS / 60000)} minutes (it appeared stuck) and was aborted. If the run was just slow, raise the colony_timeout_minutes setting and re-run.` }); }
+      catch (e) { logSwallowed('colonyRunner:timeout', e, { colonyId }); }
+      try { ac.abort(); } catch {} /* abort is best-effort */
+    }, IDLE_LIMIT_MS);
+  };
+  touchActivity = armIdleTimer; // now onEvent resets the timer on every event
+  armIdleTimer();               // arm it for the initial idle window
 
   // Mutable run state shared with the event handler (sets goalSummary on
-  // mark_goal_achieved) and the writeback closure (reads row/githubWriteback/
-  // goalSummary). Hoisted so writeback can run from BOTH the happy path and the
-  // abort/stop path — partial work must still be pushed and PR'd.
+  // mark_goal_achieved) and the writeback closure (reads row/githubPublish/
+  // goalSummary). Failed and stopped runs never enter the writeback path.
   const state = {
     goalSummary: null,
+    runOutcome: null,
     row: null,
-    githubWriteback: false,
+    githubReview: false,
+    githubPublish: false,
   };
   const colonyBranch = `colony-${colonyId}`;
 
@@ -165,6 +205,7 @@ async function runColony(colonyId, onEventArg, signal) {
     let removed = 0;
     for (const id of ids) {
       try { if (sandbox.cleanupContainer(id)) removed++; } catch (e) { logSwallowed('colonyRunner:cleanupContainer', e, { agentId: id }); }
+      try { sandbox.setAgentRepo(id, null); } catch (e) { logSwallowed('colonyRunner:clearAgentRepo', e, { agentId: id }); }
     }
     if (removed > 0) {
       addEntry({ kind: 'sandbox_cleanup', message: `Cleaned up ${removed} sandbox container${removed === 1 ? '' : 's'}.`, removed });
@@ -175,6 +216,10 @@ async function runColony(colonyId, onEventArg, signal) {
     const row = db.prepare('SELECT * FROM colonies WHERE id=?').get(colonyId);
     if (!row) throw new Error(`Colony ${colonyId} not found`);
     state.row = row;
+    let runCapabilities = {};
+    let contextBudget = {};
+    try { runCapabilities = JSON.parse(row.capabilities || '{}'); } catch { runCapabilities = {}; }
+    try { contextBudget = JSON.parse(row.context_budget || '{}'); } catch { contextBudget = {}; }
 
     const ollamaUrl = getOllamaUrl();
 
@@ -195,8 +240,9 @@ async function runColony(colonyId, onEventArg, signal) {
       try { teamRow = db.prepare('SELECT id, name, description, memory FROM colony_teams WHERE id=?').get(row.team_id); } catch (e) { logSwallowed('colonyRunner:loadTeam', e, { colonyId }); }
     }
     const colonyMemory = String(teamRow?.memory || '').trim();
+    const memoryLimit = Math.max(0, Number(contextBudget.team_memory_chars) || 6000);
     const memorySection = colonyMemory
-      ? `\n\n[Colony Memory — shared knowledge from previous runs. Honor it; it encodes hard-won lessons.]\n${colonyMemory.slice(0, 6000)}`
+      ? `\n\n[Colony Memory — shared knowledge from previous runs. Honor it; it encodes hard-won lessons.]\n${colonyMemory.slice(-memoryLimit)}`
       : '';
     if (colonyMemory) {
       addEntry({ kind: 'preflight', message: `🧠 Colony memory loaded (${colonyMemory.length} chars) — injected into operator and workers.` });
@@ -250,6 +296,11 @@ async function runColony(colonyId, onEventArg, signal) {
 
     // ── Orchestrator run loop ─────────────────────────────────────────────────
     let initialContent = recipeInitialMessage(recipe);
+    const recoveredPlan = parseField(row.plan, 'plan', null);
+    if (Array.isArray(recoveredPlan?.steps) && recoveredPlan.steps.length) {
+      initialContent += `\n\n[Recovery context]\nThis is a resumed durable run. The existing plan is authoritative; do NOT call set_plan. Continue from its recorded state and only use update_plan_step/add_plan_step when needed:\n` +
+        recoveredPlan.steps.map(step => `- ${step.id} [${step.status}] ${step.description}${step.assigned_to ? ` (${step.assigned_to})` : ''}`).join('\n');
+    }
     if (row.bootstrap_accepted && row.bootstrap_tasks) {
       const acceptedTasks = parseField(row.bootstrap_tasks, 'bootstrap_tasks', []);
       if (acceptedTasks.length) {
@@ -265,6 +316,16 @@ async function runColony(colonyId, onEventArg, signal) {
     // Passed into colonyContext so ask_agent can give each worker a continuous
     // thread across multiple delegation calls instead of starting fresh each time.
     const agentHistories = new Map();
+    // Recovery attempts reuse the bounded persisted worker transcripts. New
+    // workers simply start clean; histories for prior ephemeral workers remain
+    // audit data and are never injected into a different agent identity.
+    try {
+      const priorHistories = db.prepare('SELECT agent_id, history FROM colony_agent_histories WHERE colony_id=?').all(colonyId);
+      for (const item of priorHistories) {
+        const history = JSON.parse(item.history || '[]');
+        if (Array.isArray(history)) agentHistories.set(item.agent_id, history);
+      }
+    } catch (error) { logSwallowed('colonyRunner:loadHistories', error, { colonyId }); }
     // Tracks which plan step IDs have had at least one ask_agent call.
     // Prevents the orchestrator from marking steps done without any real delegation.
     const delegatedSteps = new Set();
@@ -283,7 +344,7 @@ async function runColony(colonyId, onEventArg, signal) {
     // Outer review loop: runAgentOnce does one "turn" with up to 20 tool-call
     // rounds internally. Between turns we check for completion and, if not
     // done, inject a state-aware nudge showing the current plan status.
-    const MAX_OUTER_ROUNDS = 6;
+    const MAX_OUTER_ROUNDS = Math.max(1, Math.min(Number(contextBudget.outer_rounds) || 6, 20));
     let completed = false;
 
     for (let outer = 0; outer < MAX_OUTER_ROUNDS; outer++) {
@@ -330,6 +391,8 @@ async function runColony(colonyId, onEventArg, signal) {
           roleByAgentId,
           reasoningByAgentId,
           workerReasoningDefault,
+          capabilities: runCapabilities,
+          contextBudget,
         },
       );
 
@@ -384,10 +447,47 @@ async function runColony(colonyId, onEventArg, signal) {
       );
     }
 
-    const status = signal?.aborted ? 'stopped' : 'done';
-    db.prepare('UPDATE colonies SET status=?, updated_at=unixepoch() WHERE id=?').run(status, colonyId);
+    const executionPolicy = recipeExecutionPolicy(recipe);
+    const inferredOutcome = executionPolicy.mode === EXECUTION_MODES.READ_ONLY
+      ? 'succeeded_no_changes'
+      : executionPolicy.mode === EXECUTION_MODES.ARTIFACT_ONLY
+        ? 'succeeded_with_artifacts'
+        : 'changes_proposed';
+    let outcome = signal?.aborted ? 'stopped' : (state.runOutcome || inferredOutcome);
+    if (executionPolicy.mode === EXECUTION_MODES.READ_ONLY && row.repo_path && state.repoBaseline) {
+      try {
+        const after = gitTreeSnapshot(row.repo_path);
+        const changed = after.head !== state.repoBaseline.head || after.status !== state.repoBaseline.status;
+        if (changed) {
+          outcome = 'failed';
+          state.runOutcome = outcome;
+          addEntry({
+            kind: 'policy_violation',
+            message: 'Read-only execution policy was violated: changes were detected in the isolated review worktree. The run failed, nothing was committed or published, and the temporary worktree will be discarded.',
+            before: state.repoBaseline,
+            after,
+          });
+        }
+      } catch (e) {
+        outcome = 'failed';
+        state.runOutcome = outcome;
+        addEntry({ kind: 'policy_violation', message: `Could not verify the read-only repository boundary: ${e.message}. The run will not publish.` });
+      }
+    }
+    let status = statusForOutcome(outcome);
+    db.prepare('UPDATE colonies SET status=?, outcome=?, updated_at=unixepoch() WHERE id=?').run(status, outcome, colonyId);
 
     await performWriteback(status);
+    if (state.prUrl && isSuccessfulOutcome(outcome)) {
+      outcome = 'changes_published';
+      status = 'done';
+      state.runOutcome = outcome;
+      db.prepare('UPDATE colonies SET status=?, outcome=?, updated_at=unixepoch() WHERE id=?').run(status, outcome, colonyId);
+    }
+
+    if (isSuccessfulOutcome(outcome)) {
+      try { await postPullRequestReview({ colonyId, row, state, addEntry, onEvent }); } catch (e) { logSwallowed('colonyRunner:githubReview', e, { colonyId }); }
+    }
 
     // System-verified outcome: what ACTUALLY exists after the run, measured
     // from git — not from what the model claims. Models routinely fabricate
@@ -400,8 +500,14 @@ async function runColony(colonyId, onEventArg, signal) {
     // outcome so fabricated summaries can't poison durable memory.
     try { await updateColonyMemoryAfterRun(colonyId, row, state.goalSummary, status, addEntry, verifiedOutcome); } catch (e) { logSwallowed('colonyRunner:memoryUpdate', e, { colonyId }); }
 
-    if (status === 'done' && row.board_card) {
+    if (isSuccessfulOutcome(outcome) && row.board_card && recipe.id !== 'code_review') {
       await postBoardComment({ colonyId, row, addEntry, onEvent });
+    }
+    if (isSuccessfulOutcome(outcome)) {
+      const effects = await colonyOutbox.processRun(colonyId);
+      for (const effect of effects) {
+        addEntry({ kind: 'outbox', message: effect.ok ? `Completed deferred action ${effect.id}.` : `Deferred action ${effect.id} failed: ${effect.error}`, effect });
+      }
     }
 
     cleanupSandboxContainers();
@@ -412,8 +518,7 @@ async function runColony(colonyId, onEventArg, signal) {
   } catch (e) {
     if (e.name === 'AbortError' || e.message === 'Colony run was stopped' || signal?.aborted) {
       db.prepare("UPDATE colonies SET status='stopped', updated_at=unixepoch() WHERE id=?").run(colonyId);
-      // Stopped runs still publish whatever real work landed on the branch.
-      try { await performWriteback('stopped'); } catch (e) { logSwallowed('colonyRunner:writeback', e, { colonyId }); }
+      db.prepare("UPDATE colonies SET outcome='stopped' WHERE id=?").run(colonyId);
       let stoppedOutcome = null;
       try { stoppedOutcome = emitVerifiedOutcome({ colonyId, row: state.row, state, colonyBranch, addEntry }); } catch (e) { logSwallowed('colonyRunner:verifiedOutcome', e, { colonyId }); }
       // Partial runs often carry the most valuable lessons (what blocked them).
@@ -424,10 +529,7 @@ async function runColony(colonyId, onEventArg, signal) {
       onEvent({ type: 'done', status: 'stopped' });
     } else {
       db.prepare("UPDATE colonies SET status='error', updated_at=unixepoch() WHERE id=?").run(colonyId);
-      // An error (commonly the "orchestrator stalled" throw) usually fires AFTER
-      // workers committed real work to the colony branch. Publish it the same way
-      // the stopped path does, rather than stranding it uncommitted/unpushed.
-      try { await performWriteback('error'); } catch (e2) { logSwallowed('colonyRunner:writeback', e2, { colonyId }); }
+      db.prepare("UPDATE colonies SET outcome='failed' WHERE id=?").run(colonyId);
       let errorOutcome = null;
       try { errorOutcome = emitVerifiedOutcome({ colonyId, row: state.row, state, colonyBranch, addEntry }); } catch (e2) { logSwallowed('colonyRunner:verifiedOutcome', e2, { colonyId }); }
       try { await updateColonyMemoryAfterRun(colonyId, state.row, state.goalSummary, 'error', addEntry, errorOutcome); } catch (e2) { logSwallowed('colonyRunner:memoryUpdate', e2, { colonyId }); }
@@ -441,6 +543,9 @@ async function runColony(colonyId, onEventArg, signal) {
     // throttle window before we detach.
     clearTimeout(runTimeout);
     flush();
+    if (state.reviewWorktree && state.originalRepoPath) {
+      gitRemoveReviewWorktree(state.originalRepoPath, state.reviewWorktree);
+    }
     // Deregister this run so stopColonyRun() no longer finds it, and detach
     // the external-signal listener to avoid leaks on long-lived signals.
     runningColonies.delete(colonyId);
@@ -460,4 +565,5 @@ module.exports = {
   activeRunCount,
   runningColonies,
   COLONY_MAX_DURATION_MS,
+  colonyTimeoutMs,
 };

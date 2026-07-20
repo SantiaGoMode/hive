@@ -1,6 +1,6 @@
 # Colonies-First: Move Work to the People
 
-**Status:** Draft v1 · **Author:** Cristino Santiago · **Date:** 2026-07-07
+**Status:** Implemented v1 with follow-up backlog · **Author:** Cristino Santiago · **Date:** 2026-07-07 · **Updated:** 2026-07-16
 **Tagline:** Stop bringing the team to the work. Show the teams; let them pull the work.
 
 ---

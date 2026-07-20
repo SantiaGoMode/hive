@@ -1,8 +1,10 @@
 // Colony run lifecycle routes: create+stream a run, stop it, queue human
 // directions, and accept bootstrap task drafts. These own the process-global
 // activeRuns registry and the SSE stream for a freshly launched run.
-const { runColony, stopColonyRun, createColony, getColony } = require('../../lib/colonyRunner');
-const { getBus, hasBus, maybeCleanup } = require('../../lib/colonyBus');
+const { stopColonyRun, getColony } = require('../../lib/colonyRunner');
+const colonyRunService = require('../../lib/colonyRunService');
+const colonyJobs = require('../../lib/colonyJobs');
+const { getBus, hasBus } = require('../../lib/colonyBus');
 const { DEFAULT_RECIPE_ID, getColonyRecipe } = require('../../lib/colonyRecipes');
 const { detectGitHubRepo, createGitHubIssue } = require('../../lib/githubBoard');
 const protocol = require('../../lib/colonyProtocol');
@@ -32,7 +34,12 @@ module.exports = function registerLifecycleRoutes(router) {
     const repoPath = (team?.repo_path || req.body.repo_path || getColonyRepoPath() || '').trim() || null;
     const boardCard = req.body.board_card && typeof req.body.board_card === 'object' ? req.body.board_card : null;
     const cloudEnabled = team ? team.cloud_enabled : !!req.body.cloud_enabled;
-    const githubWriteback = team ? team.github_writeback : !!req.body.github_writeback;
+    const recipe = getColonyRecipe(recipeId);
+    const policy = require('../../lib/colonyPolicy').recipeExecutionPolicy(recipe);
+    const githubReview = policy.github_review && (team ? team.github_review : !!req.body.github_review);
+    const githubPublish = policy.mode === 'repository_write' && (team
+      ? team.github_publish
+      : !!(req.body.github_publish ?? req.body.github_writeback));
     const modelPlan = req.body.model_plan && typeof req.body.model_plan === 'object' ? req.body.model_plan : null;
     // Reasoning is no longer a per-run user toggle: the operator always reasons
     // and decides per-agent reasoning at run start (see colonyRunner).
@@ -48,7 +55,16 @@ module.exports = function registerLifecycleRoutes(router) {
     const gate = colonyModels.gatePlan({ operator: model, ...(modelPlan || {}) }, cloudEnabled);
     if (!gate.ok) return res.status(400).json({ error: gate.error });
 
-    const colonyId = createColony(goal.trim(), model.trim(), recipeId, { repoPath, boardCard, cloudEnabled, githubWriteback, modelPlan, reasoningMode, triggerConfig, teamId: team?.id || null });
+    let colonyId;
+    try {
+      colonyId = colonyRunService.createRun({
+        goal: goal.trim(), model: model.trim(), recipeId, repoPath, boardCard,
+        cloudEnabled, githubReview, githubPublish, modelPlan, reasoningMode,
+        triggerConfig, teamId: team?.id || null,
+      });
+    } catch (e) {
+      return res.status(409).json({ error: e.message });
+    }
 
     await runAndStreamColony(res, colonyId);
   });
@@ -65,13 +81,14 @@ module.exports = function registerLifecycleRoutes(router) {
     // Abort the live run if there is one (runner registry), and also abort the
     // route-local controller (clears the POST wall-clock timeout path).
     const stoppedLive = stopColonyRun(colonyId);
+    const stoppedJob = colonyJobs.stop(colonyId);
     const ac = activeRuns.get(colonyId);
     if (ac) {
       try { ac.abort(); } catch {} /* abort is best-effort */
       activeRuns.delete(colonyId);
     }
 
-    if (stoppedLive || ac) {
+    if (stoppedLive || stoppedJob || ac) {
       // The runner's abort handling persists status='stopped' and emits 'done'.
       return res.json({ success: true, stopped: true });
     }
@@ -116,10 +133,11 @@ module.exports = function registerLifecycleRoutes(router) {
     if (!colony) return res.status(404).json({ error: 'Colony not found' });
     let tasks = Array.isArray(req.body?.tasks) ? req.body.tasks : colony.bootstrap_tasks;
     if (!Array.isArray(tasks) || tasks.length === 0) return res.status(400).json({ error: 'No bootstrap tasks are available to accept.' });
-    if (activeRuns.has(colony.id)) return res.status(400).json({ error: 'Colony is already running.' });
+    const job = colonyJobs.status(colony.id);
+    if (job && ['queued', 'running'].includes(job.status)) return res.status(400).json({ error: 'Colony is already running.' });
 
     // Handle GitHub write-back
-    if (colony.github_writeback && colony.repo_path) {
+    if (colony.github_publish && colony.repo_path) {
       const detected = detectGitHubRepo(colony.repo_path);
       if (detected) {
         try {
@@ -169,20 +187,12 @@ module.exports = function registerLifecycleRoutes(router) {
     };
     db.prepare("UPDATE colonies SET bootstrap_tasks=?, bootstrap_accepted=1, plan=?, status='running', updated_at=unixepoch() WHERE id=?")
       .run(JSON.stringify(tasks), JSON.stringify(plan), colony.id);
+    require('../../lib/colony/workflow').syncPlan(colony.id, plan.steps);
     protocol.writeBlackboard(colony.id, 'human-reviewer', 'message',
       `Accepted ${tasks.length} bootstrap task(s). The colony may now continue with the normal delivery flow.`,
       { bootstrap_accepted: true, task_count: tasks.length });
 
-    const ac = new AbortController();
-    activeRuns.set(colony.id, ac);
-    setImmediate(async () => {
-      try {
-        await runColony(colony.id, null, ac.signal);
-      } finally {
-        activeRuns.delete(colony.id);
-        maybeCleanup(colony.id);
-      }
-    });
+    colonyRunService.enqueueExisting(colony.id);
 
     res.json({ success: true, colony: getColony(colony.id) });
   });

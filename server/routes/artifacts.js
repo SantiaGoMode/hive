@@ -3,7 +3,7 @@
 // (non-colony) agent. This is what lets media generated in normal chat be
 // viewed/downloaded — the colony-scoped /api/colony/:id/artifact route only
 // resolves real colony runs. Auth is applied by the /api requireHiveAuth guard;
-// the token can ride as ?hive_token= so <img>/<audio> src can load it.
+// browser elements consume these through an authenticated fetch + Blob URL.
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
@@ -25,7 +25,9 @@ router.get('/:bucket/:name', (req, res) => {
   try { stat = fs.statSync(abs); } catch { stat = null; }
   if (!stat || !stat.isFile()) return res.status(404).json({ error: 'Artifact not found' });
   res.setHeader('Content-Type', artifacts.mimeFor(abs));
-  const disposition = req.query.download === '1' ? 'attachment' : 'inline';
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  const activeContent = /\.(?:html?|svg)$/i.test(abs);
+  const disposition = req.query.download === '1' || activeContent ? 'attachment' : 'inline';
   res.setHeader('Content-Disposition', `${disposition}; filename="${path.basename(abs)}"`);
   fs.createReadStream(abs).pipe(res);
 });

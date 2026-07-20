@@ -73,7 +73,7 @@ describe('Schedules API', () => {
     // Missing both targets is a 400; unknown pipeline is a 400.
     const noTarget = await request(app).post('/api/schedules')
       .send({ label: 'x', cron_expr: '0 8 * * *', prompt: 'go' }).expect(400);
-    assert.match(noTarget.body.error, /agent_id or pipeline_id/);
+    assert.match(noTarget.body.error, /agent_id, pipeline_id, or team_id/);
     await request(app).post('/api/schedules')
       .send({ pipeline_id: 'nope', label: 'x', cron_expr: '0 8 * * *', prompt: 'go' }).expect(400);
 
@@ -118,6 +118,31 @@ describe('Schedules API', () => {
     const noTarget = await request(app).put(`/api/schedules/${made.body.id}`)
       .send({ agent_id: '' })
       .expect(400);
-    assert.match(noTarget.body.error, /agent_id or pipeline_id/);
+    assert.match(noTarget.body.error, /agent_id, pipeline_id, or team_id/);
+  });
+
+  it('creates a colony-team schedule and rejects unknown teams', async () => {
+    const teamId = `team-sched-${Date.now()}`;
+    db.prepare('INSERT INTO colony_teams (id, name, recipe_id, created_at, updated_at) VALUES (?, ?, ?, unixepoch(), unixepoch())')
+      .run(teamId, 'Sched Team', 'research_brief');
+
+    await request(app).post('/api/schedules')
+      .send({ team_id: 'nope', label: 'x', cron_expr: '0 9 * * 1', prompt: 'weekly digest' }).expect(400);
+
+    const made = await request(app).post('/api/schedules')
+      .send({ team_id: teamId, label: 'Weekly digest', cron_expr: '0 9 * * 1', prompt: 'weekly digest' })
+      .expect(201);
+    created.push(made.body.id);
+    assert.equal(made.body.team_id, teamId);
+    assert.equal(made.body.agent_id, '');
+    assert.equal(made.body.pipeline_id, null);
+
+    // Switching to an agent target clears team_id.
+    const updated = await request(app).put(`/api/schedules/${made.body.id}`)
+      .send({ agent_id: 'a1' }).expect(200);
+    assert.equal(updated.body.team_id, null);
+    assert.equal(updated.body.agent_id, 'a1');
+
+    db.prepare('DELETE FROM colony_teams WHERE id=?').run(teamId);
   });
 });

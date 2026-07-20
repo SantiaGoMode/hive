@@ -7,6 +7,7 @@ const config = require('../lib/config');
 const ENV_KEYS = [
   'PORT', 'HIVE_HOME', 'HIVE_AUTH_TOKEN', 'HIVE_ALLOWED_ORIGINS',
   'HIVE_MUTATION_RATE_LIMIT', 'HIVE_MUTATION_RATE_WINDOW_MS',
+  'HIVE_WEBHOOK_RATE_LIMIT', 'HIVE_WEBHOOK_RATE_WINDOW_MS', 'HIVE_BIND_HOST',
   'GITHUB_TOKEN', 'GITHUB_PERSONAL_ACCESS_TOKEN', 'GH_TOKEN',
 ];
 let saved;
@@ -35,6 +36,9 @@ describe('operational accessors', () => {
     assert.equal(config.port(), 3001);
     assert.equal(config.mutationRateLimit(), 120);
     assert.equal(config.mutationRateWindowMs(), 60_000);
+    assert.equal(config.webhookRateLimit(), 60);
+    assert.equal(config.webhookRateWindowMs(), 60_000);
+    assert.equal(config.bindHost(), '127.0.0.1');
     assert.equal(config.allowedOriginsEnv(), '');
   });
 

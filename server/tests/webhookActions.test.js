@@ -69,10 +69,11 @@ describe('webhook automatic actions', () => {
     const runIds = triggerWebhookActions(webhook, event);
     assert.equal(runIds.length, 1);
 
-    const running = db.prepare('SELECT * FROM webhook_action_runs WHERE id=?').get(runIds[0]);
-    assert.equal(running.action_label, 'Coding flow for issues');
-    assert.equal(running.action_type, 'pipeline');
-    assert.match(running.input, /"issue": 42/);
+    const queued = db.prepare('SELECT * FROM webhook_action_runs WHERE id=?').get(runIds[0]);
+    assert.equal(queued.status, 'queued');
+    assert.equal(queued.action_label, 'Coding flow for issues');
+    assert.equal(queued.action_type, 'pipeline');
+    assert.match(queued.input, /"issue": 42/);
 
     await sleep(25);
     const finished = db.prepare('SELECT * FROM webhook_action_runs WHERE id=?').get(runIds[0]);

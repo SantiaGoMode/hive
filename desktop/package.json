@@ -13,8 +13,9 @@
   "scripts": {
     "dev": "electron .",
     "stage": "node scripts/stage.js",
-    "dist": "npm run stage && electron-builder",
-    "dist:publish": "npm run stage && electron-builder --publish always"
+    "dist": "npm run stage && node scripts/build-desktop.js --development",
+    "dist:ci": "npm run stage && node scripts/build-desktop.js",
+    "dist:publish": "npm run stage && node scripts/build-desktop.js --publish"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.2.0",

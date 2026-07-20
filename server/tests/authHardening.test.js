@@ -39,7 +39,8 @@ function closeServer(server) {
 
 function connectWebSocket(url, options = {}) {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url, options);
+    const { protocols, ...wsOptions } = options;
+    const ws = protocols ? new WebSocket(url, protocols, wsOptions) : new WebSocket(url, wsOptions);
     const timer = setTimeout(() => {
       ws.close();
       reject(new Error('WebSocket timed out'));
@@ -84,6 +85,7 @@ describe('API hardening middleware', () => {
     await request(app).get('/api/ping').expect(401);
     await request(app).get('/api/ping').set('x-hive-auth-token', 'wrong').expect(401);
     await request(app).get('/api/ping').set('Authorization', 'Bearer secret-token').expect(200);
+    await request(app).get('/api/ping?hive_token=secret-token').expect(401);
   });
 
   it('keeps localhost-only development usable when no auth token is configured', async () => {
@@ -139,8 +141,10 @@ describe('WebSocket hardening', () => {
     });
     assert.equal(missing.statusCode, 401);
 
-    const badOrigin = await connectWebSocket(`ws://127.0.0.1:${port}/ws/chat/agent-1?hive_token=secret-token`, {
+    const protocol = `hive-auth.${Buffer.from('secret-token').toString('base64url')}`;
+    const badOrigin = await connectWebSocket(`ws://127.0.0.1:${port}/ws/chat/agent-1`, {
       headers: { Origin: 'http://evil.test' },
+      protocols: [protocol],
     });
     assert.equal(badOrigin.statusCode, 403);
   });
@@ -151,8 +155,10 @@ describe('WebSocket hardening', () => {
     servers.push(server);
     const port = await listen(server);
 
-    const { ws, statusCode } = await connectWebSocket(`ws://127.0.0.1:${port}/ws/chat/agent-1?hive_token=secret-token`, {
+    const protocol = `hive-auth.${Buffer.from('secret-token').toString('base64url')}`;
+    const { ws, statusCode } = await connectWebSocket(`ws://127.0.0.1:${port}/ws/chat/agent-1`, {
       headers: { Origin: 'http://localhost:5173' },
+      protocols: [protocol],
     });
     assert.equal(statusCode, 101);
     ws.close();

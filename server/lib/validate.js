@@ -99,7 +99,7 @@ const actionsConfigSchema = jsonArrayOf(z.array(z.record(z.string(), z.unknown()
 const createWebhookSchema = z.object({
   name: z.string().trim().min(1).max(200),
   description: z.string().max(4000).optional(),
-  secret: z.string().max(1000).optional(),
+  secret: z.string().trim().max(1000).optional(),
   enabled: z.union([z.boolean(), z.number().int().min(0).max(1)]).optional(),
   context_spec: contextSpecSchema.optional(),
   actions_config: actionsConfigSchema.optional(),

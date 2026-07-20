@@ -124,8 +124,8 @@ export function parseBoardGoal(goal) {
 }
 
 
-export const STATUS_DOT = { running: 'bg-blue-400 animate-pulse', done: 'bg-green-400', stopped: 'bg-gray-600', awaiting_tasks: 'bg-amber-400', error: 'bg-red-400' };
-export const STATUS_TEXT = { running: 'text-blue-400', done: 'text-green-400', stopped: 'text-gray-500', awaiting_tasks: 'text-amber-300', error: 'text-red-400' };
+export const STATUS_DOT = { running: 'bg-blue-400 animate-pulse', done: 'bg-green-400', stopped: 'bg-gray-600', awaiting_tasks: 'bg-amber-400', blocked: 'bg-amber-500', failed: 'bg-red-500', error: 'bg-red-400' };
+export const STATUS_TEXT = { running: 'text-blue-400', done: 'text-green-400', stopped: 'text-gray-500', awaiting_tasks: 'text-amber-300', blocked: 'text-amber-300', failed: 'text-red-400', error: 'text-red-400' };
 
 // Live colony (team) status on the roster — derived server-side from runs.
 export const TEAM_STATUS_META = {

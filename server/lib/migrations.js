@@ -246,6 +246,161 @@ const MIGRATIONS = [
       db.exec('CREATE INDEX IF NOT EXISTS idx_discord_threads_ref ON discord_threads(kind, ref)');
     },
   },
+  {
+    version: 19,
+    name: 'scheduled_runs colony team target',
+    up(db) {
+      // Third schedule target alongside agent_id and pipeline_id: a colony team.
+      // When set, a cron fire launches (or queues, if the team is busy) a team
+      // mission using the schedule's prompt as the mission direction. Nullable —
+      // agent/pipeline schedules leave it NULL.
+      addColumn(db, 'scheduled_runs', 'team_id', 'TEXT');
+      db.exec('CREATE INDEX IF NOT EXISTS idx_scheduled_runs_team ON scheduled_runs(team_id)');
+    },
+  },
+  {
+    version: 20,
+    name: 'colony outcomes + split GitHub review and publish permissions',
+    up(db) {
+      addColumn(db, 'colonies', 'outcome', 'TEXT');
+      addColumn(db, 'colonies', 'github_review', 'INTEGER DEFAULT 0');
+      addColumn(db, 'colonies', 'github_publish', 'INTEGER DEFAULT 0');
+      addColumn(db, 'colony_teams', 'github_review', 'INTEGER DEFAULT 0');
+      addColumn(db, 'colony_teams', 'github_publish', 'INTEGER DEFAULT 0');
+
+      // Backward compatibility with the old combined write-back toggle. Existing
+      // code-review teams become review-enabled but NOT publish-enabled: this is
+      // the safety repair that prevents another review-of-a-PR from opening a
+      // child PR. Delivery recipes retain their prior publish behavior.
+      db.exec(`
+        UPDATE colony_teams
+        SET github_review = CASE WHEN recipe_id='code_review' THEN github_writeback ELSE 0 END,
+            github_publish = CASE WHEN recipe_id='code_review' THEN 0 ELSE github_writeback END;
+        UPDATE colonies
+        SET github_review = CASE WHEN recipe_id='code_review' THEN github_writeback ELSE 0 END,
+            github_publish = CASE WHEN recipe_id='code_review' THEN 0 ELSE github_writeback END;
+      `);
+    },
+  },
+  {
+    version: 21,
+    name: 'durable colony jobs, events, workflow evidence, and outbox',
+    up(db) {
+      addColumn(db, 'colonies', 'capabilities', "TEXT NOT NULL DEFAULT '{}'");
+      addColumn(db, 'colonies', 'context_budget', "TEXT NOT NULL DEFAULT '{}'");
+      addColumn(db, 'colonies', 'started_at', 'INTEGER');
+      addColumn(db, 'colonies', 'completed_at', 'INTEGER');
+      addColumn(db, 'colonies', 'heartbeat_at', 'INTEGER');
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS colony_run_jobs (
+          run_id TEXT PRIMARY KEY,
+          team_id TEXT,
+          status TEXT NOT NULL DEFAULT 'queued',
+          lease_owner TEXT,
+          lease_expires_at INTEGER,
+          attempt INTEGER NOT NULL DEFAULT 0,
+          last_error TEXT,
+          created_at INTEGER DEFAULT (unixepoch()),
+          started_at INTEGER,
+          finished_at INTEGER,
+          updated_at INTEGER DEFAULT (unixepoch())
+        );
+        CREATE INDEX IF NOT EXISTS idx_colony_jobs_claim
+          ON colony_run_jobs(status, lease_expires_at, created_at);
+        CREATE INDEX IF NOT EXISTS idx_colony_jobs_active_team
+          ON colony_run_jobs(team_id, status);
+
+        CREATE TABLE IF NOT EXISTS colony_run_events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          run_id TEXT NOT NULL,
+          seq INTEGER NOT NULL,
+          event_type TEXT NOT NULL,
+          payload TEXT NOT NULL DEFAULT '{}',
+          created_at INTEGER DEFAULT (unixepoch()),
+          UNIQUE(run_id, seq)
+        );
+        CREATE INDEX IF NOT EXISTS idx_colony_events_replay
+          ON colony_run_events(run_id, seq);
+
+        CREATE TABLE IF NOT EXISTS colony_workflow_nodes (
+          run_id TEXT NOT NULL,
+          node_id TEXT NOT NULL,
+          role_key TEXT,
+          description TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          depends_on TEXT NOT NULL DEFAULT '[]',
+          evidence_requirements TEXT NOT NULL DEFAULT '[]',
+          attempt_count INTEGER NOT NULL DEFAULT 0,
+          note TEXT,
+          created_at INTEGER DEFAULT (unixepoch()),
+          updated_at INTEGER DEFAULT (unixepoch()),
+          PRIMARY KEY (run_id, node_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_colony_nodes_state
+          ON colony_workflow_nodes(run_id, status);
+
+        CREATE TABLE IF NOT EXISTS colony_evidence (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          run_id TEXT NOT NULL,
+          node_id TEXT,
+          kind TEXT NOT NULL,
+          source_agent_id TEXT,
+          payload TEXT NOT NULL DEFAULT '{}',
+          verified INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER DEFAULT (unixepoch())
+        );
+        CREATE INDEX IF NOT EXISTS idx_colony_evidence_node
+          ON colony_evidence(run_id, node_id, kind);
+
+        CREATE TABLE IF NOT EXISTS colony_outbox (
+          id TEXT PRIMARY KEY,
+          run_id TEXT NOT NULL,
+          action_type TEXT NOT NULL,
+          idempotency_key TEXT NOT NULL UNIQUE,
+          payload TEXT NOT NULL DEFAULT '{}',
+          status TEXT NOT NULL DEFAULT 'pending',
+          attempt_count INTEGER NOT NULL DEFAULT 0,
+          last_error TEXT,
+          created_at INTEGER DEFAULT (unixepoch()),
+          updated_at INTEGER DEFAULT (unixepoch()),
+          completed_at INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_colony_outbox_pending
+          ON colony_outbox(status, created_at);
+      `);
+    },
+  },
+  {
+    version: 22,
+    name: 'secure webhook defaults and redact stored request credentials',
+    up(db) {
+      // Enabled incoming endpoints bypass the Hive UI token and must therefore
+      // have their own authentication boundary.
+      db.prepare("UPDATE webhooks SET enabled=0, updated_at=unixepoch() WHERE enabled=1 AND TRIM(COALESCE(secret,''))='' ").run();
+
+      const safeNames = new Set([
+        'content-type', 'user-agent', 'x-github-delivery', 'x-github-event',
+        'x-gitlab-event', 'x-gitlab-event-uuid',
+      ]);
+      const select = db.prepare('SELECT id, headers FROM webhook_events');
+      const update = db.prepare('UPDATE webhook_events SET headers=? WHERE id=?');
+      for (const row of select.all()) {
+        let parsed = {};
+        try { parsed = JSON.parse(row.headers || '{}'); } catch { parsed = {}; }
+        const sanitized = Object.fromEntries(Object.entries(parsed)
+          .filter(([name]) => safeNames.has(String(name).toLowerCase()))
+          .map(([name, value]) => [String(name).toLowerCase(), value]));
+        update.run(JSON.stringify(sanitized), row.id);
+      }
+    },
+  },
+  {
+    version: 23,
+    name: 'outbox retry scheduling',
+    up(db) {
+      addColumn(db, 'colony_outbox', 'next_attempt_at', 'INTEGER');
+    },
+  },
 ];
 
 const LATEST_VERSION = MIGRATIONS.reduce((max, m) => Math.max(max, m.version), 0);

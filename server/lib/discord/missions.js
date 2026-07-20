@@ -4,15 +4,15 @@
 // here so the Operator agent's tools and the route handlers share the same
 // underlying calls (createColony/claimWorkItem/runColony) without an HTTP hop.
 const db = require('../../db');
-const { createColony, runColony, stopColonyRun } = require('../colonyRunner');
-const { getBus, hasBus, maybeCleanup } = require('../colonyBus');
-const { notifyRoster } = require('../rosterBus');
+const { stopColonyRun } = require('../colonyRunner');
+const colonyRunService = require('../colonyRunService');
+const colonyJobs = require('../colonyJobs');
+const { getBus, hasBus } = require('../colonyBus');
 const colonyModels = require('../colonyModels');
 const colonyTeams = require('../colonyTeams');
 const workItems = require('../colonyWorkItems');
 const protocol = require('../colonyProtocol');
 const { activeRuns } = require('../../routes/colony/shared');
-const { logger } = require('../logger');
 
 function activeRunForTeam(teamId) {
   return db.prepare(
@@ -41,36 +41,17 @@ function launchTeamMission(teamId, direction, { model, source = 'manual', matchR
     matchReason,
   });
 
-  const colonyId = createColony(trimmed, model, team.recipe_id, {
+  const colonyId = colonyRunService.createRun({
+    goal: trimmed, model, recipeId: team.recipe_id,
     repoPath: team.repo_path || null,
     boardCard: null,
     cloudEnabled: team.cloud_enabled,
-    githubWriteback: team.github_writeback,
+    githubReview: team.github_review,
+    githubPublish: team.github_publish,
     modelPlan: null,
     reasoningMode: 'auto',
     teamId: team.id,
-  });
-  workItems.claimWorkItem(item.id, colonyId, trimmed);
-
-  // Same background-run shape as the bootstrap-accept route: register in the
-  // shared activeRuns map so /api/colony/:id/stop keeps working, run detached.
-  const ac = new AbortController();
-  activeRuns.set(colonyId, ac);
-  notifyRoster('run_started', { run_id: colonyId });
-  setImmediate(async () => {
-    try {
-      await runColony(colonyId, null, ac.signal);
-    } catch (e) {
-      logger.error('discord', 'mission_run_failed', { colonyId, error: e?.message || String(e) });
-      try {
-        db.prepare("UPDATE colonies SET status='error', updated_at=unixepoch() WHERE id=? AND status='running'").run(colonyId);
-      } catch { /* status reconcile is best-effort */ }
-    } finally {
-      activeRuns.delete(colonyId);
-      maybeCleanup(colonyId);
-      notifyRoster('run_finished', { run_id: colonyId });
-    }
-  });
+  }, { workItemId: item.id, direction: trimmed });
 
   return { runId: colonyId, item };
 }
@@ -118,12 +99,13 @@ function stopTeamRun(teamId) {
   const active = activeRunForTeam(teamId);
   if (!active) return { stopped: false, message: 'No live run' };
   const stopped = stopColonyRun(active.id);
+  const stoppedJob = colonyJobs.stop(active.id);
   const ac = activeRuns.get(active.id);
   if (ac) {
     try { ac.abort(); } catch { /* abort is best-effort */ }
     activeRuns.delete(active.id);
   }
-  return { stopped: !!(stopped || ac), runId: active.id };
+  return { stopped: !!(stopped || stoppedJob || ac), runId: active.id };
 }
 
 module.exports = {

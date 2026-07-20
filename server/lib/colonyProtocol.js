@@ -91,10 +91,10 @@ const RECIPE_CHAINS = {
     team: 'Code Review Crew',
     steps: [
       { key: 'review_lead', role: 'Review Lead' },
-      { key: 'implementation_reviewer', role: 'Implementation Reviewer', payload: 'Review Scope & File Inventory' },
-      { key: 'test_reviewer', role: 'Test Reviewer', payload: 'Implementation Findings & Severities' },
-      { key: 'security_reviewer', role: 'Security Reviewer', payload: 'Executed Test Results & Coverage Map' },
-      { key: 'review_synthesizer', role: 'Review Synthesizer', payload: 'Security Findings & Cleared Areas' },
+      { key: 'implementation_reviewer', role: 'Implementation Reviewer' },
+      { key: 'test_reviewer', role: 'Test Reviewer' },
+      { key: 'security_reviewer', role: 'Security Reviewer' },
+      { key: 'review_synthesizer', role: 'Review Synthesizer' },
     ],
   },
   incident_response: {
@@ -209,6 +209,15 @@ const RECIPE_CHAINS = {
       { key: 'recommendation_writer', role: 'Recommendation Writer', payload: 'TCO Comparison & Assumptions' },
     ],
   },
+  research_brief: {
+    team: 'Research Mission',
+    steps: [
+      { key: 'researcher', role: 'Researcher' },
+      { key: 'source_critic', role: 'Source Critic', payload: 'Research Findings & Source List' },
+      { key: 'synthesizer', role: 'Synthesizer', payload: 'Verified Claims & Caveats' },
+      { key: 'media_producer', role: 'Media Producer', payload: 'Final Brief' },
+    ],
+  },
 };
 
 const FLOWS = { development_team: DEV_TEAM_FLOW };
@@ -227,6 +236,18 @@ for (const [recipeId, chain] of Object.entries(RECIPE_CHAINS)) {
   );
   TEAM_LABELS[recipeId] = chain.team;
 }
+
+// Code review is a fan-in, not a production line. Each lens can complete even
+// when another lens is blocked, and the synthesizer receives every independent
+// result. This prevents one missing upstream handoff from discarding the rest of
+// the review. All four edges are required for a fully complete review; blocked
+// runs may still conclude with a partial artifact via conclude_run.
+FLOWS.code_review = [
+  { from: 'review_lead', to: 'review_synthesizer', payload: 'Review Scope & File Inventory', requires_human: false },
+  { from: 'implementation_reviewer', to: 'review_synthesizer', payload: 'Implementation Findings & Severities', requires_human: false },
+  { from: 'test_reviewer', to: 'review_synthesizer', payload: 'Executed Test Results & Coverage Map', requires_human: false },
+  { from: 'security_reviewer', to: 'review_synthesizer', payload: 'Security Findings & Cleared Areas', requires_human: false },
+];
 
 function getFlow(recipeId) {
   return FLOWS[recipeId] || null;
@@ -444,6 +465,11 @@ function checkPreconditions(colonyId, recipeId, fromRole, toRole) {
     };
   }
 
+  // Fan-in review lenses are intentionally independent. The operator controls
+  // delegation order (scope first, specialists next); protocol enforcement only
+  // validates that each reviewer hands its own result to the synthesizer.
+  if (recipeId === 'code_review') return { ok: true, edge: flow[edgeIndex] };
+
   const ledger = listHandoffs(colonyId);
   const isSatisfied = (edge) => ledger.some(h =>
     h.from_agent === edge.from && h.to_agent === edge.to &&
@@ -506,10 +532,12 @@ function flowCompletion(colonyId, recipeId) {
     };
   }
 
-  const terminal = flow[flow.length - 1];
-  const terminalReached = satisfied.some(h => h.from_agent === terminal.from && h.to_agent === terminal.to);
   const missingEdges = flow.filter(edge =>
     !satisfied.some(h => h.from_agent === edge.from && h.to_agent === edge.to));
+  const terminal = flow[flow.length - 1];
+  const terminalReached = recipeId === 'code_review'
+    ? missingEdges.length === 0
+    : satisfied.some(h => h.from_agent === terminal.from && h.to_agent === terminal.to);
   return {
     ok: true,
     protocol: true,

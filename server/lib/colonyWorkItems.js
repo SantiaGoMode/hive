@@ -68,7 +68,11 @@ function getWorkItem(id) {
 function reconcileClaimedItems() {
   db.prepare(`
     UPDATE colony_work_items SET status='done', updated_at=unixepoch()
-    WHERE status='claimed' AND run_id IN (SELECT id FROM colonies WHERE status IN ('done','stopped','error'))
+    WHERE status='claimed' AND run_id IN (SELECT id FROM colonies WHERE status='done')
+  `).run();
+  db.prepare(`
+    UPDATE colony_work_items SET status='queued', run_id=NULL, updated_at=unixepoch()
+    WHERE status='claimed' AND run_id IN (SELECT id FROM colonies WHERE status IN ('stopped','error','blocked','failed'))
   `).run();
   db.prepare(`
     UPDATE colony_work_items SET status='queued', run_id=NULL, updated_at=unixepoch()

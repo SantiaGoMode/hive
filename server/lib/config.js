@@ -16,6 +16,9 @@
 //   HIVE_AUTH_TOKEN               API auth token (else the hive_auth_token setting)
 //   HIVE_MUTATION_RATE_LIMIT      mutating-request cap per window (default 120)
 //   HIVE_MUTATION_RATE_WINDOW_MS  rate window in ms (default 60000)
+//   HIVE_WEBHOOK_RATE_LIMIT       incoming webhook cap per endpoint/IP window (default 60)
+//   HIVE_WEBHOOK_RATE_WINDOW_MS   incoming webhook rate window in ms (default 60000)
+//   HIVE_BIND_HOST                HTTP bind host (default 127.0.0.1)
 //   HIVE_SANDBOX_NETWORK          sandbox container network: none (default) | bridge — read in sandbox.js
 //   LOG_LEVEL                     logger console level: debug|info|warn|error|silent (default info) — read in logger.js
 //   LOG_SWALLOWED                 set to '0' to silence swallowed-error logs — read in logSwallowed.js
@@ -66,11 +69,14 @@ const num = (value, fallback) => {
 
 // ── Operational accessors ──────────────────────────────────────────────────────
 function port() { return num(process.env.PORT, 3001); }
+function bindHost() { return process.env.HIVE_BIND_HOST || '127.0.0.1'; }
 function hiveHome() { return process.env.HIVE_HOME || path.join(os.homedir(), '.hive'); }
 function allowedOriginsEnv() { return process.env.HIVE_ALLOWED_ORIGINS || ''; }
 function authToken() { return process.env.HIVE_AUTH_TOKEN || getSetting('hive_auth_token') || ''; }
 function mutationRateLimit() { return num(process.env.HIVE_MUTATION_RATE_LIMIT, 120); }
 function mutationRateWindowMs() { return num(process.env.HIVE_MUTATION_RATE_WINDOW_MS, 60_000); }
+function webhookRateLimit() { return num(process.env.HIVE_WEBHOOK_RATE_LIMIT, 60); }
+function webhookRateWindowMs() { return num(process.env.HIVE_WEBHOOK_RATE_WINDOW_MS, 60_000); }
 
 // ── GitHub token ────────────────────────────────────────────────────────────────
 // Canonical resolver: stored settings first, then the conventional env var
@@ -111,11 +117,14 @@ function githubToken() {
 
 module.exports = {
   port,
+  bindHost,
   hiveHome,
   allowedOriginsEnv,
   authToken,
   mutationRateLimit,
   mutationRateWindowMs,
+  webhookRateLimit,
+  webhookRateWindowMs,
   githubToken,
   githubCliToken,
   getSetting,

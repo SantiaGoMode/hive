@@ -22,6 +22,28 @@ const TOOLS = {
   ...require('./mediaTools'),
 };
 
+const REPO_MUTATION_TOOLS = new Set([
+  'shell', 'run_python', 'install_package', 'start_server', 'stop_server',
+  'write_file', 'delete_file', 'move_file',
+]);
+const GITHUB_WRITE_TOOLS = new Set(['github_comment', 'github_update_issue', 'github_create_issue']);
+
+function capabilityError(name, colonyContext) {
+  const caps = colonyContext?.capabilities;
+  if (!caps) return null;
+  if (GITHUB_WRITE_TOOLS.has(name) && !caps.github_write) {
+    return `Tool "${name}" is denied by this run's capability policy (github_write=false). External GitHub mutations require explicit publish/write permission.`;
+  }
+  if (REPO_MUTATION_TOOLS.has(name) && !caps.repo_write) {
+    // Repo-less artifact workers may use their isolated scratch filesystem and
+    // then persist outputs through save_artifact. A connected read-only repo is
+    // the boundary that must never be mutated.
+    if (!caps.repo_read && caps.artifact_write && ['write_file', 'delete_file', 'move_file'].includes(name)) return null;
+    return `Tool "${name}" is denied by this run's capability policy (repo_write=false). Use read-only inspection and save_artifact instead.`;
+  }
+  return null;
+}
+
 function getToolDefinitions(enabledGroups = []) {
   if (!enabledGroups.length) return [];
 
@@ -48,6 +70,9 @@ async function executeTool(name, args, callerAgentId, ollamaUrl, depth = 0, work
     const counts = (colonyContext.toolCallsByAgent ||= new Map());
     counts.set(callerAgentId, (counts.get(callerAgentId) || 0) + 1);
   }
+  const denied = capabilityError(name, colonyContext);
+  if (denied) return { error: denied, policy_denied: true };
+
   // Route MCP tools first
   if (mcpManager.isMcpTool(name)) {
     try {
@@ -85,4 +110,4 @@ function builtInToolCatalog() {
   return catalog;
 }
 
-module.exports = { TOOLS, getToolDefinitions, executeTool, builtInToolCatalog };
+module.exports = { TOOLS, getToolDefinitions, executeTool, builtInToolCatalog, capabilityError };

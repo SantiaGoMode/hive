@@ -6,7 +6,10 @@ const { stripProviderPrefix } = require('../agentParser');
 const { normalizeOllamaUrl } = require('../ollamaUrl');
 const colonyModels = require('../colonyModels');
 const protocol = require('../colonyProtocol');
-const { gitCheckoutBranch } = require('./git');
+const db = require('../../db');
+const { detectGitHubRepo, resolveReviewPullRequest } = require('../githubBoard');
+const { logSwallowed } = require('../logSwallowed');
+const { gitCheckoutBranch, gitCreateReviewWorktree, gitFetchPullRequest, gitTreeSnapshot } = require('./git');
 
 // Probe installed models for the 'tools' capability (failure path only, so a
 // user picking a non-tool model gets alternatives they can select immediately).
@@ -107,9 +110,65 @@ async function preflightColony(model, ollamaUrl) {
   return { ok: true };
 }
 
+async function resolveAndPersistCodeReviewTarget({ colonyId, row, addEntry }) {
+  if ((row.recipe_id || '') !== 'code_review' || !row.repo_path) return null;
+  const askedForPr = /(?:review|inspect|check).{0,40}\b(?:pr|pull request)\b/i.test(row.goal || '');
+  let card = null;
+  try { card = row.board_card ? JSON.parse(row.board_card) : null; } catch { card = null; }
+  const repoInfo = detectGitHubRepo(row.repo_path);
+  if (!repoInfo) return null;
+
+  let target = null;
+  try {
+    target = await resolveReviewPullRequest({
+      owner: repoInfo.owner,
+      repo: repoInfo.repo,
+      card,
+      goal: row.goal,
+    });
+  } catch (e) {
+    addEntry({
+      kind: askedForPr ? 'preflight' : 'recipe',
+      message: `⚠️ Could not resolve a pull request target for this code review run: ${e.message}. The crew will review the current repository branch unless a PR number is provided.`,
+    });
+    return null;
+  }
+  if (!target) {
+    if (askedForPr) {
+      addEntry({
+        kind: 'preflight',
+        message: '⚠️ This code review goal asks for a pull request, but no linked or matching PR could be resolved. The crew will review the current repository branch; provide an explicit PR number to avoid ambiguity.',
+      });
+    }
+    return null;
+  }
+
+  const localRef = gitFetchPullRequest(row.repo_path, target.number);
+  target = {
+    ...target,
+    local_ref: localRef,
+    diff_base: target.base_ref ? `origin/${target.base_ref}` : target.base_sha || '',
+    diff_head: 'HEAD',
+    diff_command: target.base_ref
+      ? `git diff --name-status origin/${target.base_ref}...HEAD`
+      : `git diff --name-status ${target.base_sha}...HEAD`,
+  };
+
+  const enrichedCard = { ...(card || {}), review_target: target };
+  const json = JSON.stringify(enrichedCard);
+  db.prepare('UPDATE colonies SET board_card=?, updated_at=unixepoch() WHERE id=?').run(json, colonyId);
+  row.board_card = json;
+  addEntry({
+    kind: 'preflight',
+    message: `🔎 Code review target resolved: PR #${target.number} (${target.head_ref || target.head_sha} → ${target.base_ref || target.base_sha}) — ${target.changed_files.length} changed file${target.changed_files.length === 1 ? '' : 's'}.`,
+    review_target: target,
+  });
+  return target;
+}
+
 // Run the full pre-flight for a colony: cloud-model gating, per-model capability
 // checks, git colony-branch checkout, and the weak-tool-model soft warning.
-// Throws on a hard gate/capability failure. Sets `state.githubWriteback` and
+// Throws on a hard gate/capability failure. Sets review/publish permissions and
 // returns the resolved operator model. `ctx` = { colonyId, row, modelPlan,
 //   colonyBranch, ollamaUrl, addEntry, onEvent, state }.
 async function runModelPreflightAndCheckout(ctx) {
@@ -176,8 +235,32 @@ async function runModelPreflightAndCheckout(ctx) {
   }
 
   // ── Git write-back: checkout colony branch pre-flight ────────────────────
-  state.githubWriteback = !!row.github_writeback;
-  if (state.githubWriteback && row.repo_path) {
+  state.githubReview = !!row.github_review;
+  state.githubPublish = !!row.github_publish;
+  let reviewTarget = null;
+  try {
+    reviewTarget = await resolveAndPersistCodeReviewTarget({ colonyId, row, addEntry });
+  } catch (e) {
+    logSwallowed('colonyRunner:resolveReviewTarget', e, { colonyId });
+    addEntry({ kind: 'preflight', message: `⚠️ Failed to prepare code review PR target: ${e.message}` });
+  }
+  if (row.recipe_id === 'code_review' && row.repo_path) {
+    const sourceRepoPath = row.repo_path;
+    try {
+      const reviewWorktree = gitCreateReviewWorktree(sourceRepoPath, reviewTarget?.local_ref || 'HEAD');
+      state.originalRepoPath = sourceRepoPath;
+      state.reviewWorktree = reviewWorktree;
+      row.repo_path = reviewWorktree.path;
+      addEntry({
+        kind: 'preflight',
+        message: reviewTarget?.number
+          ? `🔒 Created an isolated read-only worktree for PR #${reviewTarget.number}; the source repository branch and local changes will not be touched.`
+          : '🔒 Created an isolated read-only worktree for the current HEAD; the source repository branch and local changes will not be touched.',
+      });
+    } catch (gitErr) {
+      throw new Error(`Unable to create an isolated code-review worktree: ${gitErr.message}`);
+    }
+  } else if (state.githubPublish && row.repo_path) {
     try {
       gitCheckoutBranch(row.repo_path, colonyBranch);
       addEntry({ kind: 'preflight', message: `🌿 Checked out branch "${colonyBranch}" — agents will commit work here.` });
@@ -192,6 +275,9 @@ async function runModelPreflightAndCheckout(ctx) {
       addEntry({ kind: 'blocker', blocker });
       onEvent({ type: 'blocker', blocker });
     }
+  }
+  if (row.repo_path) {
+    try { state.repoBaseline = gitTreeSnapshot(row.repo_path); } catch (e) { logSwallowed('colonyRunner:repoBaseline', e, { colonyId }); }
   }
 
   // Soft warning for models known to describe tool calls in text instead of

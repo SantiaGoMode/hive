@@ -3,7 +3,7 @@
 // (issue #28). This file preserves the original public API so all callers —
 // routes/colony.js, colonyTeams.js, colonyTriggers.js, agentTools, and the test
 // suite — keep working unchanged. It re-exports from the new modules.
-const { runColony, stopColonyRun, isColonyRunning, activeRunCount, COLONY_MAX_DURATION_MS } = require('./colony/runner');
+const { runColony, stopColonyRun, isColonyRunning, activeRunCount, COLONY_MAX_DURATION_MS, colonyTimeoutMs } = require('./colony/runner');
 const {
   createColony,
   listColonies,
@@ -20,6 +20,7 @@ module.exports = {
   isColonyRunning,
   activeRunCount,
   COLONY_MAX_DURATION_MS,
+  colonyTimeoutMs,
   createColony,
   listColonies,
   getColony,

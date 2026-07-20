@@ -7,7 +7,7 @@
 //
 // Registered BEFORE the /:id run routes (see ./index.js) so /queue/* and
 // /roster/* are never captured as run ids.
-const { createColony } = require('../../lib/colonyRunner');
+const colonyRunService = require('../../lib/colonyRunService');
 const colonyModels = require('../../lib/colonyModels');
 const colonyTeams = require('../../lib/colonyTeams');
 const workItems = require('../../lib/colonyWorkItems');
@@ -126,18 +126,24 @@ module.exports = function registerQueueRoutes(router) {
     const gate = colonyModels.gatePlan({ operator: model, ...(modelPlan || {}) }, team.cloud_enabled);
     if (!gate.ok) return res.status(400).json({ error: gate.error });
 
-    const colonyId = createColony(goal, model, team.recipe_id, {
+    let colonyId;
+    try {
+      colonyId = colonyRunService.createRun({
+      goal, model, recipeId: team.recipe_id,
       repoPath: team.repo_path || null,
       // Backward compatible: the run's board_card is still populated at launch,
       // sourced from the claimed queue item.
       boardCard: item.board_card,
       cloudEnabled: team.cloud_enabled,
-      githubWriteback: team.github_writeback,
+      githubReview: team.github_review,
+      githubPublish: team.github_publish,
       modelPlan,
       reasoningMode: 'auto',
       teamId: team.id,
-    });
-    workItems.claimWorkItem(item.id, colonyId, direction);
+      }, { workItemId: item.id, direction });
+    } catch (e) {
+      return res.status(409).json({ error: e.message });
+    }
 
     await runAndStreamColony(res, colonyId);
   });

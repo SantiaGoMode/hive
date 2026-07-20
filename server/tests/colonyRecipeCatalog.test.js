@@ -84,7 +84,7 @@ describe('expanded recipe catalog — listing', () => {
     for (const recipe of res.body) {
       assert.deepEqual(
         Object.keys(recipe).sort(),
-        ['category', 'id', 'name', 'placeholder', 'roles', 'summary'],
+        ['category', 'execution_policy', 'id', 'name', 'placeholder', 'roles', 'summary'],
         `${recipe.id} response shape changed`,
       );
       for (const role of recipe.roles) {
@@ -314,6 +314,24 @@ describe('expanded recipe catalog — role metadata plumbing', () => {
         assert.ok(!role.tools.includes('protocol_worker'), `${rid}/${role.key} must not carry strict protocol tools`);
       }
     }
+  });
+
+  it('research_brief is a strict handoff flow: every role can hand off and the chain covers all roles', () => {
+    const recipe = getColonyRecipe('research_brief');
+    // Every worker needs the handoff tool group, or the operator-promised
+    // handoff chain silently degrades to loose ask_agent delegation (the bug
+    // where the Researcher's contribution was dropped from the deliverable).
+    for (const role of recipe.roles) {
+      assert.ok(role.tools.includes('protocol_worker'), `research_brief/${role.key} needs the handoff tool group`);
+      assert.ok(role.tools.includes('protocol'), `research_brief/${role.key} needs the blackboard/protocol tool group`);
+    }
+    const flow = protocol.getFlow('research_brief');
+    assert.ok(flow, 'research_brief must register a protocol flow');
+    const roleKeys = new Set(recipe.roles.map(r => r.key));
+    const flowKeys = new Set(flow.flatMap(e => [e.from, e.to]));
+    for (const key of roleKeys) assert.ok(flowKeys.has(key), `research_brief role ${key} not part of the flow chain`);
+    // The Researcher must be the entry point (no incoming edge).
+    assert.ok(!flow.some(e => e.to === 'researcher'), 'researcher must be the first (source) role');
   });
 });
 

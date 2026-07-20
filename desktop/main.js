@@ -1,7 +1,7 @@
 // Hive desktop shell. Boots the existing Express server as a child process,
-// waits for /healthz, then opens a BrowserWindow at the local origin with the
-// auth token injected via preload — same server, same ~/.hive data as the
-// browser/dev workflows.
+// waits for /healthz, then opens a BrowserWindow at the local origin. The main
+// process attaches auth only to that local server's requests, keeping the
+// bearer token out of renderer globals, URLs, and process arguments.
 const { app, BrowserWindow, Menu, utilityProcess, shell, dialog } = require('electron');
 const { spawn, execFileSync } = require('child_process');
 const path = require('path');
@@ -128,7 +128,7 @@ function waitForHealthz(port, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs;
   return new Promise((resolve) => {
     const attempt = () => {
-      const req = http.get({ host: '127.0.0.1', port, path: '/healthz', timeout: 1_000 }, (res) => {
+      const req = http.get({ host: '127.0.0.1', port, path: '/readyz', timeout: 1_000 }, (res) => {
         res.resume();
         if (res.statusCode === 200) return resolve(true);
         retry();
@@ -234,16 +234,27 @@ function createWindow(port, token) {
     title: 'Hive',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
-      additionalArguments: [`--hive-auth-token=${token}`],
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
     },
   });
+  const localOrigin = `http://127.0.0.1:${port}`;
+  mainWindow.webContents.session.webRequest.onBeforeSendHeaders(
+    { urls: [`${localOrigin}/*`, `ws://127.0.0.1:${port}/*`] },
+    (details, callback) => {
+      details.requestHeaders['x-hive-auth-token'] = token;
+      callback({ requestHeaders: details.requestHeaders });
+    },
+  );
   mainWindow.loadURL(`http://127.0.0.1:${port}`);
   // External links (docs, install pages) open in the real browser.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/i.test(url)) shell.openExternal(url);
     return { action: 'deny' };
+  });
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (url !== localOrigin && !url.startsWith(`${localOrigin}/`)) event.preventDefault();
   });
   mainWindow.on('closed', () => { mainWindow = null; });
 }

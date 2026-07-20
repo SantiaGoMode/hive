@@ -19,11 +19,13 @@ const mcpStatus = () => { try { return require('../mcpClient').getStatus(); } ca
 const READABLE_SETTINGS = [
   'ollama_url', 'theme', 'accent_color', 'font_size', 'ngrok_domain', 'ngrok_enabled',
   'webhook_public_url', 'llm_gateway_url', 'hive_allowed_origins', 'discord_health_repo',
+  'colony_timeout_minutes',
 ];
 // Settings the Steward may write — a safe, non-secret subset of the above.
 const WRITABLE_SETTINGS = [
   'ollama_url', 'theme', 'accent_color', 'font_size', 'ngrok_domain', 'ngrok_enabled',
   'webhook_public_url', 'llm_gateway_url', 'discord_health_repo',
+  'colony_timeout_minutes',
 ];
 
 function profileSummary(p) {
@@ -48,6 +50,53 @@ module.exports = {
     },
     async handler() {
       return { staff: staffDirectory.listProfiles().map(profileSummary) };
+    },
+  },
+
+  // ── Colony runs ───────────────────────────────────────────────────────────
+  start_colony_mission: {
+    group: 'hive_admin',
+    definition: {
+      type: 'function',
+      function: {
+        name: 'start_colony_mission',
+        description: 'Start a Colony Run (a real team mission) for a colony team, given the team name (or id) and the work item / mission direction. This launches the actual seeded crew and its recipe handoff flow. Use this whenever the operator asks to "start a colony run", "run the colony", or "kick off a mission" for a named team. If the team is already running, the work is queued instead. Do NOT fulfill a colony-run request by creating agents or pipelines — always use this tool.',
+        parameters: {
+          type: 'object',
+          properties: {
+            team: { type: 'string', description: 'Colony team name (or id), e.g. "Quantum Insights".' },
+            direction: { type: 'string', description: 'The work item / mission direction to run, restated clearly from the operator\'s request.' },
+          },
+          required: ['team', 'direction'],
+        },
+      },
+    },
+    async handler({ team: teamQuery, direction }) {
+      const colonyTeams = require('../colonyTeams');
+      const q = String(teamQuery || '').trim().toLowerCase();
+      if (!q) return { error: 'A team name or id is required.' };
+      const teams = colonyTeams.listTeams();
+      const team = teams.find(t => t.id === q || t.name.toLowerCase() === q)
+        || teams.find(t => t.name.toLowerCase().includes(q));
+      if (!team) return { error: `No colony team matches "${teamQuery}". Known teams: ${teams.map(t => t.name).join(', ') || '(none)'}.` };
+      const dir = String(direction || '').trim();
+      if (!dir) return { error: 'A mission direction (the work item) is required.' };
+      // Resolve the model the way the Discord Operator does — the seeded Colony
+      // Operator agent's configured model.
+      let model = null;
+      try { model = require('../discord/operator').ensureOperatorAgent()?.model || null; } catch { /* handled below */ }
+      if (!model) return { error: 'No Operator model is available. Set a model for the Colony Operator on the Staff page, then retry.' };
+      const missions = require('../discord/missions');
+      try {
+        if (missions.activeRunForTeam(team.id)) {
+          const { item } = missions.queueTeamWork(team.id, dir, dir.slice(0, 80));
+          return { success: true, queued: true, team: team.name, item_id: item.id, message: `${team.name} is already running a mission — queued this work (item ${item.id}); it starts when the current run finishes.` };
+        }
+        const { runId } = missions.launchTeamMission(team.id, dir, { model, source: 'manual', matchReason: 'Steward: start colony run' });
+        return { success: true, run_id: runId, team: team.name, message: `Started a colony run for ${team.name} (run ${runId}). Progress posts to the team's colony thread.` };
+      } catch (e) {
+        return { error: e.message };
+      }
     },
   },
 

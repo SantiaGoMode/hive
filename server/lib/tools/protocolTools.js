@@ -3,6 +3,7 @@ const db = require('../../db');
 const protocol = require('../colonyProtocol');
 const { logSwallowed } = require('../logSwallowed');
 const { agentLabel, readProjectContextFiles, resolveRoleKey } = require('./shared');
+const workflow = require('../colony/workflow');
 
 module.exports = {
   // ── Colony Communication Protocol tools (group: 'protocol') ─────────────────
@@ -26,12 +27,24 @@ module.exports = {
       if (!row) return { error: `Colony "${colonyContext.colonyId}" not found` };
       let board_card = null;
       try { board_card = row.board_card ? JSON.parse(row.board_card) : null; } catch (e) { logSwallowed('agentTools:parseBoardCard', e, { colonyId: colonyContext.colonyId }); }
+      const reviewTarget = board_card?.review_target || null;
+      const changedFiles = Array.isArray(reviewTarget?.changed_files) ? reviewTarget.changed_files : [];
+      const guidance = reviewTarget
+        ? [
+          `Use review_target as the authoritative pull request under review (PR #${reviewTarget.number}).`,
+          'Use changed_files with status values for scope. Read added/modified/renamed files from the checked-out PR head.',
+          'Do NOT read removed/deleted files from the working tree; inspect their diff or base revision instead.',
+          'Do NOT substitute HEAD~1..HEAD unless review_target.diff_command explicitly says to.',
+        ].join(' ')
+        : 'Use this source context in your handoff payload. Cite the GitHub issue/project card and any PRD/README/SPEC file you relied on. If no files are returned, say that explicitly.';
       return {
         repo_path: row.repo_path || null,
         board_card,
+        review_target: reviewTarget,
+        changed_files: changedFiles,
         goal: row.goal,
         source_files: readProjectContextFiles(row.repo_path),
-        guidance: 'Use this source context in your handoff payload. Cite the GitHub issue/project card and any PRD/README/SPEC file you relied on. If no files are returned, say that explicitly.',
+        guidance,
       };
     },
   },
@@ -257,6 +270,10 @@ module.exports = {
         status: requiresHuman ? 'awaiting_human' : 'pending',
         historyRef,
       });
+      workflow.addEvidence(colonyContext.colonyId, {
+        kind: 'handoff', sourceAgentId: callerAgentId,
+        payload: { handoff_id: record.id, from: fromRole, to: to_role, contract: edge.payload, artifacts },
+      });
 
       const author = agentLabel(colonyContext, callerAgentId, fromRole);
       protocol.writeBlackboard(colonyContext.colonyId, author, 'message',
@@ -297,6 +314,7 @@ module.exports = {
             plan.updated_at = Date.now();
             db.prepare('UPDATE colonies SET plan=?, updated_at=unixepoch() WHERE id=?')
               .run(JSON.stringify(plan), colonyContext.colonyId);
+            workflow.transition(colonyContext.colonyId, step.id, 'done', step.note);
             if (colonyContext.delegatedSteps) colonyContext.delegatedSteps.add(String(step.id));
             updatedPlan = plan;
           }

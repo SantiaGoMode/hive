@@ -10,7 +10,7 @@
 # - `up -d` is natively detached and returns after the compose stack starts.
 services:
   litellm:
-    image: ghcr.io/berriai/litellm:main-stable
+    image: ghcr.io/berriai/litellm:main-stable@sha256:9de33287d844a164f873479a04eebe065610e131d7e3aaf010f520fb5b4cfd7b
     container_name: hive-llm-gateway
     restart: unless-stopped
     ports:
@@ -22,7 +22,7 @@ services:
       - OPENAI_API_KEY
       - ANTHROPIC_API_KEY
       - GEMINI_API_KEY
-      - LITELLM_MASTER_KEY              # enables auth + virtual keys + budgets
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:?LITELLM_MASTER_KEY is required for gateway authentication}
       - DATABASE_URL=postgresql://litellm:litellm@postgres:5432/litellm
     depends_on:
       postgres:
@@ -35,7 +35,7 @@ services:
       start_period: 30s
 
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:16bc17c64a573ef34162af9298258d1aec548232985b33ed7b1eac33ba35c229
     container_name: hive-llm-gateway-db
     restart: unless-stopped
     environment:

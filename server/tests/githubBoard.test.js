@@ -5,6 +5,15 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const board = require('../lib/githubBoard');
 
+function jsonResponse(body, ok = true) {
+  return {
+    ok,
+    status: ok ? 200 : 500,
+    statusText: ok ? 'OK' : 'ERR',
+    text: async () => JSON.stringify(body),
+  };
+}
+
 describe('parseGitHubRemote', () => {
   it('parses ssh remotes (with and without .git)', () => {
     assert.deepEqual(board.parseGitHubRemote('git@github.com:SantiaGoMode/hive.git'), { owner: 'SantiaGoMode', repo: 'hive' });
@@ -87,5 +96,76 @@ describe('buildBoardComment', () => {
     assert.match(md, /complete/);
     assert.match(md, /http:\/\/x/);
     assert.match(md, /a → b/);
+  });
+});
+
+describe('review PR resolution', () => {
+  it('extracts only explicit pull request references, not issue numbers', () => {
+    assert.deepEqual(board.extractPullNumbers('Review the PR associated with #3', 'a/b'), []);
+    assert.deepEqual(board.extractPullNumbers('Review PR #19 and https://github.com/a/b/pull/18', 'a/b'), [18, 19].sort((a, b) => a - b));
+  });
+
+  it('prefers the open PR that references the issue over older linked comments', async () => {
+    const originalFetch = global.fetch;
+    const calls = [];
+    global.fetch = async (url) => {
+      calls.push(String(url));
+      if (String(url).includes('/pulls?state=all')) {
+        return jsonResponse([
+          {
+            number: 19,
+            state: 'open',
+            title: '[Colony] Define Technical Stack & Environment Setup',
+            body: 'Goal includes https://github.com/SantiaGoMode/Hive-TaskMaster/issues/3',
+            html_url: 'https://github.com/SantiaGoMode/Hive-TaskMaster/pull/19',
+            head: { ref: 'colony-mr55', sha: 'head19', repo: { full_name: 'SantiaGoMode/Hive-TaskMaster' } },
+            base: { ref: 'main', sha: 'base', repo: { full_name: 'SantiaGoMode/Hive-TaskMaster' } },
+          },
+          {
+            number: 18,
+            state: 'closed',
+            title: '[Colony] Define Technical Stack & Environment Setup',
+            body: 'older run',
+            html_url: 'https://github.com/SantiaGoMode/Hive-TaskMaster/pull/18',
+            head: { ref: 'colony-mr51', sha: 'head18', repo: { full_name: 'SantiaGoMode/Hive-TaskMaster' } },
+            base: { ref: 'main', sha: 'base', repo: { full_name: 'SantiaGoMode/Hive-TaskMaster' } },
+          },
+        ]);
+      }
+      if (String(url).endsWith('/pulls/19')) {
+        return jsonResponse({
+          number: 19,
+          state: 'open',
+          title: '[Colony] Define Technical Stack & Environment Setup',
+          html_url: 'https://github.com/SantiaGoMode/Hive-TaskMaster/pull/19',
+          head: { ref: 'colony-mr55', sha: 'head19', repo: { full_name: 'SantiaGoMode/Hive-TaskMaster' } },
+          base: { ref: 'main', sha: 'base', repo: { full_name: 'SantiaGoMode/Hive-TaskMaster' } },
+        });
+      }
+      if (String(url).includes('/pulls/19/files')) {
+        return jsonResponse([
+          { filename: 'package.json', status: 'added', additions: 29, deletions: 0, changes: 29 },
+          { filename: 'README.md', status: 'removed', additions: 0, deletions: 10, changes: 10 },
+        ]);
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    };
+
+    try {
+      const target = await board.resolveReviewPullRequest({
+        owner: 'SantiaGoMode',
+        repo: 'Hive-TaskMaster',
+        card: { type: 'issue', number: 3, title: 'Define Technical Stack & Environment Setup' },
+        goal: 'Review the PR associated with #3',
+      });
+      assert.equal(target.number, 19);
+      assert.equal(target.base_ref, 'main');
+      assert.equal(target.head_ref, 'colony-mr55');
+      assert.deepEqual(target.changed_files.map(f => `${f.status}:${f.path}`), ['added:package.json', 'removed:README.md']);
+      assert.ok(calls.some(url => url.includes('/pulls?state=all')));
+      assert.ok(!calls.some(url => url.includes('/issues/3/comments')), 'open issue-referencing PR should avoid stale comment fallback');
+    } finally {
+      global.fetch = originalFetch;
+    }
   });
 });

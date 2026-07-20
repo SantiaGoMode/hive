@@ -7,6 +7,8 @@ const { logSwallowed } = require('./logSwallowed');
 const lifecycle = require('./schedulerLifecycle');
 const path = require('path');
 const os = require('os');
+const { unattendedRunContext } = require('./colonyPolicy');
+const { scheduleAutomation } = require('./automationQueue');
 
 // Map of schedule id → cron.ScheduledTask
 const tasks = new Map();
@@ -38,7 +40,10 @@ function runSchedule(schedule) {
   if (schedule.pipeline_id) {
     const { runPipelineById } = require('./pipelineRunner');
     running.add(schedule.id);
-    runPipelineById(schedule.pipeline_id, schedule.prompt, { hivePath: getSettings().hivePath })
+    scheduleAutomation(() => runPipelineById(schedule.pipeline_id, schedule.prompt, {
+      hivePath: getSettings().hivePath,
+      runContext: unattendedRunContext('schedule'),
+    }))
       .then(({ final_output }) => {
         db.prepare(
           'UPDATE scheduled_runs SET last_run=unixepoch(), last_output=?, last_error=NULL, run_count=run_count+1 WHERE id=?',
@@ -53,6 +58,43 @@ function runSchedule(schedule) {
       .finally(() => {
         running.delete(schedule.id);
       });
+    return;
+  }
+
+  // Colony team target: launch (or queue, if the team is busy) a mission for the
+  // team, using the schedule's prompt as the mission direction. Runs detached
+  // like a Discord-launched mission; progress relays to the team's forum thread
+  // automatically. Lazily required to avoid a boot-time cycle
+  // (scheduler → discord/missions → colonyRunner → …).
+  if (schedule.team_id) {
+    const missions = require('./discord/missions');
+    let model = null;
+    try { model = require('./discord/operator').ensureOperatorAgent()?.model || null; }
+    catch (e) { logSwallowed('scheduler:operatorModel', e, { scheduleId: schedule.id }); }
+    if (!model) {
+      db.prepare('UPDATE scheduled_runs SET last_run=unixepoch(), last_error=?, run_count=run_count+1 WHERE id=?')
+        .run('No Operator model available to run the scheduled mission', schedule.id);
+      lifecycle.recordError('scheduler', `No operator model for schedule ${schedule.id}`);
+      return;
+    }
+    try {
+      let output;
+      if (missions.activeRunForTeam(schedule.team_id)) {
+        const { item } = missions.queueTeamWork(schedule.team_id, schedule.prompt, schedule.label);
+        output = `Team busy — queued work item ${item.id}`;
+      } else {
+        const { runId } = missions.launchTeamMission(schedule.team_id, schedule.prompt, {
+          model, source: 'schedule', matchReason: `Scheduled: ${schedule.label}`,
+        });
+        output = `Launched run ${runId}`;
+      }
+      db.prepare('UPDATE scheduled_runs SET last_run=unixepoch(), last_output=?, last_error=NULL, run_count=run_count+1 WHERE id=?')
+        .run(output, schedule.id);
+    } catch (err) {
+      lifecycle.recordError('scheduler', err);
+      db.prepare('UPDATE scheduled_runs SET last_run=unixepoch(), last_error=?, run_count=run_count+1 WHERE id=?')
+        .run(err.message, schedule.id);
+    }
     return;
   }
 
@@ -81,8 +123,8 @@ function runSchedule(schedule) {
   running.add(schedule.id);
   // Context labels gateway spend as 'schedule'; runAgentOnce also honors the
   // agent's own reasoning toggle on this path.
-  const runCtx = { source: 'schedule' };
-  runAgentOnce(agent, [{ role: 'user', content: schedule.prompt }], ollamaUrl, 0, null, hivePath, toolsOverride, undefined, null, runCtx)
+  const runCtx = unattendedRunContext('schedule');
+  scheduleAutomation(() => runAgentOnce(agent, [{ role: 'user', content: schedule.prompt }], ollamaUrl, 0, null, hivePath, toolsOverride, undefined, null, runCtx))
     .then((output) => {
       db.prepare(
         'UPDATE scheduled_runs SET last_run=unixepoch(), last_output=?, last_error=NULL, run_count=run_count+1 WHERE id=?',

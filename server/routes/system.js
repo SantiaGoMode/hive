@@ -15,6 +15,7 @@ const gatewayHealth = require('../lib/gatewayHealth');
 const gatewaySpend = require('../lib/gatewaySpend');
 const setupStatus = require('../lib/setupStatus');
 const { invalidateSettingsCache } = require('../lib/config');
+const databaseMaintenance = require('../lib/databaseMaintenance');
 
 // Read a value from a source, swallowing any failure so /metrics never 500s on
 // one bad source.
@@ -88,6 +89,7 @@ router.get('/metrics', async (req, res) => {
     memory: safe(() => getSystemMemory(), null),
     active_colony_runs: safe(() => colonyRunner.activeRunCount(), null),
     active_pipeline_runs: safe(() => require('../lib/pipelineRunner').activeRunCount(), null),
+    automation_queue: safe(() => require('../lib/automationQueue').status(), null),
     scheduled_tasks: safe(() => scheduler.scheduledCount(), null),
     scheduler_lifecycle: safe(() => schedulerLifecycle.statuses(), null),
     ollama: { reachable: ollamaReachable, url: getOllamaUrl(), loaded_models: loadedModels, loaded_model_details: loadedModelDetails },
@@ -109,6 +111,23 @@ router.post('/setup/complete', (req, res) => {
   db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('setup_completed', 'true')").run();
   invalidateSettingsCache();
   res.json({ ok: true });
+});
+
+router.get('/database/integrity', (req, res) => {
+  const result = databaseMaintenance.integrityCheck();
+  res.status(result.ok ? 200 : 500).json(result);
+});
+
+router.get('/database/backups', (req, res) => {
+  res.json({ backups: databaseMaintenance.listBackups() });
+});
+
+router.post('/database/backups', async (req, res) => {
+  try {
+    res.status(201).json({ backup: await databaseMaintenance.createBackup() });
+  } catch (error) {
+    res.status(500).json({ error: `Database backup failed: ${error.message}` });
+  }
 });
 
 // POST /api/system/model/stop — unload a model from Ollama memory
