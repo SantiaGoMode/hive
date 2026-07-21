@@ -148,4 +148,5 @@ jobs:
       - name: Publish immutable release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: gh release create "$GITHUB_REF_NAME" release-artifacts/* --verify-tag --generate-notes
