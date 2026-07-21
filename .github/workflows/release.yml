@@ -78,6 +78,9 @@ jobs:
           npm ci --prefix client
           npm ci --prefix desktop
 
+      - name: Build client for desktop staging
+        run: npm run build
+
       - name: Require macOS production signing credentials
         if: runner.os == 'macOS'
         shell: bash
