@@ -49,8 +49,13 @@ router.put('/:id', validateBody(updatePipelineSchema), (req, res) => {
 });
 
 router.delete('/:id', (req, res) => {
+  const { pruneOwnedAgents, pipelineStepAgentIds } = require('../lib/ownedAgents');
+  const row = db.prepare('SELECT steps FROM pipelines WHERE id = ?').get(req.params.id);
   db.prepare('DELETE FROM pipelines WHERE id = ?').run(req.params.id);
-  res.json({ success: true });
+  // Delete dedicated (ephemeral) step agents this pipeline owned, unless another
+  // pipeline/schedule/staff profile still relies on them.
+  const removed = row ? pruneOwnedAgents(pipelineStepAgentIds(row.steps), { exceptPipelineId: req.params.id }) : [];
+  res.json({ success: true, deleted_agents: removed.length });
 });
 
 // ── Run history ───────────────────────────────────────────────────────────────

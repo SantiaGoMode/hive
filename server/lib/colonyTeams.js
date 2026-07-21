@@ -9,6 +9,7 @@ const { DEFAULT_RECIPE_ID, getColonyRecipe } = require('./colonyRecipes');
 const staffDirectory = require('./staffDirectory');
 const workItems = require('./colonyWorkItems');
 const { logSwallowed } = require('./logSwallowed');
+const { EXECUTION_MODES, recipeExecutionPolicy } = require('./colonyPolicy');
 
 function newId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -27,7 +28,9 @@ function rowToTeam(row) {
     recipe_id: row.recipe_id || DEFAULT_RECIPE_ID,
     repo_path: row.repo_path || null,
     cloud_enabled: !!row.cloud_enabled,
-    github_writeback: !!row.github_writeback,
+    github_review: !!row.github_review,
+    github_publish: !!row.github_publish,
+    github_writeback: !!row.github_publish,
     memory: row.memory || '',
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -43,12 +46,12 @@ function runStatsForTeam(teamId) {
   let durationCount = 0;
   for (const r of rows) {
     byStatus[r.status] = (byStatus[r.status] || 0) + 1;
-    if (['done', 'stopped', 'error'].includes(r.status) && r.updated_at >= r.created_at) {
+    if (['done', 'stopped', 'error', 'blocked', 'failed'].includes(r.status) && r.updated_at >= r.created_at) {
       durationSum += r.updated_at - r.created_at;
       durationCount++;
     }
   }
-  const finished = (byStatus.done || 0) + (byStatus.stopped || 0) + (byStatus.error || 0);
+  const finished = (byStatus.done || 0) + (byStatus.stopped || 0) + (byStatus.error || 0) + (byStatus.blocked || 0) + (byStatus.failed || 0);
   return {
     total_runs: rows.length,
     by_status: byStatus,
@@ -57,14 +60,17 @@ function runStatsForTeam(teamId) {
   };
 }
 
-function createTeam({ name, description = '', recipeId = DEFAULT_RECIPE_ID, repoPath = null, cloudEnabled = false, githubWriteback = false } = {}) {
+function createTeam({ name, description = '', recipeId = DEFAULT_RECIPE_ID, repoPath = null, cloudEnabled = false, githubReview = false, githubPublish = false, githubWriteback = false } = {}) {
   const trimmed = String(name || '').trim();
   if (!trimmed) throw new Error('Colony name is required');
   if (getColonyRecipe(recipeId).id !== recipeId) throw new Error('unknown recipe_id');
+  const policy = recipeExecutionPolicy(getColonyRecipe(recipeId));
+  const review = !!githubReview && !!policy.github_review;
+  const publish = policy.mode === EXECUTION_MODES.REPOSITORY_WRITE && !!(githubPublish || githubWriteback);
   const id = newId();
   db.prepare(
-    'INSERT INTO colony_teams (id, name, description, recipe_id, repo_path, cloud_enabled, github_writeback) VALUES (?, ?, ?, ?, ?, ?, ?)',
-  ).run(id, trimmed, String(description || '').trim(), recipeId, repoPath || null, cloudEnabled ? 1 : 0, githubWriteback ? 1 : 0);
+    'INSERT INTO colony_teams (id, name, description, recipe_id, repo_path, cloud_enabled, github_writeback, github_review, github_publish) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+  ).run(id, trimmed, String(description || '').trim(), recipeId, repoPath || null, cloudEnabled ? 1 : 0, publish ? 1 : 0, review ? 1 : 0, publish ? 1 : 0);
   return getTeam(id);
 }
 
@@ -143,7 +149,19 @@ function updateTeam(id, data = {}) {
   if (data.repo_path !== undefined) patch.repo_path = String(data.repo_path || '').trim() || null;
   if (data.memory !== undefined) patch.memory = String(data.memory || '');
   if (data.cloud_enabled !== undefined) patch.cloud_enabled = data.cloud_enabled ? 1 : 0;
-  if (data.github_writeback !== undefined) patch.github_writeback = data.github_writeback ? 1 : 0;
+  const nextRecipeId = patch.recipe_id || existing.recipe_id;
+  const policy = recipeExecutionPolicy(getColonyRecipe(nextRecipeId));
+  if (data.github_review !== undefined || patch.recipe_id !== undefined) {
+    const requested = data.github_review !== undefined ? data.github_review : existing.github_review;
+    patch.github_review = requested && policy.github_review ? 1 : 0;
+  }
+  if (data.github_publish !== undefined || data.github_writeback !== undefined || patch.recipe_id !== undefined) {
+    const requested = data.github_publish !== undefined
+      ? data.github_publish
+      : data.github_writeback !== undefined ? data.github_writeback : existing.github_publish;
+    patch.github_publish = requested && policy.mode === EXECUTION_MODES.REPOSITORY_WRITE ? 1 : 0;
+    patch.github_writeback = patch.github_publish;
+  }
   const keys = Object.keys(patch);
   if (!keys.length) return existing;
   db.prepare(`UPDATE colony_teams SET ${keys.map(k => `${k}=?`).join(', ')}, updated_at=unixepoch() WHERE id=?`)
@@ -178,7 +196,7 @@ function teamOverview(id) {
   if (!team) return null;
 
   const runs = db.prepare(`
-    SELECT id, goal, model, recipe_id, status, summary, created_at, updated_at, board_card, trigger, deliverable
+    SELECT id, goal, model, recipe_id, status, outcome, summary, created_at, updated_at, board_card, trigger, deliverable
     FROM colonies WHERE team_id=? ORDER BY created_at DESC
   `).all(id).map(r => ({
     id: r.id,
@@ -186,6 +204,7 @@ function teamOverview(id) {
     model: r.model,
     recipe_id: r.recipe_id,
     status: r.status,
+    outcome: r.outcome || null,
     summary: r.summary || null,
     created_at: r.created_at,
     updated_at: r.updated_at,

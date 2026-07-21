@@ -1,9 +1,30 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-  <rect width="1024" height="1024" rx="224" fill="#20180f"/>
-  <path d="M256 696c0-226.9 110.4-408 256-408s256 181.1 256 408c0 88-72 152-160 152H416c-88 0-160-64-160-152Z" fill="#f59e0b"/>
-  <path d="M331.2 513.6c41.6-27.2 108.8-44.8 180.8-44.8s139.2 17.6 180.8 44.8M289.6 630.4C342.4 596.8 424 576 512 576s169.6 20.8 222.4 54.4M304 742.4c51.2-28.8 126.4-44.8 208-44.8s156.8 16 208 44.8" fill="none" stroke="#78350f" stroke-linecap="round" stroke-width="48" opacity=".58"/>
-  <path d="M374.4 376c36.8-35.2 83.2-56 137.6-56s100.8 20.8 137.6 56c-38.4 17.6-84.8 27.2-137.6 27.2S412.8 393.6 374.4 376Z" fill="#fde68a" opacity=".9"/>
-  <ellipse cx="512" cy="708.8" rx="91.2" ry="112" fill="#241204"/>
-  <path d="M390.4 217.6 464 176l73.6 41.6v83.2L464 342.4l-73.6-41.6v-83.2Zm192 0L656 176l73.6 41.6v83.2L656 342.4l-73.6-41.6v-83.2Z" fill="#fbbf24" stroke="#fef3c7" stroke-width="19.2"/>
-  <path d="M217.6 409.6c36.8-65.6 107.2-91.2 171.2-60.8M806.4 409.6c-36.8-65.6-107.2-91.2-171.2-60.8" fill="none" stroke="#fef3c7" stroke-linecap="round" stroke-width="48" opacity=".7"/>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FBBF24"/>
+      <stop offset="0.55" stop-color="#F59E0B"/>
+      <stop offset="1" stop-color="#D97706"/>
+    </linearGradient>
+    <linearGradient id="cell" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFDF7"/>
+      <stop offset="1" stop-color="#FCE8B6"/>
+    </linearGradient>
+    <linearGradient id="core" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#B45309"/>
+      <stop offset="1" stop-color="#7C3A06"/>
+    </linearGradient>
+    <filter id="lift" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="16" flood-color="#5A2E05" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" rx="224" fill="url(#bg)"/>
+  <g filter="url(#lift)">
+    <path d="M614.9,452.6L512.0,393.2L409.1,452.6L409.1,571.4L512.0,630.8L614.9,571.4Z" fill="url(#core)"/>
+    <path d="M843.5,452.6L740.6,393.2L637.7,452.6L637.7,571.4L740.6,630.8L843.5,571.4Z" fill="url(#cell)"/>
+    <path d="M386.3,452.6L283.4,393.2L180.5,452.6L180.5,571.4L283.4,630.8L386.3,571.4Z" fill="url(#cell)"/>
+    <path d="M729.2,254.6L626.3,195.2L523.4,254.6L523.4,373.4L626.3,432.8L729.2,373.4Z" fill="url(#cell)"/>
+    <path d="M500.6,254.6L397.7,195.2L294.8,254.6L294.8,373.4L397.7,432.8L500.6,373.4Z" fill="url(#cell)"/>
+    <path d="M729.2,650.6L626.3,591.2L523.4,650.6L523.4,769.4L626.3,828.8L729.2,769.4Z" fill="url(#cell)"/>
+    <path d="M500.6,650.6L397.7,591.2L294.8,650.6L294.8,769.4L397.7,828.8L500.6,769.4Z" fill="url(#cell)"/>
+  </g>
 </svg>

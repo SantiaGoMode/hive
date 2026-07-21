@@ -151,4 +151,37 @@ describe('sandbox path containment', () => {
     assert.match(shell.stderr, /host-side generate_speech/i);
     assert.match(shell.media_backend_hint, /delegate to a media-capable role/i);
   });
+
+  it('enforces read-only repository mounts across shell and host-side file tools', async () => {
+    const agentId = `readonly-agent-${Date.now()}`;
+    const repo = tempDir('hive-readonly-repo-');
+    try {
+      fs.writeFileSync(path.join(repo, 'keep.txt'), 'unchanged', 'utf8');
+      sandbox.setAgentRepo(agentId, repo, { writable: false });
+
+      const write = await executeTool('write_file', { path: 'new.txt', content: 'nope' }, agentId);
+      assert.match(write.error, /read-only repository/i);
+      assert.equal(fs.existsSync(path.join(repo, 'new.txt')), false);
+
+      const move = await executeTool('move_file', { from: 'keep.txt', to: 'moved.txt' }, agentId);
+      assert.match(move.error, /read-only repository/i);
+      assert.equal(fs.existsSync(path.join(repo, 'keep.txt')), true);
+
+      const remove = await executeTool('delete_file', { path: 'keep.txt' }, agentId);
+      assert.match(remove.error, /read-only repository/i);
+      assert.equal(fs.readFileSync(path.join(repo, 'keep.txt'), 'utf8'), 'unchanged');
+
+      const install = await executeTool('shell', { command: 'npm install' }, agentId);
+      assert.equal(install.exitCode, 1);
+      assert.equal(install.policy_violation, 'read_only_repository');
+
+      const auditFix = await executeTool('shell', { command: 'npm audit fix' }, agentId);
+      assert.equal(auditFix.exitCode, 1);
+      assert.equal(auditFix.policy_violation, 'read_only_repository');
+    } finally {
+      sandbox.setAgentRepo(agentId, null);
+      cleanup(repo);
+      await sandbox.reset(agentId);
+    }
+  });
 });

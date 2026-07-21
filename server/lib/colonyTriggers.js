@@ -1,39 +1,9 @@
 const db = require('../db');
-const { createColony, runColony } = require('./colonyRunner');
-const { logger } = require('./logger');
+const colonyRunService = require('./colonyRunService');
+const workItems = require('./colonyWorkItems');
 
 const DEFAULT_COMMENT_TOKEN = '@hive';
 
-// A webhook redelivery storm must not spin up unbounded concurrent colonies —
-// each one spawns containers, git operations, and paid model calls. Triggered
-// runs go through a small semaphore + bounded queue instead of fire-and-forget.
-const MAX_CONCURRENT_TRIGGERED_RUNS = Number(process.env.HIVE_MAX_TRIGGERED_COLONY_RUNS) || 2;
-const MAX_QUEUED_TRIGGERED_RUNS = 50;
-let activeTriggeredRuns = 0;
-const queuedTriggeredRuns = [];
-
-function drainTriggeredRuns() {
-  while (activeTriggeredRuns < MAX_CONCURRENT_TRIGGERED_RUNS && queuedTriggeredRuns.length) {
-    const colonyId = queuedTriggeredRuns.shift();
-    activeTriggeredRuns += 1;
-    runColony(colonyId, null)
-      .catch(err => logger.error('colonyTriggers', 'triggered_run_failed', { colonyId, error: err?.message || String(err) }))
-      .finally(() => {
-        activeTriggeredRuns -= 1;
-        drainTriggeredRuns();
-      });
-  }
-}
-
-function enqueueTriggeredRun(colonyId) {
-  if (queuedTriggeredRuns.length >= MAX_QUEUED_TRIGGERED_RUNS) {
-    logger.error('colonyTriggers', 'triggered_run_dropped', { colonyId, reason: 'queue_full', queued: queuedTriggeredRuns.length });
-    return false;
-  }
-  queuedTriggeredRuns.push(colonyId);
-  setImmediate(drainTriggeredRuns);
-  return true;
-}
 
 function parseJson(value, fallback = null) {
   if (!value) return fallback;
@@ -222,25 +192,40 @@ function processWebhookEvent(event, opts = {}) {
       webhook_id: event.webhook_id,
     };
     const goal = buildTriggeredGoal(row, event, event.payload || {}, match.kind);
-    const triggeredColonyId = createColony(goal, row.model, row.recipe_id, {
+    let triggeredColonyId;
+    try {
+      triggeredColonyId = colonyRunService.createRun({
+      goal, model: row.model, recipeId: row.recipe_id,
       repoPath: row.repo_path || null,
       boardCard,
       cloudEnabled: !!row.cloud_enabled,
-      // Inherit the source colony's write-back setting — without this every
-      // triggered issue→PR run silently degrades to no push/PR.
-      githubWriteback: !!row.github_writeback,
+      githubReview: !!row.github_review,
+      githubPublish: !!row.github_publish,
       modelPlan,
       trigger,
       // Triggered follow-up runs stay inside the same colony as their source run.
       teamId: row.team_id || null,
-    });
+      }, { enqueue: startRun });
+    } catch (error) {
+      // A team with an active durable job receives triggered work in its normal
+      // inbox rather than creating a parallel competing run.
+      if (row.team_id) {
+        const item = workItems.createWorkItem({
+          teamId: row.team_id, source: 'webhook', sourceRef: `${event.webhook_id}:${event.id}`,
+          title: boardCard?.title || `Triggered ${match.kind} event`, direction: goal,
+          boardCard, status: 'queued', matchReason: 'queued because the colony is busy',
+        });
+        triggered.push({ source_colony_id: row.id, queued_work_item_id: item.id, trigger });
+        continue;
+      }
+      throw error;
+    }
 
     db.prepare('UPDATE colony_trigger_events SET triggered_colony_id=? WHERE colony_id=? AND event_id=?')
       .run(triggeredColonyId, row.id, event.id);
     triggered.push({ source_colony_id: row.id, colony_id: triggeredColonyId, trigger });
 
     if (startRun) {
-      enqueueTriggeredRun(triggeredColonyId);
       try { require('./rosterBus').notifyRoster('run_started', { run_id: triggeredColonyId }); } catch { /* roster is best-effort */ }
     }
   }

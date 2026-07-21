@@ -868,41 +868,49 @@ describe('runColony — preflight', () => {
 });
 
 describe('runColony — recipes', () => {
-  it('runs Research Mission as a seeded crew with model-driven planning', async () => {
+  it('runs Research Mission through its enforced handoff chain', async () => {
+    // research_brief is a strict-flow recipe: researcher → source_critic →
+    // synthesizer → media_producer, with the handoff into each role recorded
+    // (auto-recorded from each worker's ask_agent reply). mark_goal_achieved is
+    // blocked until the terminal media_producer handoff is on the ledger.
+    const protocol = require('../lib/colonyProtocol');
+    const flow = protocol.getFlow('research_brief');
+    const roleOrder = [flow[0].from, ...flow.map(e => e.to)]; // researcher..media_producer
     let operatorCalls = 0;
     const crewIds = {};
+
     fakeOllama.handler = async (_req, parsed) => {
       const system = parsed.messages?.[0]?.content || '';
       if (system.includes('Research Mission Operator')) {
         operatorCalls++;
-        if (!crewIds.researcher) {
-          crewIds.researcher = system.match(/Researcher\) [^"]*-> agent_id: "([^"]+)"/)?.[1];
-          crewIds.critic = system.match(/Source Critic\) [^"]*-> agent_id: "([^"]+)"/)?.[1];
-          crewIds.synthesizer = system.match(/Synthesizer\) [^"]*-> agent_id: "([^"]+)"/)?.[1];
+        if (Object.keys(crewIds).length === 0) {
+          for (const key of roleOrder) {
+            crewIds[key] = system.match(new RegExp(`\\[role_key: ${key}\\] -> agent_id: "([^"]+)"`))?.[1];
+          }
         }
         if (operatorCalls === 1) {
           return ollamaToolCall('set_plan', {
-            steps: [
-              { id: '1', description: 'Gather source-backed research', assigned_to: crewIds.researcher },
-              { id: '2', description: 'Review evidence quality and caveats', assigned_to: crewIds.critic },
-              { id: '3', description: 'Synthesize the final research brief', assigned_to: crewIds.synthesizer },
-            ],
+            steps: roleOrder.map((key, i) => ({ id: String(i + 1), description: `${key} work`, assigned_to: key })),
           });
         }
-        if (operatorCalls === 2) return ollamaToolCall('update_plan_step', { id: '1', status: 'in_progress' });
-        if (operatorCalls === 3) return ollamaToolCall('ask_agent', { agent_id: crewIds.researcher, message: 'Gather source-backed research.' });
-        if (operatorCalls === 4) return ollamaToolCall('update_plan_step', { id: '1', status: 'done' });
-        if (operatorCalls === 5) return ollamaToolCall('update_plan_step', { id: '2', status: 'in_progress' });
-        if (operatorCalls === 6) return ollamaToolCall('ask_agent', { agent_id: crewIds.critic, message: 'Review the research handoff.', context: 'Research handoff: findings and sources.' });
-        if (operatorCalls === 7) return ollamaToolCall('update_plan_step', { id: '2', status: 'done' });
-        if (operatorCalls === 8) return ollamaToolCall('update_plan_step', { id: '3', status: 'in_progress' });
-        if (operatorCalls === 9) return ollamaToolCall('ask_agent', { agent_id: crewIds.synthesizer, message: 'Synthesize the final brief.', context: 'Research handoff plus critic handoff.' });
-        if (operatorCalls === 10) return ollamaToolCall('update_plan_step', { id: '3', status: 'done' });
+        // Delegate strictly in flow order; steps for roles with an outgoing edge
+        // auto-complete from their recorded handoffs.
+        const round = operatorCalls - 2;
+        if (round < roleOrder.length - 1) {
+          return ollamaToolCall('ask_agent', { agent_id: crewIds[roleOrder[round]], message: `Do your ${roleOrder[round]} work and hand off.` });
+        }
+        // Terminal role (media_producer) has no outgoing edge: drive it manually.
+        const terminal = roleOrder[roleOrder.length - 1];
+        const terminalStep = String(roleOrder.length);
+        if (round === roleOrder.length - 1) return ollamaToolCall('update_plan_step', { id: terminalStep, status: 'in_progress' });
+        if (round === roleOrder.length) return ollamaToolCall('ask_agent', { agent_id: crewIds[terminal], message: `Do your ${terminal} work.` });
+        if (round === roleOrder.length + 1) return ollamaToolCall('update_plan_step', { id: terminalStep, status: 'done' });
         return ollamaToolCall('mark_goal_achieved', { summary: 'Research mission complete.' });
       }
-      if (system.includes('You are Researcher')) return ollamaText('Research handoff: findings and sources.');
-      if (system.includes('You are Source Critic')) return ollamaText('Critic handoff: evidence is medium strength.');
-      if (system.includes('You are Synthesizer')) return ollamaText('Final brief: concise synthesized deliverable.');
+      if (system.includes('You are the Researcher')) return ollamaText('Research handoff: findings and sources.');
+      if (system.includes('You are the Source Critic')) return ollamaText('Critic handoff: evidence is medium strength.');
+      if (system.includes('You are the Synthesizer')) return ollamaText('Final brief handoff: concise synthesized deliverable.');
+      if (system.includes('You are the Media Producer')) return ollamaText('Media rendered: image and audio attached.');
       return ollamaText('unexpected request');
     };
 
@@ -920,16 +928,32 @@ describe('runColony — recipes', () => {
     assert.ok(colony.log.some(e => e.kind === 'recipe' && e.recipe_id === 'research_brief'));
 
     const roles = colony.agents.map(a => a.persona_role);
-    assert.ok(roles.includes('Researcher'));
-    assert.ok(roles.includes('Source Critic'));
-    assert.ok(roles.includes('Synthesizer'));
-    assert.ok(roles.includes('Research Mission Operator'));
+    for (const title of ['Researcher', 'Source Critic', 'Synthesizer', 'Media Producer', 'Research Mission Operator']) {
+      assert.ok(roles.includes(title), `${title} should be seeded`);
+    }
 
     assert.ok(operatorCalls > 0, 'recipe operator should call Ollama to decide the mission plan');
     assert.equal(colony.summary, 'Research mission complete.');
     assert.ok(colony.plan?.steps?.every(s => s.status === 'done'));
-    assert.equal(colony.log.filter(e => e.kind === 'tool_call' && e.tool === 'ask_agent').length, 3);
     assert.equal(colony.log.filter(e => e.kind === 'tool_call' && e.tool === 'create_agent').length, 0);
+
+    // The full handoff chain is on the ledger and the terminal role was reached.
+    const ledger = protocol.listHandoffs(id);
+    for (const edge of flow) {
+      assert.ok(
+        ledger.some(h => h.from_agent === edge.from && h.to_agent === edge.to && h.protocol_status === 'ok'),
+        `missing handoff ${edge.from}→${edge.to}`,
+      );
+    }
+    assert.equal(protocol.flowCompletion(id, 'research_brief').terminal_reached, true);
+
+    // Repo-less deliverable is reconciled to the artifact bucket: the crew's
+    // brief is materialized to a real file (never a phantom that 404s), and
+    // deliverable.artifacts lists exactly what's on disk.
+    const bucket = require('../lib/colonyArtifacts').listArtifacts(id).map(f => f.name);
+    assert.ok(bucket.some(n => /\.md$/i.test(n)), 'a markdown brief should be materialized to the bucket');
+    const deliverable = colony.deliverable ? (typeof colony.deliverable === 'string' ? JSON.parse(colony.deliverable) : colony.deliverable) : {};
+    assert.deepEqual([...(deliverable.artifacts || [])].sort(), [...bucket].sort(), 'deliverable.artifacts == actual bucket files');
   });
 
   it('runs a strict catalog recipe (marketing_campaign) through its enforced handoff chain', async () => {

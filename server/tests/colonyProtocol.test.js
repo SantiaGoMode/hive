@@ -112,6 +112,18 @@ describe('handoff preconditions (rules of engagement)', () => {
     r = protocol.checkPreconditions(id, 'development_team', 'qa_engineer', 'devops_engineer');
     assert.equal(r.ok, true);
   });
+
+  it('lets code-review lenses hand off independently to the synthesizer', () => {
+    const id = createColony('Review PR #7', 'qwen', 'code_review');
+    const impl = protocol.checkPreconditions(id, 'code_review', 'implementation_reviewer', 'review_synthesizer');
+    const security = protocol.checkPreconditions(id, 'code_review', 'security_reviewer', 'review_synthesizer');
+    assert.equal(impl.ok, true);
+    assert.equal(security.ok, true);
+    protocol.recordHandoff(id, { fromRole: 'implementation_reviewer', toRole: 'review_synthesizer', payload: { findings: [] }, status: 'accepted' });
+    const completion = protocol.flowCompletion(id, 'code_review');
+    assert.equal(completion.terminal_reached, false);
+    assert.equal(completion.missing_edges.length, 3);
+  });
 });
 
 // ── 1. Blackboard append semantics ───────────────────────────────────────────
@@ -302,7 +314,7 @@ describe('A2A/ACP REST endpoints', () => {
   });
 
   it('404s the flow for a recipe without a protocol', async () => {
-    const res = await request(server).get('/api/colony/recipes/research_brief/flow');
+    const res = await request(server).get('/api/colony/recipes/product_discovery/flow');
     assert.equal(res.status, 404);
   });
 
@@ -369,7 +381,7 @@ describe('flow completion gate', () => {
   });
 
   it('treats recipes without a protocol as always completable', () => {
-    const c = protocol.flowCompletion('whatever', 'research_brief');
+    const c = protocol.flowCompletion('whatever', 'product_discovery');
     assert.equal(c.ok, true);
     assert.equal(c.protocol, false);
   });
@@ -404,14 +416,42 @@ describe('mark_goal_achieved gating', () => {
 
   it('succeeds and stores a deliverable once the flow is satisfied', async () => {
     const id = newDevColony();
-    protocol.recordHandoff(id, { fromRole: 'devops_engineer', toRole: 'project_manager', payload: { contract: 'Deployment URL', artifacts: ['https://app.example.com'] }, status: 'accepted' });
+    for (const edge of protocol.getFlow('development_team')) {
+      protocol.recordHandoff(id, {
+        fromRole: edge.from,
+        toRole: edge.to,
+        payload: edge.to === 'project_manager'
+          ? { contract: 'Deployment URL', artifacts: ['https://app.example.com'] }
+          : {},
+        status: 'accepted',
+      });
+    }
     const out = await executeTool('mark_goal_achieved', { summary: 'shipped' },
       'orch', 'http://x', 0, null, null, null, 20, null, ctx(id));
     assert.equal(out.goal_achieved, true);
+    assert.equal(out.outcome, 'changes_proposed');
     assert.ok(out.deliverable);
     assert.equal(out.deliverable.flow_complete, true);
     const row = db.prepare('SELECT deliverable FROM colonies WHERE id=?').get(id);
     assert.ok(row.deliverable && JSON.parse(row.deliverable).links.includes('https://app.example.com'));
+  });
+
+  it('uses conclude_run for blocked work and persists a partial failed deliverable', async () => {
+    const id = newDevColony();
+    db.prepare('UPDATE colonies SET plan=? WHERE id=?').run(JSON.stringify({ steps: [
+      { id: '1', description: 'Scope', status: 'done' },
+      { id: '2', description: 'Implement', status: 'blocked', note: 'dependency unavailable' },
+    ] }), id);
+    const achieved = await executeTool('mark_goal_achieved', { summary: 'not really done' },
+      'orch', 'http://x', 0, null, null, null, 20, null, ctx(id));
+    assert.match(achieved.error, /conclude_run/);
+    const concluded = await executeTool('conclude_run', { outcome: 'blocked', summary: 'Implementation could not proceed.' },
+      'orch', 'http://x', 0, null, null, null, 20, null, ctx(id));
+    assert.equal(concluded.run_concluded, true);
+    assert.equal(concluded.outcome, 'blocked');
+    const row = db.prepare('SELECT outcome, deliverable FROM colonies WHERE id=?').get(id);
+    assert.equal(row.outcome, 'blocked');
+    assert.equal(JSON.parse(row.deliverable).partial, true);
   });
 
   it('includes operator workaround notes in the final deliverable', async () => {

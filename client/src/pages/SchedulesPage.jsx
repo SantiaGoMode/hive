@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../lib/api';
-import { Clock, Plus, Play, Trash2, ToggleLeft, ToggleRight, Edit2, CheckCircle, AlertCircle, Loader2, ChevronDown, ChevronUp, RotateCcw, GitBranch } from 'lucide-react';
+import { Clock, Plus, Play, Trash2, ToggleLeft, ToggleRight, Edit2, CheckCircle, AlertCircle, Loader2, ChevronDown, ChevronUp, RotateCcw, GitBranch, Users } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { toast } from '../stores/toastStore';
 import { Modal } from '../components/ui/Modal';
@@ -51,16 +51,24 @@ const PRESETS = [
   { label: 'Custom…',        value: 'custom' },
 ];
 
-const EMPTY_FORM = { agent_id: '', pipeline_id: '', label: '', cron_expr: '0 8 * * *', prompt: '', enabled: true, tools: [] };
+const EMPTY_FORM = { agent_id: '', pipeline_id: '', team_id: '', label: '', cron_expr: '0 8 * * *', prompt: '', enabled: true, tools: [] };
+
+// Target types and their display labels. A schedule targets exactly one of:
+// a single agent, a whole pipeline, or a colony team (recurring team mission).
+const TARGETS = [
+  { key: 'agent', label: 'Agent' },
+  { key: 'pipeline', label: 'Pipeline' },
+  { key: 'team', label: 'Colony team' },
+];
 
 // ── Schedule editor modal ─────────────────────────────────────────────────────
-function ScheduleEditor({ schedule, agents, pipelines, onSave, onClose }) {
+function ScheduleEditor({ schedule, agents, pipelines, teams, onSave, onClose }) {
   const [form, setForm] = useState(() =>
     schedule
-      ? { agent_id: schedule.agent_id || '', pipeline_id: schedule.pipeline_id || '', label: schedule.label, cron_expr: schedule.cron_expr, prompt: schedule.prompt, enabled: !!schedule.enabled, tools: schedule.tools || [] }
+      ? { agent_id: schedule.agent_id || '', pipeline_id: schedule.pipeline_id || '', team_id: schedule.team_id || '', label: schedule.label, cron_expr: schedule.cron_expr, prompt: schedule.prompt, enabled: !!schedule.enabled, tools: schedule.tools || [] }
       : { ...EMPTY_FORM },
   );
-  const [target, setTarget] = useState(schedule?.pipeline_id ? 'pipeline' : 'agent');
+  const [target, setTarget] = useState(schedule?.pipeline_id ? 'pipeline' : schedule?.team_id ? 'team' : 'agent');
   const [presetKey, setPresetKey] = useState(() => {
     const found = PRESETS.find(p => p.value !== 'custom' && p.value === (schedule?.cron_expr ?? EMPTY_FORM.cron_expr));
     return found ? found.value : 'custom';
@@ -86,16 +94,21 @@ function ScheduleEditor({ schedule, agents, pipelines, onSave, onClose }) {
     e.preventDefault();
     if (target === 'agent' && !form.agent_id) { setError('Select an agent'); return; }
     if (target === 'pipeline' && !form.pipeline_id) { setError('Select a pipeline'); return; }
+    if (target === 'team' && !form.team_id) { setError('Select a colony team'); return; }
     if (!form.label.trim()) { setError('Label is required'); return; }
     if (!form.cron_expr.trim()) { setError('Cron expression is required'); return; }
     if (!form.prompt.trim()) { setError('Prompt is required'); return; }
     setSaving(true);
     setError('');
     try {
-      // Tool overrides only apply to agent runs; pipelines bring their own steps.
+      // Exactly one target; blank the other two. Tool overrides apply only to
+      // agent runs (pipelines/teams bring their own tool config).
+      const base = { ...form, agent_id: '', pipeline_id: '', team_id: '' };
       const payload = target === 'pipeline'
-        ? { ...form, agent_id: '', tools: [] }
-        : { ...form, pipeline_id: '' };
+        ? { ...base, pipeline_id: form.pipeline_id, tools: [] }
+        : target === 'team'
+          ? { ...base, team_id: form.team_id, tools: [] }
+          : { ...base, agent_id: form.agent_id };
       if (schedule) {
         await api.updateSchedule(schedule.id, payload);
       } else {
@@ -127,18 +140,18 @@ function ScheduleEditor({ schedule, agents, pipelines, onSave, onClose }) {
           <div>
             <label className="text-xs text-gray-400 font-medium block mb-1">Run</label>
             <div className="flex gap-1 mb-2 bg-[#0f1117] border border-gray-800 rounded-lg p-0.5 w-fit">
-              {['agent', 'pipeline'].map(t => (
+              {TARGETS.map(t => (
                 <button
-                  key={t}
+                  key={t.key}
                   type="button"
-                  onClick={() => setTarget(t)}
-                  className={`px-3 py-1 rounded-md text-xs font-medium transition-colors capitalize ${target === t ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-100'}`}
+                  onClick={() => setTarget(t.key)}
+                  className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${target === t.key ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-100'}`}
                 >
-                  {t}
+                  {t.label}
                 </button>
               ))}
             </div>
-            {target === 'agent' ? (
+            {target === 'agent' && (
               <select
                 className="w-full bg-[#0f1117] border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
                 value={form.agent_id}
@@ -149,7 +162,8 @@ function ScheduleEditor({ schedule, agents, pipelines, onSave, onClose }) {
                   <option key={a.id} value={a.id}>{a.name}</option>
                 ))}
               </select>
-            ) : (
+            )}
+            {target === 'pipeline' && (
               <>
                 <select
                   className="w-full bg-[#0f1117] border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
@@ -162,6 +176,21 @@ function ScheduleEditor({ schedule, agents, pipelines, onSave, onClose }) {
                   ))}
                 </select>
                 <p className="text-xs text-gray-600 mt-1">The prompt below is the pipeline's input; its final output is stored as the run result.</p>
+              </>
+            )}
+            {target === 'team' && (
+              <>
+                <select
+                  className="w-full bg-[#0f1117] border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-100 focus:outline-none focus:border-blue-500"
+                  value={form.team_id}
+                  onChange={e => set('team_id', e.target.value)}
+                >
+                  <option value="">Select a colony team…</option>
+                  {teams.map(t => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-600 mt-1">The prompt below is the mission direction. Each fire starts a new mission (or queues it if the team is busy) and posts to the team's Discord thread.</p>
               </>
             )}
           </div>
@@ -215,7 +244,11 @@ function ScheduleEditor({ schedule, agents, pipelines, onSave, onClose }) {
                   overrideHint="Overrides the agent's configured tools for this schedule."
                 />
               ) : (
-                <p className="text-xs text-gray-600">Tool overrides don't apply to pipeline schedules — each step's own tool settings are used.</p>
+                <p className="text-xs text-gray-600">
+                  {target === 'team'
+                    ? 'Tool overrides don\'t apply to team schedules — the colony\'s crew uses its recipe\'s tools.'
+                    : 'Tool overrides don\'t apply to pipeline schedules — each step\'s own tool settings are used.'}
+                </p>
               )}
             </div>
           </AdvancedDisclosure>
@@ -252,17 +285,17 @@ function ScheduleEditor({ schedule, agents, pipelines, onSave, onClose }) {
 }
 
 // ── Schedule card ─────────────────────────────────────────────────────────────
-function ScheduleCard({ schedule, agents, pipelines, onEdit, onDelete, onToggle, onRefresh }) {
+function ScheduleCard({ schedule, agents, pipelines, teams, onEdit, onDelete, onToggle, onRefresh }) {
   const [expanded, setExpanded] = useState(false);
   const [running, setRunning] = useState(false);
   const [clearingHistory, setClearingHistory] = useState(false);
 
-  const isPipeline = !!schedule.pipeline_id;
-  const agent = agents.find(a => a.id === schedule.agent_id);
-  const pipeline = pipelines.find(p => p.id === schedule.pipeline_id);
-  const targetName = isPipeline
-    ? (pipeline?.name ?? schedule.pipeline_id)
-    : (agent?.name ?? schedule.agent_id);
+  const targetType = schedule.pipeline_id ? 'pipeline' : schedule.team_id ? 'team' : 'agent';
+  const targetName = targetType === 'pipeline'
+    ? (pipelines.find(p => p.id === schedule.pipeline_id)?.name ?? schedule.pipeline_id)
+    : targetType === 'team'
+      ? (teams.find(t => t.id === schedule.team_id)?.name ?? schedule.team_id)
+      : (agents.find(a => a.id === schedule.agent_id)?.name ?? schedule.agent_id);
 
   const handleRunNow = async () => {
     setRunning(true);
@@ -309,9 +342,11 @@ function ScheduleCard({ schedule, agents, pipelines, onEdit, onDelete, onToggle,
             <div className="min-w-0">
               <p className="font-medium text-gray-100 text-sm truncate">{schedule.label}</p>
               <p className="text-xs text-gray-500 mt-0.5 flex items-center gap-1.5">
-                {isPipeline && <GitBranch size={10} className="text-purple-400" />}
+                {targetType === 'pipeline' && <GitBranch size={10} className="text-purple-400" />}
+                {targetType === 'team' && <Users size={10} className="text-emerald-400" />}
                 {targetName}
-                {isPipeline && <span className="text-[10px] uppercase tracking-wide bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded px-1 py-px">pipeline</span>}
+                {targetType === 'pipeline' && <span className="text-[10px] uppercase tracking-wide bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded px-1 py-px">pipeline</span>}
+                {targetType === 'team' && <span className="text-[10px] uppercase tracking-wide bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded px-1 py-px">colony</span>}
                 {' '}· <code className="font-mono">{schedule.cron_expr}</code>
               </p>
             </div>
@@ -425,21 +460,24 @@ export default function SchedulesPage() {
   const [schedules, setSchedules] = useState([]);
   const [agents, setAgents] = useState([]);
   const [pipelines, setPipelines] = useState([]);
+  const [teams, setTeams] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editTarget, setEditTarget] = useState(null);    // schedule | true (new)
   const [deleteId, setDeleteId] = useState(null);
 
   const load = useCallback(async () => {
     try {
-      // Fetch independently so an agent list error doesn't wipe out schedules and vice versa
-      const [schedulesResult, agentsResult, pipelinesResult] = await Promise.allSettled([
+      // Fetch independently so one list's error doesn't wipe out the others
+      const [schedulesResult, agentsResult, pipelinesResult, teamsResult] = await Promise.allSettled([
         api.getSchedules(),
         api.getAgents(),
         api.getPipelines(),
+        api.getColonyTeams(),
       ]);
       if (schedulesResult.status === 'fulfilled') setSchedules(schedulesResult.value);
       if (agentsResult.status === 'fulfilled') setAgents(agentsResult.value);
       if (pipelinesResult.status === 'fulfilled') setPipelines(pipelinesResult.value);
+      if (teamsResult.status === 'fulfilled') setTeams(teamsResult.value);
     } finally {
       setLoading(false);
     }
@@ -513,6 +551,7 @@ export default function SchedulesPage() {
               schedule={s}
               agents={agents}
               pipelines={pipelines}
+              teams={teams}
               onEdit={setEditTarget}
               onDelete={setDeleteId}
               onToggle={handleToggle}
@@ -528,6 +567,7 @@ export default function SchedulesPage() {
           schedule={editTarget === true ? null : editTarget}
           agents={agents}
           pipelines={pipelines}
+          teams={teams}
           onSave={() => { setEditTarget(null); load(); }}
           onClose={() => setEditTarget(null)}
         />

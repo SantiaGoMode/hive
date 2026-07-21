@@ -1,6 +1,6 @@
 # Waggle: The Discord Bridge
 
-**Status:** Draft v1 · **Author:** Cristino Santiago · **Date:** 2026-07-07
+**Status:** Implemented v1 with follow-up backlog · **Author:** Cristino Santiago · **Date:** 2026-07-07 · **Updated:** 2026-07-16
 **Tagline:** Bees tell the hive where the work is by dancing. You tell Hive by typing in Discord.
 
 ---

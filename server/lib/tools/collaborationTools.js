@@ -4,6 +4,7 @@ const db = require('../../db');
 const protocol = require('../colonyProtocol');
 const { logSwallowed } = require('../logSwallowed');
 const { readShared, writeShared } = require('./shared');
+const workflow = require('../colony/workflow');
 // Lazy to avoid a load-time cycle with agentRunner (which requires the registry).
 const runAgentOnce = (...a) => require('../agentRunner').runAgentOnce(...a);
 // Lazy for the same reason (colonyRecipes → colonyProtocol → tools registry paths).
@@ -104,9 +105,10 @@ module.exports = {
       // Analysis roles (BA/PM/designer) deliver text and small files — 20 tool
       // rounds is pure fizzle budget for them; coding roles keep the full one.
       const budgetRole = colonyContext?.roleByAgentId?.get?.(resolvedId);
+      const configuredRounds = Math.max(1, Number(colonyContext?.contextBudget?.worker_tool_rounds) || 12);
       const roleMaxRounds = budgetRole && !isCodingRoleKey(colonyContext?.recipeId, budgetRole)
-        ? Math.min(maxRounds || 20, 8)
-        : maxRounds;
+        ? Math.min(maxRounds || 20, configuredRounds, 8)
+        : Math.min(maxRounds || 20, configuredRounds);
 
       const callsBefore = colonyContext?.toolCallsByAgent?.get?.(resolvedId) || 0;
       const response = await runAgentOnce(target, userMessages, ollamaUrl, depth, ws, hivePath, null, roleMaxRounds, signal, colonyContext);
@@ -115,6 +117,21 @@ module.exports = {
       // Append assistant reply to the thread so the next call has full context.
       if (histories) {
         histories.get(resolvedId).push({ role: 'assistant', content: response });
+        const budget = colonyContext?.contextBudget || {};
+        const maxMessages = Math.max(4, Number(budget.worker_history_messages) || 24);
+        const maxChars = Math.max(2000, Number(budget.worker_history_chars) || 24000);
+        const thread = histories.get(resolvedId);
+        while (thread.length > maxMessages) thread.splice(0, 2);
+        let chars = thread.reduce((n, m) => n + String(m.content || '').length, 0);
+        while (chars > maxChars && thread.length > 2) {
+          thread.splice(0, 2);
+          chars = thread.reduce((n, m) => n + String(m.content || '').length, 0);
+        }
+        if (chars > maxChars) {
+          // Preserve the current exchange but bound a single oversized response.
+          const perMessage = Math.floor(maxChars / Math.max(thread.length, 1));
+          for (const item of thread) item.content = String(item.content || '').slice(-perMessage);
+        }
         if (colonyContext?.colonyId) {
           try { protocol.persistAgentHistory(colonyContext.colonyId, resolvedId, histories.get(resolvedId)); } catch (e) { logSwallowed('agentTools:persistHistory', e, { agentId: resolvedId }); }
         }
@@ -230,6 +247,7 @@ module.exports = {
                   plan.updated_at = Date.now();
                   db.prepare('UPDATE colonies SET plan=?, updated_at=unixepoch() WHERE id=?')
                     .run(JSON.stringify(plan), colonyContext.colonyId);
+                  workflow.transition(colonyContext.colonyId, step.id, 'done', step.note);
                   if (colonyContext.delegatedSteps) colonyContext.delegatedSteps.add(String(step.id));
                   updatedPlan = plan;
                 }

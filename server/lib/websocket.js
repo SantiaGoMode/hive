@@ -271,7 +271,12 @@ async function runChatLoop(ws, agentId, clientMessages, model, sessionId, deps =
 }
 
 function createWebSocketServer(server, authOptions = {}) {
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({
+    noServer: true,
+    handleProtocols(protocols) {
+      return Array.from(protocols).find(protocol => protocol.startsWith('hive-auth.')) || false;
+    },
+  });
 
   server.on('upgrade', (req, socket, head) => {
     if (req.url.startsWith('/ws/chat')) {

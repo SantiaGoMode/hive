@@ -1,6 +1,7 @@
 // Colony protocol reporting tools (assistance/progress/violation/workaround/acceptance). (#27)
 const protocol = require('../colonyProtocol');
 const { agentLabel, resolveRoleKey } = require('./shared');
+const workflow = require('../colony/workflow');
 
 // These envelopes embed a fresh id per call, which defeats the agent loop's
 // identical-result breaker — a blocked worker can alternate request_assistance /
@@ -200,6 +201,10 @@ module.exports = {
         `Acceptance criteria verdicts:\n${normalized.map(r => `- [${r.status.toUpperCase()}] ${r.criterion}`).join('\n')}`,
         { acceptance_results: normalized },
       );
+      workflow.addEvidence(colonyContext.colonyId, {
+        kind: 'acceptance', sourceAgentId: callerAgentId,
+        payload: { results: normalized }, verified: normalized.every(r => r.status === 'pass'),
+      });
       return { success: true, recorded: normalized.length, results: normalized };
     },
   },

@@ -52,6 +52,42 @@ const HIVE_COMMAND = {
     { type: 1, name: 'new-session', description: 'Start a fresh conversation in this channel/thread' },
     { type: 1, name: 'skills', description: 'List the Hive skill catalog' },
     { type: 1, name: 'settings', description: 'Show non-secret Hive settings and bridge bindings' },
+    {
+      type: 2, // subcommand group
+      name: 'schedule',
+      description: 'Recurring missions a colony runs on a cron schedule',
+      options: [
+        {
+          type: 1,
+          name: 'add',
+          description: 'Schedule a recurring mission for a colony',
+          options: [
+            { type: 3, name: 'team', description: 'Colony name (or id)', required: true },
+            { type: 3, name: 'cron', description: 'Cron expression, e.g. "0 9 * * 1" = Mondays 9am', required: true },
+            { type: 3, name: 'prompt', description: 'Instructions the Operator runs each time', required: true },
+            { type: 3, name: 'label', description: 'Short name for this schedule (default: derived from the prompt)', required: false },
+          ],
+        },
+        {
+          type: 1,
+          name: 'list',
+          description: 'List colony schedules (optionally filtered to one colony)',
+          options: [{ type: 3, name: 'team', description: 'Colony name (or id) to filter by', required: false }],
+        },
+        {
+          type: 1,
+          name: 'remove',
+          description: 'Delete a colony schedule by id',
+          options: [{ type: 3, name: 'id', description: 'Schedule id (from /hive schedule list)', required: true }],
+        },
+        {
+          type: 1,
+          name: 'pause',
+          description: 'Pause or resume a colony schedule',
+          options: [{ type: 3, name: 'id', description: 'Schedule id (from /hive schedule list)', required: true }],
+        },
+      ],
+    },
   ],
 };
 
@@ -78,6 +114,7 @@ async function registerCommands(client) {
 // ── Handlers ──────────────────────────────────────────────────────────────────
 async function handleInteraction(interaction, ctx) {
   if (!interaction.isChatInputCommand?.() || interaction.commandName !== 'hive') return;
+  const group = interaction.options.getSubcommandGroup(false);
   const sub = interaction.options.getSubcommand();
 
   // First-run ownership claim happens inside setup; everything else is
@@ -88,7 +125,8 @@ async function handleInteraction(interaction, ctx) {
   }
 
   try {
-    if (sub === 'setup') await handleSetup(interaction, ctx);
+    if (group === 'schedule') await handleSchedule(interaction, sub);
+    else if (sub === 'setup') await handleSetup(interaction, ctx);
     else if (sub === 'status') await handleStatus(interaction);
     else if (sub === 'colonies') await handleColonies(interaction);
     else if (sub === 'stop') await handleStop(interaction);
@@ -311,6 +349,75 @@ async function handleSettings(interaction) {
     '-# Secrets/API keys are managed on the Settings page, not here.',
   ];
   await interaction.reply({ content: truncate(lines.join('\n'), 1990) });
+}
+
+// ── /hive schedule (colony cron missions) ─────────────────────────────────────
+// Thin Discord wrapper over the shared colonySchedules helper so the command,
+// the Operator tools, and the web UI all create/manage the same records.
+const colonySchedules = require('../colonySchedules');
+
+async function handleSchedule(interaction, action) {
+  if (action === 'add') {
+    const query = interaction.options.getString('team');
+    const cronExpr = interaction.options.getString('cron').trim();
+    const prompt = interaction.options.getString('prompt').trim();
+    const label = (interaction.options.getString('label') || '').trim();
+    const team = resolveTeam(query);
+    if (!team) { await interaction.reply({ content: `No colony matches "${query}".`, ephemeral: true }); return; }
+    let row;
+    try { row = colonySchedules.createColonySchedule(team.id, { cronExpr, prompt, label }); }
+    catch (e) { await interaction.reply({ content: `⚠️ ${e.message}`, ephemeral: true }); return; }
+    await interaction.reply({
+      content: [
+        `⏰ Scheduled **${row.label}** for **${team.name}**`,
+        `Cron: \`${row.cron_expr}\` · id: \`${row.id}\``,
+        `> ${truncate(prompt, 300)}`,
+        '-# Each fire launches a mission (or queues it if the team is busy). Manage with `/hive schedule list|pause|remove`.',
+      ].join('\n'),
+    });
+    return;
+  }
+
+  if (action === 'list') {
+    const query = interaction.options.getString('team');
+    let team = null;
+    if (query) {
+      team = resolveTeam(query);
+      if (!team) { await interaction.reply({ content: `No colony matches "${query}".`, ephemeral: true }); return; }
+    }
+    const rows = colonySchedules.listColonySchedules(team?.id || null);
+    if (!rows.length) {
+      await interaction.reply({ content: query ? 'That colony has no schedules yet. Add one with `/hive schedule add`.' : 'No colony schedules yet. Add one with `/hive schedule add`.' });
+      return;
+    }
+    const teamName = (tid) => colonyTeams.getTeam(tid)?.name || tid;
+    const lines = ['**Colony schedules**'];
+    for (const r of rows.slice(0, 20)) {
+      const state = r.enabled ? '🟢' : '⏸️';
+      const last = r.last_error ? ` · ⚠️ ${truncate(r.last_error, 40)}` : (r.last_run ? ` · last ${formatDuration((Math.floor(Date.now() / 1000) - r.last_run) * 1000)} ago` : '');
+      lines.push(`${state} **${truncate(r.label, 40)}** — ${teamName(r.team_id)} · \`${r.cron_expr}\` · \`${r.id}\`${last}`);
+    }
+    if (rows.length > 20) lines.push(`…and ${rows.length - 20} more`);
+    await interaction.reply({ content: truncate(lines.join('\n'), 1990) });
+    return;
+  }
+
+  if (action === 'remove') {
+    const id = interaction.options.getString('id').trim();
+    const row = colonySchedules.removeColonySchedule(id);
+    if (!row) { await interaction.reply({ content: `No colony schedule with id \`${truncate(id, 40)}\`. Run \`/hive schedule list\` to see ids.`, ephemeral: true }); return; }
+    await interaction.reply({ content: `🗑️ Removed schedule **${truncate(row.label, 48)}** (\`${row.id}\`).` });
+    return;
+  }
+
+  if (action === 'pause') {
+    const id = interaction.options.getString('id').trim();
+    const current = colonySchedules.getColonySchedule(id);
+    if (!current) { await interaction.reply({ content: `No colony schedule with id \`${truncate(id, 40)}\`. Run \`/hive schedule list\` to see ids.`, ephemeral: true }); return; }
+    const row = colonySchedules.setColonyScheduleEnabled(id, !current.enabled);
+    await interaction.reply({ content: row.enabled ? `▶️ Resumed **${truncate(row.label, 48)}**.` : `⏸️ Paused **${truncate(row.label, 48)}** — it won't fire until resumed.` });
+    return;
+  }
 }
 
 module.exports = { HIVE_COMMAND, registerCommands, handleInteraction };

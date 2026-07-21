@@ -1,5 +1,5 @@
 import { useRef, useCallback, useEffect } from 'react';
-import { buildWebSocketUrl } from '../lib/api';
+import { buildWebSocketProtocols, buildWebSocketUrl } from '../lib/api';
 
 export function useWebSocket(agentId) {
   const wsRef = useRef(null);
@@ -11,7 +11,10 @@ export function useWebSocket(agentId) {
     if (current && (current.readyState === WebSocket.OPEN || current.readyState === WebSocket.CONNECTING)) {
       return current;
     }
-    const ws = new WebSocket(buildWebSocketUrl(agentId));
+    const protocols = buildWebSocketProtocols();
+    const ws = protocols.length
+      ? new WebSocket(buildWebSocketUrl(agentId), protocols)
+      : new WebSocket(buildWebSocketUrl(agentId));
     wsRef.current = ws;
     return ws;
   }, [agentId]);

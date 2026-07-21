@@ -9,6 +9,15 @@ const { getColonyRecipe, DEFAULT_RECIPE_ID } = require('../colonyRecipes');
 const { logSwallowed } = require('../logSwallowed');
 const { getColony } = require('./persistence');
 
+function unsafeStoppedRepoFact(line, status) {
+  if (!['stopped', 'error'].includes(status)) return false;
+  const text = String(line || '').toLowerCase();
+  const fileFact = /\b(missing|does not contain|do not exist|not present|repository initialization failed|package\.json|readme|prisma|tailwind|styles)\b/.test(text);
+  if (!fileFact) return false;
+  const framedAsUnverified = /\b(access|permission|tool|target|branch|pr |pull request|wrong|verify|unverified|could not verify|failed to read)\b/.test(text);
+  return !framedAsUnverified;
+}
+
 async function updateColonyMemoryAfterRun(colonyId, row, goalSummary, status, addEntry, verifiedOutcome = null) {
   // Staff memory: every recipe-role profile that crewed this run gets a short
   // dated note (what ran, how it ended) — so the Staff tab's Memory sections
@@ -45,6 +54,7 @@ async function updateColonyMemoryAfterRun(colonyId, row, goalSummary, status, ad
     // Memory-poisoning guard: a fabricated summary once put "Draft PR #4
     // verified by QA/DevOps" into memory and the next run repeated it as fact.
     'The VERIFIED OUTCOME line is ground truth measured from git. Any claim about PRs, branches, commits, deployments, installed dependencies, or QA sign-off that contradicts or is not backed by it is a model fabrication — never record such a claim as fact (recording "the summary fabricated X" as a failure mode is fine).',
+    'For stopped/error runs, do not record "file X is missing" as a repo fact unless the correct PR branch/ref was verified. Prefer "targeting/access failed; verify the intended PR branch."',
     'Respond with 2–5 plain bullet lines, each starting with "- ", each under 200 characters. Nothing else.',
   ].join(' ');
   const user = [
@@ -69,11 +79,15 @@ async function updateColonyMemoryAfterRun(colonyId, row, goalSummary, status, ad
     } finally {
       clearTimeout(timer);
     }
-    const bullets = String(raw || '').split('\n')
+    let bullets = String(raw || '').split('\n')
       .map(l => l.trim().replace(/^[-*]\s+/, ''))
       .filter(l => l && !/^#/.test(l))
+      .filter(l => !unsafeStoppedRepoFact(l, status))
       .slice(0, 5)
       .map(l => l.slice(0, 300));
+    if (!bullets.length && ['stopped', 'error'].includes(status) && blockers.length) {
+      bullets = ['Stopped/error run had file-access or targeting blockers; verify the intended PR branch before treating missing-file errors as repo facts.'];
+    }
     if (!bullets.length) return;
     const title = `Run ${colonyId} — ${new Date().toISOString().slice(0, 10)} (${status})`;
     colonyTeams.appendTeamMemory(team.id, title, bullets);
@@ -83,4 +97,4 @@ async function updateColonyMemoryAfterRun(colonyId, row, goalSummary, status, ad
   }
 }
 
-module.exports = { updateColonyMemoryAfterRun };
+module.exports = { updateColonyMemoryAfterRun, unsafeStoppedRepoFact };

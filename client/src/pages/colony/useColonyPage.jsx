@@ -574,7 +574,15 @@ export function useColonyPage() {
       return;
     }
     setColonies(prev => prev.filter(c => c.id !== id));
-    setOverview(prev => prev ? { ...prev, runs: (prev.runs || []).filter(r => r.id !== id) } : prev);
+    // Drop everything the deleted run contributed to the overview — not just the
+    // Runs list, but its artifacts and insights too, which are keyed by run_id.
+    // Otherwise the Artifacts panel keeps showing a run that no longer exists.
+    setOverview(prev => prev ? {
+      ...prev,
+      runs: (prev.runs || []).filter(r => r.id !== id),
+      artifacts: (prev.artifacts || []).filter(a => a.run_id !== id),
+      insights: (prev.insights || []).filter(i => i.run_id !== id),
+    } : prev);
     if (activeColonyId === id) setActiveColonyId(null);
     if (selectedId === id) navigate(`/colony/${teamId}`);
   };

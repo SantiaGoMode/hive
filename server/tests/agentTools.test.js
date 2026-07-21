@@ -179,9 +179,20 @@ describe('project_context protocol tool', () => {
     let colonyId = null;
     try {
       const boardCard = {
+        type: 'issue',
         number: 3,
         title: 'Define Technical Stack & Environment Setup',
         html_url: 'https://github.com/SantiaGoMode/Hive-TaskMaster/issues/3',
+        review_target: {
+          type: 'pull_request',
+          number: 19,
+          base_ref: 'main',
+          head_ref: 'colony-mr55',
+          changed_files: [
+            { path: 'package.json', status: 'added', additions: 29, deletions: 0 },
+            { path: 'README.md', status: 'removed', additions: 0, deletions: 10 },
+          ],
+        },
       };
       colonyId = createColony(
         'Implement issue #3',
@@ -211,6 +222,9 @@ describe('project_context protocol tool', () => {
       assert.equal(result.repo_path, repoPath);
       assert.equal(result.board_card.number, 3);
       assert.match(result.board_card.html_url, /Hive-TaskMaster\/issues\/3/);
+      assert.equal(result.review_target.number, 19);
+      assert.deepEqual(result.changed_files.map(f => `${f.status}:${f.path}`), ['added:package.json', 'removed:README.md']);
+      assert.match(result.guidance, /Do NOT read removed\/deleted files/);
       assert.equal(result.source_files.length, 1);
       assert.equal(result.source_files[0].path, 'PRD.md');
       assert.match(result.source_files[0].content, /Product Requirements/);

@@ -4,7 +4,8 @@ const db = require('../../db');
 const { readAgent } = require('../agentParser');
 const { logSwallowed } = require('../logSwallowed');
 const colonyModels = require('../colonyModels');
-const { DEFAULT_RECIPE_ID } = require('../colonyRecipes');
+const { DEFAULT_RECIPE_ID, getColonyRecipe } = require('../colonyRecipes');
+const { runCapabilitySnapshot, defaultContextBudget } = require('../colonyPolicy');
 
 function newId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -54,25 +55,39 @@ function drainPendingDirections(colonyId) {
 
 function createColony(goal, model, recipeId = DEFAULT_RECIPE_ID, opts = {}) {
   const id = newId();
-  db.prepare('INSERT INTO colonies (id, goal, model, recipe_id, repo_path, board_card, cloud_enabled, github_writeback, model_plan, reasoning_mode, trigger_config, trigger, team_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+  const recipe = getColonyRecipe(recipeId);
+  if (recipe.id !== recipeId) throw new Error(`unknown recipe_id: ${recipeId}`);
+  const capabilities = runCapabilitySnapshot(recipe, {
+    repoPath: opts.repoPath,
+    githubReview: opts.githubReview,
+    githubPublish: opts.githubPublish ?? opts.githubWriteback,
+  });
+  const githubPublish = capabilities.github_publish;
+  const githubReview = capabilities.github_review;
+  const contextBudget = { ...defaultContextBudget(recipe), ...(opts.contextBudget || {}) };
+  db.prepare('INSERT INTO colonies (id, goal, model, recipe_id, repo_path, board_card, cloud_enabled, github_writeback, github_review, github_publish, model_plan, reasoning_mode, trigger_config, trigger, team_id, capabilities, context_budget) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
     .run(
       id, goal, model, recipeId,
       opts.repoPath || null,
       opts.boardCard ? JSON.stringify(opts.boardCard) : null,
       opts.cloudEnabled ? 1 : 0,
-      opts.githubWriteback ? 1 : 0,
+      githubPublish ? 1 : 0,
+      githubReview ? 1 : 0,
+      githubPublish ? 1 : 0,
       opts.modelPlan ? JSON.stringify(opts.modelPlan) : null,
       colonyModels.normalizeReasoningMode(opts.reasoningMode),
       opts.triggerConfig ? JSON.stringify(opts.triggerConfig) : null,
       opts.trigger ? JSON.stringify(opts.trigger) : null,
       opts.teamId || null,
+      JSON.stringify(capabilities),
+      JSON.stringify(contextBudget),
     );
   return id;
 }
 
 function listColonies() {
   return db.prepare(
-    'SELECT id, team_id, goal, model, recipe_id, status, orchestrator_id, agent_ids, summary, created_at, trigger, board_card FROM colonies ORDER BY created_at DESC',
+    'SELECT id, team_id, goal, model, recipe_id, status, outcome, orchestrator_id, agent_ids, summary, created_at, trigger, board_card FROM colonies ORDER BY created_at DESC',
   ).all().map(r => {
     const trigger = parseField(r.trigger, 'trigger', null);
     const boardCard = parseField(r.board_card, 'board_card', null);
@@ -94,6 +109,10 @@ function getColony(id) {
   const triggerConfig = parseField(row.trigger_config, 'trigger_config', null);
   const trigger = parseField(row.trigger, 'trigger', null);
   const bootstrapTasks = parseField(row.bootstrap_tasks, 'bootstrap_tasks', null);
+  const capabilities = parseField(row.capabilities, 'capabilities', {});
+  const contextBudget = parseField(row.context_budget, 'context_budget', {});
+  let job = null;
+  try { job = db.prepare('SELECT status, attempt, lease_expires_at, last_error, started_at, finished_at FROM colony_run_jobs WHERE run_id=?').get(id) || null; } catch { /* pre-migration compatibility */ }
   return {
     ...row,
     agent_ids: JSON.parse(row.agent_ids || '[]'),
@@ -109,6 +128,12 @@ function getColony(id) {
     trigger,
     bootstrap_tasks: bootstrapTasks,
     bootstrap_accepted: !!row.bootstrap_accepted,
+    github_review: !!row.github_review,
+    github_publish: !!row.github_publish,
+    github_writeback: !!row.github_publish,
+    capabilities,
+    context_budget: contextBudget,
+    job,
   };
 }
 
@@ -125,6 +150,16 @@ function deleteColony(id) {
   try { db.prepare('DELETE FROM colony_trigger_events WHERE colony_id=? OR triggered_colony_id=?').run(id, id); } catch (e) { logSwallowed('colonyRunner:deleteRows', e, { table: 'colony_trigger_events', colonyId: id }); }
   try { db.prepare('DELETE FROM colony_directions WHERE colony_id=?').run(id); } catch (e) { logSwallowed('colonyRunner:deleteRows', e, { table: 'colony_directions', colonyId: id }); }
   try { db.prepare('DELETE FROM colony_agent_histories WHERE colony_id=?').run(id); } catch (e) { logSwallowed('colonyRunner:deleteRows', e, { table: 'colony_agent_histories', colonyId: id }); }
+  for (const [table, key] of [
+    ['colony_run_jobs', 'run_id'], ['colony_run_events', 'run_id'],
+    ['colony_workflow_nodes', 'run_id'], ['colony_evidence', 'run_id'], ['colony_outbox', 'run_id'],
+  ]) {
+    try { db.prepare(`DELETE FROM ${table} WHERE ${key}=?`).run(id); }
+    catch (e) { logSwallowed('colonyRunner:deleteRows', e, { table, colonyId: id }); }
+  }
+  // Drop the run's on-disk artifact bucket so generated files don't orphan under
+  // <HIVE_HOME>/artifacts/ once the run is gone.
+  try { require('../colonyArtifacts').deleteBucket(id); } catch (e) { logSwallowed('colonyRunner:deleteArtifacts', e, { colonyId: id }); }
   db.prepare('DELETE FROM colonies WHERE id=?').run(id);
 }
 

@@ -117,6 +117,11 @@ function makeColonyEventHandler(ctx) {
       }
       if (msg.name === 'mark_goal_achieved' && msg.result?.goal_achieved && msg.result?.summary) {
         state.goalSummary = msg.result.summary;
+        state.runOutcome = msg.result.outcome || null;
+      }
+      if (msg.name === 'conclude_run' && msg.result?.run_concluded && msg.result?.summary) {
+        state.goalSummary = msg.result.summary;
+        state.runOutcome = msg.result.outcome || 'failed';
       }
 
       // Communication Protocol signals — surface handoffs (and human-approval

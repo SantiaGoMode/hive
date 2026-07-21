@@ -91,6 +91,35 @@ function isLocalRequest(req, options = {}) {
   return isLoopbackAddress(getRemoteAddress(req)) && isAllowedOrigin(req.headers?.origin, options);
 }
 
+function createWebhookRateLimiter(options = {}) {
+  const limit = options.limit || config.webhookRateLimit();
+  const windowMs = options.windowMs || config.webhookRateWindowMs();
+  const maxBuckets = options.maxBuckets || 10_000;
+  const buckets = new Map();
+
+  return function webhookRateLimiter(req, res, next) {
+    const now = Date.now();
+    for (const [key, bucket] of buckets) {
+      if (now > bucket.resetAt) buckets.delete(key);
+    }
+    while (buckets.size > maxBuckets) buckets.delete(buckets.keys().next().value);
+
+    const endpoint = String(req.params?.id || 'unknown');
+    const identity = `${endpoint}:${getRemoteAddress(req) || 'unknown'}`;
+    const bucket = buckets.get(identity);
+    if (!bucket || now > bucket.resetAt) {
+      buckets.set(identity, { count: 1, resetAt: now + windowMs });
+      return next();
+    }
+    bucket.count += 1;
+    if (bucket.count > limit) {
+      res.set('Retry-After', String(Math.max(1, Math.ceil((bucket.resetAt - now) / 1000))));
+      return res.status(429).json({ error: 'Too many webhook deliveries; retry later' });
+    }
+    next();
+  };
+}
+
 function timingSafeEqualString(a, b) {
   const left = Buffer.from(String(a));
   const right = Buffer.from(String(b));
@@ -104,12 +133,12 @@ function extractAuthToken(req) {
   }
   const headerToken = req.headers?.['x-hive-auth-token'];
   if (typeof headerToken === 'string') return headerToken.trim();
-  try {
-    const url = new URL(req.url || req.originalUrl || '/', 'http://localhost');
-    return (url.searchParams.get('hive_token') || url.searchParams.get('token') || '').trim();
-  } catch {
-    return '';
+  const protocols = String(req.headers?.['sec-websocket-protocol'] || '').split(',').map(v => v.trim());
+  const encoded = protocols.find(value => value.startsWith('hive-auth.'))?.slice('hive-auth.'.length);
+  if (encoded) {
+    try { return Buffer.from(encoded, 'base64url').toString('utf8').trim(); } catch { return ''; }
   }
+  return '';
 }
 
 function hasValidAuth(req, options = {}) {
@@ -248,9 +277,11 @@ module.exports = {
   ensureAuthTokenConfigured,
   createCorsOptions,
   createMutatingRateLimiter,
+  createWebhookRateLimiter,
   createOriginGuard,
   hasValidAuth,
   isAllowedOrigin,
+  isLocalRequest,
   rejectSocket,
   requireHiveAuth,
   timingSafeEqualString,

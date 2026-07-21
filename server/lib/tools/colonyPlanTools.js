@@ -1,7 +1,10 @@
 // Colony plan tools (set_plan/add_plan_step/update_plan_step/mark_goal_achieved). (#27)
 const db = require('../../db');
 const protocol = require('../colonyProtocol');
-const { updateGitHubIssue, detectGitHubRepo } = require('../githubBoard');
+const { getColonyRecipe } = require('../colonyRecipes');
+const { EXECUTION_MODES, SUCCESS_OUTCOMES, recipeExecutionPolicy } = require('../colonyPolicy');
+const workflow = require('../colony/workflow');
+const outbox = require('../colonyOutbox');
 
 module.exports = {
   // ── Colony tools (only meaningful inside a Colony run) ──────────────────────
@@ -73,6 +76,7 @@ module.exports = {
       const plan = { steps: normalized, updated_at: Date.now() };
       db.prepare('UPDATE colonies SET plan=?, updated_at=unixepoch() WHERE id=?')
         .run(JSON.stringify(plan), colonyContext.colonyId);
+      workflow.syncPlan(colonyContext.colonyId, normalized);
       return { success: true, step_count: normalized.length, steps: normalized };
     },
   },
@@ -114,6 +118,7 @@ module.exports = {
       plan.updated_at = Date.now();
       db.prepare('UPDATE colonies SET plan=?, updated_at=unixepoch() WHERE id=?')
         .run(JSON.stringify(plan), colonyContext.colonyId);
+      workflow.syncPlan(colonyContext.colonyId, plan.steps);
       return { success: true, step: newStep, total_steps: plan.steps.length };
     },
   },
@@ -213,32 +218,24 @@ module.exports = {
       if (lenientProtocol && colonyContext.delegatedSteps && status === 'done') {
         colonyContext.delegatedSteps.add(String(id));
       }
+      const transition = workflow.transition(colonyContext.colonyId, String(id), status, note ? String(note).slice(0, 500) : null);
+      if (!transition.ok) return { error: transition.error, missing: transition.missing };
       step.status = status;
       if (note) step.note = String(note).slice(0, 500);
       plan.updated_at = Date.now();
       db.prepare('UPDATE colonies SET plan=?, updated_at=unixepoch() WHERE id=?')
         .run(JSON.stringify(plan), colonyContext.colonyId);
       
-      // GitHub write-back: close issue if done
+      // Never mutate GitHub from a mid-run model transition. Queue the intent;
+      // finalization performs it idempotently only after evidence is accepted.
       if (status === 'done' && step.github_issue_number) {
-        const colonyRow = db.prepare('SELECT github_writeback, repo_path FROM colonies WHERE id=?').get(colonyContext.colonyId);
-        if (colonyRow?.github_writeback && colonyRow?.repo_path) {
-          const detected = detectGitHubRepo(colonyRow.repo_path);
-          if (detected) {
-            updateGitHubIssue({
-              owner: detected.owner,
-              repo: detected.repo,
-              number: step.github_issue_number,
-              state: 'closed',
-              comment: `✅ Task completed by Hive Colony.\n\n${step.note ? `**Note:** ${step.note}` : ''}`
-            }).catch(err => {
-              console.error('Failed to close GitHub issue:', err);
-              protocol.writeBlackboard(colonyContext.colonyId, 'system', 'blocker',
-                `Failed to update GitHub issue #${step.github_issue_number}: ${err.message}. Please check your token.`,
-                { error: err.message }
-              );
-            });
-          }
+        const colonyRow = db.prepare('SELECT github_publish, repo_path FROM colonies WHERE id=?').get(colonyContext.colonyId);
+        if (colonyRow?.github_publish && colonyRow?.repo_path) {
+          outbox.enqueue(colonyContext.colonyId, 'close_issue', `${colonyContext.colonyId}:close_issue:${step.github_issue_number}`, {
+            repo_path: colonyRow.repo_path,
+            issue_number: step.github_issue_number,
+            comment: `✅ Task completed by Hive Colony.\n\n${step.note ? `**Note:** ${step.note}` : ''}`,
+          });
         }
       }
 
@@ -263,12 +260,17 @@ module.exports = {
               type: 'string',
               description: 'Concise 2–4 sentence summary: what was built, where the key files are, and how to run/use it.',
             },
+            outcome: {
+              type: 'string',
+              enum: ['succeeded_no_changes', 'succeeded_with_artifacts', 'changes_proposed'],
+              description: 'Optional structured successful outcome. Hive infers this from the recipe execution policy when omitted.',
+            },
           },
           required: ['summary'],
         },
       },
     },
-    async handler({ summary }, { colonyContext }) {
+    async handler({ summary, outcome }, { colonyContext }) {
       if (!colonyContext?.colonyId) return { error: 'mark_goal_achieved is only available inside a Colony run' };
       const trimmed = String(summary || '').trim();
       if (!trimmed) return { error: 'summary is required' };
@@ -278,19 +280,22 @@ module.exports = {
       // has no legal way to end a failed run and grinds mark_goal_achieved ↔
       // report_workaround until someone kills it (observed: 17 minutes).
       let missionFailed = false;
+      const workflowResult = workflow.evaluate(colonyContext.colonyId);
+      if (workflowResult.outcome === 'incomplete' || workflowResult.outcome === 'blocked') {
+        return { error: `Cannot mark goal achieved: ${workflowResult.reason}.`, workflow: workflowResult.nodes };
+      }
       const row = db.prepare('SELECT plan FROM colonies WHERE id=?').get(colonyContext.colonyId);
       if (row?.plan) {
         const plan = JSON.parse(row.plan);
         const unfinished = (plan.steps || []).filter(s => s.status !== 'done');
         if (unfinished.length > 0) {
           const allBlocked = unfinished.every(s => s.status === 'blocked');
-          if (!allBlocked) {
-            return {
-              error: `Cannot mark goal achieved: ${unfinished.length} plan step(s) are not yet done. Finish and mark them done — or, if the mission cannot proceed, mark every remaining step blocked (with a note) and call this again to conclude the run as FAILED.`,
-              unfinished: unfinished.map(s => ({ id: s.id, description: s.description, status: s.status })),
-            };
-          }
-          missionFailed = true;
+          return {
+            error: allBlocked
+              ? `Cannot mark goal achieved: the mission is blocked, not achieved. Call conclude_run with outcome "blocked" or "failed" so the run is recorded honestly.`
+              : `Cannot mark goal achieved: ${unfinished.length} plan step(s) are not yet done. Finish them, or mark every remaining step blocked and call conclude_run.`,
+            unfinished: unfinished.map(s => ({ id: s.id, description: s.description, status: s.status })),
+          };
         }
       }
 
@@ -312,7 +317,7 @@ module.exports = {
         // the goal can be declared. Without this, an operator that delegated to
         // one role could self-complete the plan and finish with a "partial flow"
         // deliverable and no real work product.
-        if (!completion.terminal_reached && Array.isArray(completion.missing_edges) && completion.missing_edges.length > 0) {
+        if (Array.isArray(completion.missing_edges) && completion.missing_edges.length > 0) {
           return {
             error: `Cannot mark goal achieved: the handoff flow is incomplete. Missing handoffs: ` +
               `${completion.missing_edges.map(e => `${e.from}→${e.to} (${e.payload})`).join('; ')}. ` +
@@ -346,9 +351,9 @@ module.exports = {
         }
       }
 
-      // Generated media (images/audio) written to the run's artifact dir by the
-      // media tools are first-class artifacts — fold them into the deliverable so
-      // the overview and Discord relay surface and upload them.
+      // Generated media (images/audio) registered on the run context by the
+      // media tools — fold them in (bucket reconciliation below is the truth for
+      // repo-less runs, but this covers repo-backed runs that generate media).
       const generated = Array.isArray(colonyContext.generatedArtifacts) ? colonyContext.generatedArtifacts : [];
       if (generated.length) {
         deliverable = deliverable || { summary: trimmed, flow_complete: false, handoffs: [], artifacts: [], links: [] };
@@ -370,22 +375,115 @@ module.exports = {
         deliverable.workarounds = workaroundRows;
       }
 
-      // Mirror a text report into the run's artifact dir so it downloads in the
-      // overview and uploads to Discord alongside any generated media — one
-      // source of truth for "what files did this run produce".
-      if (deliverable?.report && String(deliverable.report).trim()) {
-        try { require('../colonyArtifacts').saveArtifact(colonyContext.colonyId, 'report.md', String(deliverable.report)); }
-        catch { /* artifact mirror is best-effort */ }
+      // Recover the crew's narrative (the synthesizer's brief / final report)
+      // even on the strict handoff path, where buildDeliverable captures artifact
+      // NAMES from handoff payloads but no report body.
+      if (deliverable && !String(deliverable.report || '').trim()) {
+        const wReports = Array.isArray(colonyContext.workerReports) ? colonyContext.workerReports : [];
+        const preferred = wReports.find(r => ['review_synthesizer', 'synthesizer', 'recommendation_writer'].includes(r.role));
+        const richest = preferred?.response || wReports.map(r => String(r.response || '')).sort((a, b) => b.length - a.length)[0];
+        if (richest && richest.trim()) deliverable.report = richest.trim();
       }
 
-      const finalSummary = missionFailed ? `⚠ MISSION CONCLUDED AS FAILED (all remaining steps blocked): ${trimmed}` : trimmed;
-      db.prepare('UPDATE colonies SET summary=?, deliverable=?, updated_at=unixepoch() WHERE id=?')
-        .run(finalSummary, deliverable ? JSON.stringify(deliverable) : null, colonyContext.colonyId);
+      // Persist the deliverable's files. Repo-backed runs keep their code-file
+      // artifacts (served from the run branch) and just mirror the report.
+      // Repo-less runs (research/media/analysis) deliver from the artifact
+      // bucket, so the deliverable must reflect what was ACTUALLY saved: a brief
+      // the crew named but never persisted is materialized from the report, and
+      // artifacts/media are rebuilt from the bucket — so we never advertise a
+      // file that doesn't exist (the "artifact not found on the run's branch" 404).
+      const artifactsLib = require('../colonyArtifacts');
+      const repoBacked = !!db.prepare('SELECT repo_path FROM colonies WHERE id=?').get(colonyContext.colonyId)?.repo_path;
+      const policy = recipeExecutionPolicy(getColonyRecipe(recipeId));
+      const reportText = String(deliverable?.report || '').trim();
+      if (deliverable && !repoBacked) {
+        const present = new Set(artifactsLib.listArtifacts(colonyContext.colonyId).map(f => f.name));
+        if (reportText) {
+          // Write the brief under a doc filename the crew declared but didn't
+          // save; otherwise ensure at least a report.md exists.
+          const declaredDoc = (deliverable.artifacts || []).find(n => /\.(md|markdown|txt)$/i.test(n) && !present.has(n));
+          const name = declaredDoc || (present.has('report.md') ? null : 'report.md');
+          if (name) { try { artifactsLib.saveArtifact(colonyContext.colonyId, name, reportText); } catch { /* best-effort */ } }
+        }
+        const bucket = artifactsLib.listArtifacts(colonyContext.colonyId);
+        const kindOf = (m) => (m.startsWith('image/') ? 'image' : m.startsWith('audio/') ? 'audio' : m.startsWith('video/') ? 'video' : 'file');
+        deliverable.artifacts = bucket.map(f => f.name);
+        deliverable.media = bucket.map(f => ({ name: f.name, kind: kindOf(f.mime), mime: f.mime }));
+      } else if (reportText) {
+        try {
+          const saved = artifactsLib.saveArtifact(colonyContext.colonyId, 'report.md', reportText);
+          if (policy.mode !== EXECUTION_MODES.REPOSITORY_WRITE) {
+            deliverable.artifacts = [...new Set([...(deliverable.artifacts || []), saved.name])];
+          }
+        }
+        catch { /* best-effort */ }
+      }
+
+      const inferredOutcome = policy.mode === EXECUTION_MODES.READ_ONLY
+        ? 'succeeded_no_changes'
+        : policy.mode === EXECUTION_MODES.ARTIFACT_ONLY
+          ? 'succeeded_with_artifacts'
+          : 'changes_proposed';
+      const finalOutcome = SUCCESS_OUTCOMES.has(outcome) ? outcome : inferredOutcome;
+      const finalSummary = trimmed;
+      db.prepare('UPDATE colonies SET summary=?, deliverable=?, outcome=?, updated_at=unixepoch() WHERE id=?')
+        .run(finalSummary, deliverable ? JSON.stringify(deliverable) : null, finalOutcome, colonyContext.colonyId);
       return {
-        success: true, goal_achieved: true, summary: finalSummary,
-        ...(missionFailed ? { mission_failed: true, note: 'Run concluded as FAILED — remaining steps were blocked. The summary must describe what was attempted, what blocked it, and what the user should change.' } : {}),
+        success: true, goal_achieved: true, summary: finalSummary, outcome: finalOutcome,
         ...(deliverable ? { deliverable } : {}),
       };
+    },
+  },
+
+  conclude_run: {
+    group: 'colony_tools',
+    definition: {
+      type: 'function',
+      function: {
+        name: 'conclude_run',
+        description: 'End a Colony run honestly when it cannot complete. Use only after every unfinished plan step is marked blocked. This preserves a partial report but records the run as blocked/failed, never successful.',
+        parameters: {
+          type: 'object',
+          properties: {
+            outcome: { type: 'string', enum: ['blocked', 'failed'] },
+            summary: { type: 'string', description: 'What completed, what blocked the run, and the next action.' },
+          },
+          required: ['outcome', 'summary'],
+        },
+      },
+    },
+    async handler({ outcome, summary }, { colonyContext }) {
+      if (!colonyContext?.colonyId) return { error: 'conclude_run is only available inside a Colony run' };
+      if (!['blocked', 'failed'].includes(outcome)) return { error: 'outcome must be blocked or failed' };
+      const trimmed = String(summary || '').trim();
+      if (!trimmed) return { error: 'summary is required' };
+      const row = db.prepare('SELECT plan FROM colonies WHERE id=?').get(colonyContext.colonyId);
+      const plan = row?.plan ? JSON.parse(row.plan) : null;
+      const unfinished = (plan?.steps || []).filter(s => s.status !== 'done');
+      if (unfinished.some(s => s.status !== 'blocked')) {
+        return {
+          error: 'Before conclude_run, mark every unfinished plan step blocked with a concrete note.',
+          unfinished: unfinished.map(s => ({ id: s.id, status: s.status, description: s.description })),
+        };
+      }
+
+      const reports = Array.isArray(colonyContext.workerReports) ? colonyContext.workerReports : [];
+      const richest = reports.map(r => String(r.response || '').trim()).filter(Boolean).sort((a, b) => b.length - a.length)[0] || '';
+      const report = richest || trimmed;
+      const saved = require('../colonyArtifacts').saveArtifact(colonyContext.colonyId, 'partial-report.md', report);
+      const deliverable = {
+        summary: trimmed,
+        report,
+        partial: true,
+        flow_complete: false,
+        handoffs: protocol.listHandoffs(colonyContext.colonyId).map(h => ({ from: h.from_agent, to: h.to_agent, status: h.status })),
+        artifacts: [saved.name],
+        links: [],
+        contributions: reports.map(r => ({ agent: r.agent_name, role: r.role })),
+      };
+      db.prepare('UPDATE colonies SET summary=?, deliverable=?, outcome=?, updated_at=unixepoch() WHERE id=?')
+        .run(trimmed, JSON.stringify(deliverable), outcome, colonyContext.colonyId);
+      return { success: true, run_concluded: true, outcome, summary: trimmed, deliverable };
     },
   },
 

@@ -19,6 +19,7 @@ const GH_PUSH = {
   head_commit: { message: 'fix race condition', id: 'abc' },
   commits: [{ id: 'c0', message: 'first' }, { id: 'c1', message: 'second' }],
 };
+const WEBHOOK_SECRET = 'projection-test-secret';
 
 describe('webhookProjection lib', () => {
   it('resolves dot-paths including array indexing', () => {
@@ -89,6 +90,7 @@ describe('projected endpoint + get_webhook_event tool', () => {
       .post('/api/webhooks')
       .send({
         name: 'Projection Test',
+        secret: WEBHOOK_SECRET,
         context_spec: [
           { label: 'repo', path: 'repository.full_name' },
           { label: 'author', path: 'pusher.name' },
@@ -104,6 +106,7 @@ describe('projected endpoint + get_webhook_event tool', () => {
     await request(app)
       .post(`/api/webhooks/incoming/${webhookId}`)
       .set('x-github-event', 'push')
+      .set('authorization', `Bearer ${WEBHOOK_SECRET}`)
       .send(GH_PUSH)
       .expect(202);
 

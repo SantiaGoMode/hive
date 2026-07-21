@@ -2,13 +2,17 @@ const BASE = '/api';
 const AUTH_STORAGE_KEY = 'hive.authToken';
 
 export function getHiveAuthToken() {
-  // Desktop shell injects the token via preload — no paste-a-token prompt.
-  const desktopToken = typeof window !== 'undefined' ? window.hiveDesktop?.authToken : '';
-  if (desktopToken) return desktopToken;
-  const envToken = import.meta.env?.VITE_HIVE_AUTH_TOKEN || '';
-  if (envToken) return envToken;
   try {
-    return localStorage.getItem(AUTH_STORAGE_KEY) || '';
+    const active = sessionStorage.getItem(AUTH_STORAGE_KEY) || '';
+    if (active) return active;
+    // One-time migration: preserve the current login while removing the
+    // long-lived bearer token from persistent browser storage.
+    const legacy = localStorage.getItem(AUTH_STORAGE_KEY) || '';
+    if (legacy) {
+      sessionStorage.setItem(AUTH_STORAGE_KEY, legacy);
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+    }
+    return legacy;
   } catch {
     return '';
   }
@@ -16,8 +20,9 @@ export function getHiveAuthToken() {
 
 export function setHiveAuthToken(token) {
   try {
-    if (token) localStorage.setItem(AUTH_STORAGE_KEY, token);
-    else localStorage.removeItem(AUTH_STORAGE_KEY);
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+    if (token) sessionStorage.setItem(AUTH_STORAGE_KEY, token);
+    else sessionStorage.removeItem(AUTH_STORAGE_KEY);
   } catch { /* storage unavailable (private mode) — token stays session-only */ }
 }
 
@@ -29,9 +34,29 @@ function notifyUnauthorized() {
   try { window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT)); } catch { /* non-browser env */ }
 }
 
-function authHeaders(headers = {}) {
+export function authHeaders(headers = {}) {
   const token = getHiveAuthToken();
   return token ? { ...headers, 'x-hive-auth-token': token } : headers;
+}
+
+export async function fetchAuthenticated(url, options = {}) {
+  const response = await fetch(url, { ...options, headers: authHeaders(options.headers || {}) });
+  if (response.status === 401) notifyUnauthorized();
+  return response;
+}
+
+export async function downloadAuthenticated(url, filename = 'download') {
+  const response = await fetchAuthenticated(url);
+  if (!response.ok) throw new Error(`Download failed (${response.status})`);
+  const objectUrl = URL.createObjectURL(await response.blob());
+  try {
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    anchor.click();
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+  }
 }
 
 async function req(method, path, body) {
@@ -154,13 +179,10 @@ export const api = {
   getColonyProjectBoard: () => req('GET', '/colony/project-board'),
   getColony: (id) => req('GET', `/colony/${id}`),
   getColonyArtifact: (id, path) => req('GET', `/colony/${id}/artifact?path=${encodeURIComponent(path)}`),
-  // Direct URL to an artifact's raw bytes (for <img>/<audio> src and downloads).
-  // The auth token rides as a query param since element src can't send headers.
+  // Authenticated URL path for callers that fetch bytes and create a Blob URL.
   colonyArtifactRawUrl: (id, path, { download = false } = {}) => {
     const params = new URLSearchParams({ path, raw: '1' });
     if (download) params.set('download', '1');
-    const token = getHiveAuthToken();
-    if (token) params.set('hive_token', token);
     return `${BASE}/colony/${id}/artifact?${params.toString()}`;
   },
   stopColony: (id) => req('POST', `/colony/${id}/stop`),
@@ -184,6 +206,8 @@ export const api = {
         repo_path: opts.repoPath, board_card: opts.boardCard,
         cloud_enabled: opts.cloudEnabled, model_plan: opts.modelPlan,
         trigger_config: opts.triggerConfig,
+        github_review: opts.githubReview,
+        github_publish: opts.githubPublish,
         github_writeback: opts.githubWriteback,
       }),
       signal,
@@ -221,6 +245,9 @@ export const api = {
   // System / Ollama process monitor
   getSystemStatus: () => req('GET', '/system/status'),
   getSystemMetrics: () => req('GET', '/system/metrics'),
+  getDatabaseIntegrity: () => req('GET', '/system/database/integrity'),
+  getDatabaseBackups: () => req('GET', '/system/database/backups'),
+  createDatabaseBackup: () => req('POST', '/system/database/backups'),
   stopModel: (model) => req('POST', '/system/model/stop', { model }),
   startNgrok: () => req('POST', '/system/ngrok/start'),
   stopNgrok: () => req('POST', '/system/ngrok/stop'),
@@ -261,7 +288,15 @@ export const api = {
 // mixed content when the app is served over HTTPS (e.g. via ngrok).
 export const WS_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/chat`;
 export function buildWebSocketUrl(agentId) {
+  return `${WS_URL}/${agentId}`;
+}
+
+export function buildWebSocketProtocols() {
   const token = getHiveAuthToken();
-  const url = `${WS_URL}/${agentId}`;
-  return token ? `${url}?hive_token=${encodeURIComponent(token)}` : url;
+  if (!token) return [];
+  const bytes = new TextEncoder().encode(token);
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  const encoded = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  return [`hive-auth.${encoded}`];
 }

@@ -11,6 +11,7 @@ MISSION: ${goal}
 - add_plan_step: append a new step mid-run if extra work is discovered
 - update_plan_step: mark a step in_progress, done, or blocked
 - mark_goal_achieved: call once every step is done to end the run
+- conclude_run: end blocked/failed work honestly after marking unfinished steps blocked
 - report_workaround: record app/tool/model/access issues that forced a workaround so the final report can tell the user how Hive should improve
 - create_agent: spawn a worker with a specific role
 - ask_agent: delegate a task to a worker — always use the agent_id from create_agent

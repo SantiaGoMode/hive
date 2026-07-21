@@ -120,8 +120,8 @@ get cost visibility.
 1. Generate a master key and expose it as `LITELLM_MASTER_KEY` in the environment that
    launches the gateway. Keep the value in your password manager, OS secret store, or
    deployment secret store.
-2. Uncomment `master_key: os.environ/LITELLM_MASTER_KEY` in `litellm.config.yaml`.
-3. Relaunch the gateway with the key injected:
+2. `master_key: os.environ/LITELLM_MASTER_KEY` is enabled by default; Compose refuses to start without the key.
+3. Launch the gateway with the key injected:
    ```
    OPENAI_API_KEY="$OPENAI_API_KEY" ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
      GEMINI_API_KEY="$GEMINI_API_KEY" LITELLM_MASTER_KEY="$LITELLM_MASTER_KEY" \

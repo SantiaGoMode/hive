@@ -88,6 +88,20 @@ function mimeFor(name) {
   return MIME_BY_EXT[path.extname(name).toLowerCase()] || 'application/octet-stream';
 }
 
+// Remove a run's entire artifact bucket from disk. Best-effort and idempotent:
+// missing directories are fine. Used when a colony run is deleted so its
+// generated files don't orphan under <HIVE_HOME>/artifacts/.
+function deleteBucket(bucket) {
+  let dir;
+  try { dir = bucketDir(bucket); } catch { return false; }
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function listArtifacts(colonyId) {
   let dir;
   try { dir = bucketDir(colonyId); } catch { return []; }
@@ -111,5 +125,6 @@ module.exports = {
   saveArtifact,
   resolveArtifact,
   listArtifacts,
+  deleteBucket,
   mimeFor,
 };

@@ -151,4 +151,15 @@ describe('deleteColony', () => {
     assert.ok(kept, 'Undeleted colony should still exist');
     assert.equal(getColony(id2), null, 'Deleted colony should be gone');
   });
+
+  it('removes the run\'s on-disk artifact bucket', () => {
+    const { saveArtifact, bucketDir } = require('../lib/colonyArtifacts');
+    const fs = require('node:fs');
+    const id = createColony('Run with artifacts', 'llama3');
+    saveArtifact(id, 'report.md', '# hello');
+    const dir = bucketDir(id);
+    assert.ok(fs.existsSync(dir), 'artifact bucket should exist before delete');
+    deleteColony(id);
+    assert.equal(fs.existsSync(dir), false, 'artifact bucket should be gone after delete');
+  });
 });

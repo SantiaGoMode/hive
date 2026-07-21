@@ -33,6 +33,14 @@ if (!fs.existsSync(HIVE_DIR)) fs.mkdirSync(HIVE_DIR, { recursive: true, mode: 0o
 
 const db = new Database(DB_PATH);
 
+// Explicit SQLite operating policy: WAL permits readers during writes, NORMAL
+// is the documented durability/performance balance for WAL, and busy_timeout
+// avoids transient lock failures during background jobs/backups.
+db.pragma('journal_mode = WAL');
+db.pragma('synchronous = NORMAL');
+db.pragma('busy_timeout = 5000');
+db.pragma('foreign_keys = ON');
+
 // Raw API keys may live in app_settings, so restrict the data dir and DB to
 // the owning user (same convention as gh/aws CLI config). chmod also fixes
 // perms on installs created before this guard; it is a no-op on Windows.

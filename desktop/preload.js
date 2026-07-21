@@ -1,11 +1,7 @@
-// Exposes the Hive auth token to the renderer so the UI never shows the
-// paste-a-token prompt in the desktop app. The token arrives via an
-// additionalArguments flag set in main.js at window creation.
+// Keep the desktop bridge deliberately non-sensitive. Authentication headers
+// are injected by the main process only for the local Hive origin.
 const { contextBridge } = require('electron');
 
-const flag = '--hive-auth-token=';
-const arg = process.argv.find((a) => a.startsWith(flag)) || flag;
-
 contextBridge.exposeInMainWorld('hiveDesktop', {
-  authToken: arg.slice(flag.length),
+  isDesktop: true,
 });

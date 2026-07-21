@@ -7,6 +7,10 @@ const { runPipelineById } = require('./pipelineRunner');
 const { buildEnvelope } = require('./webhookProjection');
 const { getOllamaUrl } = require('./ollamaUrl');
 const { logSwallowed } = require('./logSwallowed');
+const { unattendedRunContext } = require('./colonyPolicy');
+const { scheduleAutomation } = require('./automationQueue');
+
+const queuedRunIds = new Set();
 
 function newId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -77,15 +81,40 @@ function runRecordForAction(webhook, event, action, input) {
     action.target_type,
     targetId,
     input,
-    'running',
+    'queued',
   );
   return runId;
 }
 
+function enqueueActionRun(runId, action, input) {
+  if (queuedRunIds.has(runId)) return;
+  queuedRunIds.add(runId);
+  scheduleAutomation(() => executeActionRun(runId, action, input))
+    .finally(() => queuedRunIds.delete(runId));
+}
+
+function recoverPendingActions() {
+  const rows = db.prepare("SELECT * FROM webhook_action_runs WHERE status IN ('queued','running') ORDER BY created_at ASC, id ASC").all();
+  db.prepare("UPDATE webhook_action_runs SET status='queued' WHERE status='running'").run();
+  for (const row of rows) {
+    const action = {
+      id: row.action_id,
+      label: row.action_label,
+      target_type: row.action_type,
+      pipeline_id: row.action_type === 'pipeline' ? row.target_id : '',
+      agent_id: row.action_type === 'agent' ? row.target_id : '',
+    };
+    enqueueActionRun(row.id, action, row.input);
+  }
+  return rows.length;
+}
+
 async function executeActionRun(runId, action, input) {
   try {
+    db.prepare("UPDATE webhook_action_runs SET status='running' WHERE id=?").run(runId);
+    const runContext = unattendedRunContext('webhook');
     if (action.target_type === 'pipeline') {
-      const result = await runPipelineById(action.pipeline_id, input);
+      const result = await runPipelineById(action.pipeline_id, input, { runContext });
       db.prepare(`
         UPDATE webhook_action_runs
         SET status='done', output=?, pipeline_run_id=?, completed_at=unixepoch()
@@ -99,7 +128,7 @@ async function executeActionRun(runId, action, input) {
     if (!agent.model) throw new Error('No model configured');
     const ollamaUrl = getOllamaUrl();
     const hivePath = process.env.HIVE_HOME || path.join(os.homedir(), '.hive');
-    const output = await runAgentOnce(agent, [{ role: 'user', content: input }], ollamaUrl, 0, null, hivePath);
+    const output = await runAgentOnce(agent, [{ role: 'user', content: input }], ollamaUrl, 0, null, hivePath, null, undefined, null, runContext);
     db.prepare(`
       UPDATE webhook_action_runs
       SET status='done', output=?, completed_at=unixepoch()
@@ -128,7 +157,7 @@ function triggerWebhookActions(webhook, event) {
     const input = renderTemplate(action.prompt, envelope);
     const runId = runRecordForAction(webhook, event, action, input);
     runIds.push(runId);
-    setImmediate(() => executeActionRun(runId, action, input));
+    enqueueActionRun(runId, action, input);
   }
 
   return runIds;
@@ -137,6 +166,7 @@ function triggerWebhookActions(webhook, event) {
 module.exports = {
   actionMatchesEvent,
   executeActionRun,
+  recoverPendingActions,
   normalizeActions,
   renderTemplate,
   serializeActions,

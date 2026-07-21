@@ -19,6 +19,17 @@ function isPackageInstallCommand(command) {
     || /\bpython3?\s+-m\s+pip\s+install\b/i.test(command);
 }
 
+function isSourceMutationCommand(command) {
+  const text = String(command || '').trim();
+  return isPackageInstallCommand(text)
+    || /\bnpm\s+audit\s+fix\b/i.test(text)
+    || /\b(?:prettier|eslint|biome)\b[^\n]*(?:--write|--fix)\b/i.test(text)
+    || /\bgit\s+(?:add|commit|checkout|switch|reset|restore|clean|merge|rebase|cherry-pick)\b/i.test(text)
+    || /(^|[;&|]\s*)(?:rm|mv|cp|touch|mkdir|rmdir|truncate)\s/i.test(text)
+    || /\bsed\s+-i\b/i.test(text)
+    || /(^|[^<])>{1,2}\s*[^&]/.test(text);
+}
+
 module.exports = {
   // ── Sandbox ──────────────────────────────────────────────────────────────────
   shell: {
@@ -40,6 +51,13 @@ module.exports = {
     },
     async handler({ command, timeout_seconds }, { callerAgentId }) {
       const sandbox = require('../sandbox');
+      if (sandbox.workspaceMount(callerAgentId).readOnly && isSourceMutationCommand(command)) {
+        return {
+          stdout: '', exitCode: 1,
+          stderr: 'BLOCKED: this Colony role has a read-only repository. Install/fix/format/git-write/file-mutation commands are not allowed. Run non-mutating checks only; if dependencies are unavailable, report the verification gap.',
+          policy_violation: 'read_only_repository',
+        };
+      }
       // Hard policy, not a prompt suggestion: models ignore the prompt ban
       // mid-frenzy and this command reliably destroys dependency trees
       // (observed twice: force-downgraded next@15 to next@9 / react@16).
@@ -242,7 +260,7 @@ module.exports = {
       type: 'function',
       function: {
         name: 'write_file',
-        description: 'Write or overwrite a file in the sandbox workspace. Path is relative to /workspace.',
+        description: 'Write or overwrite a file in the sandbox workspace. Path is relative to /workspace. NOTE: the sandbox workspace is ephemeral and is NOT delivered — if this file is a deliverable (report, dataset, doc), call save_artifact afterward to promote it to the run artifacts, or it will not reach the colony overview or Discord.',
         parameters: {
           type: 'object',
           properties: {
@@ -255,6 +273,9 @@ module.exports = {
     },
     async handler({ path: filePath, content }, { callerAgentId }) {
       const sandbox  = require('../sandbox');
+      if (sandbox.workspaceMount(callerAgentId).readOnly) {
+        return { error: 'BLOCKED: this Colony role has a read-only repository. Save reports with save_artifact instead of write_file.' };
+      }
       const dir      = sandbox.workspaceDir(callerAgentId);
       try {
         const resolved = sandbox.resolveWorkspacePath(dir, stripWorkspacePrefix(filePath), { allowMissing: true });
@@ -296,6 +317,70 @@ module.exports = {
     },
   },
 
+  // Files written with write_file live only in this agent's ephemeral sandbox
+  // workspace — they are NOT part of the run's deliverables. save_artifact
+  // promotes them into the run's artifact directory, which is the single set the
+  // colony overview serves for download and the Discord relay uploads. Generated
+  // media (generate_image/generate_speech) auto-registers there; this is the path
+  // for reports, datasets, and other non-media files the crew authors as files.
+  save_artifact: {
+    groups: ['sandbox', 'sandbox_files', 'media'],
+    definition: {
+      type: 'function',
+      function: {
+        name: 'save_artifact',
+        description: 'Persist a file as a run deliverable so it downloads from the colony overview and posts to Discord. Files you write with write_file stay in your ephemeral sandbox and are NOT delivered — call this to promote them. Give `source_path` to copy an existing /workspace file (preferred for anything you already wrote), or `content` to write inline text directly. Do NOT use this for images/audio from generate_image/generate_speech — those are saved automatically.',
+        parameters: {
+          type: 'object',
+          properties: {
+            source_path: { type: 'string', description: 'Path of an existing file in your sandbox workspace to promote, relative to /workspace (e.g. "research_artifact.md"). Preferred over content for files you already wrote.' },
+            content: { type: 'string', description: 'Inline text content to save, when the file is not already in the workspace. Ignored if source_path is given.' },
+            name: { type: 'string', description: 'Filename to expose in the deliverables (e.g. "research_artifact_2026_2027.md"). Defaults to the basename of source_path.' },
+          },
+          required: [],
+        },
+      },
+    },
+    async handler({ source_path, content, name }, { callerAgentId, colonyContext }) {
+      const artifacts = require('../colonyArtifacts');
+      // Mirror mediaTools: a colony run uses its own bucket; outside one, a
+      // per-agent adhoc bucket under the same root.
+      const bucket = colonyContext?.colonyId || `adhoc-${String(callerAgentId || 'agent').slice(0, 60)}`;
+      let data;
+      let filename = name;
+      if (source_path != null && String(source_path).trim()) {
+        const sandbox = require('../sandbox');
+        try {
+          const dir = sandbox.workspaceDir(callerAgentId);
+          const resolved = sandbox.resolveWorkspacePath(dir, stripWorkspacePrefix(source_path), { allowMissing: false });
+          data = fs.readFileSync(resolved); // Buffer — preserves binary datasets
+        } catch (e) {
+          return { error: e.message };
+        }
+        if (!filename) filename = path.basename(String(source_path));
+      } else if (content != null) {
+        data = String(content);
+      } else {
+        return { error: 'Provide source_path (a workspace file to promote) or content (inline text).' };
+      }
+      let saved;
+      try {
+        saved = artifacts.saveArtifact(bucket, filename || 'artifact', data);
+      } catch (e) {
+        return { error: e.message };
+      }
+      const mime = artifacts.mimeFor(saved.name);
+      // Fold into the deliverable so the overview + relay surface it (same channel
+      // media tools use). See colonyPlanTools generatedArtifacts handling.
+      if (colonyContext) (colonyContext.generatedArtifacts ||= []).push({ name: saved.name, mime, kind: 'file' });
+      return {
+        success: true, artifact: saved.name, mime, kind: 'file', bytes: saved.bytes,
+        url: `/api/artifacts/${encodeURIComponent(bucket)}/${encodeURIComponent(saved.name)}`,
+        message: `Saved "${saved.name}" to the run artifacts. It downloads from the colony overview and posts to Discord.`,
+      };
+    },
+  },
+
   delete_file: {
     groups: ['sandbox', 'sandbox_files'],
     definition: {
@@ -314,6 +399,9 @@ module.exports = {
     },
     async handler({ path: filePath }, { callerAgentId }) {
       const sandbox  = require('../sandbox');
+      if (sandbox.workspaceMount(callerAgentId).readOnly) {
+        return { error: 'BLOCKED: this Colony role has a read-only repository. delete_file is not allowed.' };
+      }
       const dir      = sandbox.workspaceDir(callerAgentId);
       try {
         const resolved = sandbox.resolveWorkspacePath(dir, stripWorkspacePrefix(filePath), { allowMissing: false });
@@ -344,6 +432,9 @@ module.exports = {
     },
     async handler({ from, to }, { callerAgentId }) {
       const sandbox   = require('../sandbox');
+      if (sandbox.workspaceMount(callerAgentId).readOnly) {
+        return { error: 'BLOCKED: this Colony role has a read-only repository. move_file is not allowed.' };
+      }
       const dir       = sandbox.workspaceDir(callerAgentId);
       try {
         const srcRes = sandbox.resolveWorkspacePath(dir, stripWorkspacePrefix(from), { allowMissing: false });

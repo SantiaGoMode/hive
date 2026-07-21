@@ -186,7 +186,13 @@ function TeamView(page) {
 
             <PerformanceStrip performance={overview?.performance} />
 
-            <ArtifactsPanel artifacts={overview?.artifacts} onOpenArtifact={(runId, path) => setArtifactViewer({ runId, path })} />
+            <ArtifactsPanel
+              artifacts={overview?.artifacts}
+              onOpenArtifact={(runId, path) => setArtifactViewer({ runId, path })}
+              onDeleteRun={(runId) => {
+                if (window.confirm('Delete this run and all of its artifacts? This cannot be undone.')) handleDeleteRun(runId);
+              }}
+            />
 
             {/* Memory + Insights side by side — both are reference material,
                 below the action sections. */}
@@ -203,6 +209,8 @@ function TeamView(page) {
 
       {startItem && (
         <StartRunModal
+          team={team}
+          recipe={recipes.find(r => r.id === team?.recipe_id) || null}
           item={startItem}
           direction={startDirection}
           setDirection={setStartDirection}

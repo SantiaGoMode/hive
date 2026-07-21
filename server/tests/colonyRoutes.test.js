@@ -161,11 +161,10 @@ describe('POST /api/colony — validation', () => {
 // orchestrator being created before the run was silently stopped. The fix was
 // to listen on res 'close' with a !res.writableFinished guard instead.
 //
-// This test spins up a real HTTP server (so req/res semantics match production),
-// points runColony at a fake Ollama that returns GOAL ACHIEVED, POSTs to
-// /api/colony, and asserts that the SSE stream delivers a real run-to-completion
-// instead of a premature abort.
-describe('POST /api/colony — streams a real run (res.on(close) regression)', () => {
+// This test spins up a real HTTP server, launches a durable run, then closes the
+// observer stream. The job must remain queued/running until an explicit stop;
+// transport lifetime no longer owns execution.
+describe('POST /api/colony — observer disconnect does not own the durable run', () => {
   let server;
   let baseUrl;
   let fakeOllama;
@@ -232,11 +231,13 @@ describe('POST /api/colony — streams a real run (res.on(close) regression)', (
         db.prepare('DELETE FROM colonies WHERE id=?').run(id);
       } catch {}
     }
+    server.closeAllConnections?.();
+    fakeOllama.closeAllConnections?.();
     await new Promise(resolve => server.close(resolve));
     await new Promise(resolve => fakeOllama.close(resolve));
   });
 
-  it('runs to completion instead of aborting immediately on request-body close', async () => {
+  it('keeps the job alive after the SSE observer disconnects', async () => {
     const response = await fetch(`${baseUrl}/api/colony`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -249,13 +250,11 @@ describe('POST /api/colony — streams a real run (res.on(close) regression)', (
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buf = '';
-    const events = [];
     let colonyId = null;
-    let terminalStatus = null;
 
-    // Read the stream to completion (the fake Ollama returns quickly, so the
-    // whole run should finish in well under a few seconds).
-    while (true) {
+    // Read only until the durable run id is announced, then deliberately drop
+    // the HTTP observer while execution continues in colonyJobs.
+    while (!colonyId) {
       const { done, value } = await reader.read();
       if (done) break;
       buf += decoder.decode(value, { stream: true });
@@ -266,27 +265,19 @@ describe('POST /api/colony — streams a real run (res.on(close) regression)', (
         if (!frame.startsWith('data: ')) continue;
         try {
           const ev = JSON.parse(frame.slice(6));
-          events.push(ev);
           if (ev.type === 'colony_id') colonyId = ev.colonyId;
-          if (ev.type === 'done' || ev.type === 'error') terminalStatus = ev.status || ev.type;
         } catch {}
       }
     }
-    if (colonyId) createdIds.push(colonyId);
-
-    // The bug manifested as: only colony_id + an immediate done/stopped frame,
-    // with no agent_ready, no round_start, no orchestrator_message. Assert all
-    // of those actually arrived.
     assert.ok(colonyId, 'should have received colony_id frame');
-    assert.equal(terminalStatus, 'done', `expected terminal status=done, got ${terminalStatus}. Events: ${JSON.stringify(events.map(e => e.type))}`);
+    createdIds.push(colonyId);
+    await reader.cancel();
+    await new Promise(resolve => setTimeout(resolve, 50));
 
-    const hasAgentReady = events.some(e => e.type === 'agent_ready' && e.role === 'orchestrator');
-    assert.ok(hasAgentReady, 'must receive agent_ready for the orchestrator — the req.on(close) bug would skip this');
+    const afterDisconnect = db.prepare('SELECT status FROM colonies WHERE id=?').get(colonyId);
+    assert.notEqual(afterDisconnect.status, 'stopped', 'closing the observer must not stop durable execution');
 
-    const hasRoundStart = events.some(e => e.type === 'round_start');
-    assert.ok(hasRoundStart, 'must receive at least one round_start — the run must have actually started');
-
-    const hasOrchestratorMessage = events.some(e => e.type === 'orchestrator_message');
-    assert.ok(hasOrchestratorMessage, 'must receive orchestrator_message with the final content');
+    const stopped = await fetch(`${baseUrl}/api/colony/${colonyId}/stop`, { method: 'POST' });
+    assert.equal(stopped.status, 200);
   });
 });

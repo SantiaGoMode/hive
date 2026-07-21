@@ -2,6 +2,9 @@
 // Thin wrappers around the git CLI. All failures throw — callers must catch and
 // emit a HITL blocker rather than crashing the colony.
 const { execFileSync } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { logSwallowed } = require('../logSwallowed');
 
 function gitExec(args, cwd) {
@@ -43,12 +46,54 @@ function gitCheckoutBranch(repoPath, branchName) {
   }
 }
 
+function stashDirtyTree(repoPath, branchName) {
+  try {
+    if (gitExec(['status', '--porcelain'], repoPath).length > 0) {
+      gitExec(['stash', 'push', '--include-untracked', '-m', `hive: leftovers before ${branchName}`], repoPath);
+    }
+  } catch (e) { logSwallowed('colonyRunner:gitStash', e); }
+}
+
+function gitFetchPullRequest(repoPath, prNumber) {
+  const safeNumber = Number(prNumber);
+  if (!Number.isInteger(safeNumber) || safeNumber <= 0) throw new Error('Pull request number is required');
+  const remoteRef = `refs/remotes/origin/pr-${safeNumber}`;
+  gitExec(['fetch', 'origin', `pull/${safeNumber}/head:${remoteRef}`], repoPath);
+  return `origin/pr-${safeNumber}`;
+}
+
+function gitCheckoutBranchFromRef(repoPath, branchName, startRef) {
+  if (!startRef || !String(startRef).trim()) throw new Error('startRef is required');
+  stashDirtyTree(repoPath, branchName);
+  gitExec(['checkout', '-B', branchName, String(startRef)], repoPath);
+}
+
+function gitCreateReviewWorktree(repoPath, startRef = 'HEAD') {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hive-colony-review-'));
+  const worktreePath = path.join(root, 'repo');
+  try {
+    gitExec(['worktree', 'add', '--detach', worktreePath, String(startRef || 'HEAD')], repoPath);
+    return { root, path: worktreePath };
+  } catch (error) {
+    fs.rmSync(root, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+function gitRemoveReviewWorktree(repoPath, worktree) {
+  if (!worktree?.path) return;
+  try { gitExec(['worktree', 'remove', '--force', worktree.path], repoPath); }
+  catch (e) { logSwallowed('colonyRunner:removeReviewWorktree', e, { worktree: worktree.path }); }
+  try { fs.rmSync(worktree.root || worktree.path, { recursive: true, force: true }); }
+  catch (e) { logSwallowed('colonyRunner:removeReviewWorktreeFiles', e, { worktree: worktree.path }); }
+}
+
 // Bulk build artifacts that must never be committed by a colony run. Task
 // repos often lack a .gitignore — `git add -A` once staged 20k node_modules
 // files (4.3M lines) and the push died with ENOBUFS.
 const JUNK_PATH_RE = /(^|\/)(node_modules|\.next|dist|build|out|coverage|__pycache__|\.venv|venv|\.cache|\.turbo)(\/|$)|\.log$/;
 
-async function gitCommitAndPush(repoPath, branchName, message) {
+async function gitCommitAndPush(repoPath, branchName, message, options = {}) {
   gitExec(['add', '-A'], repoPath);
   // Hygiene: unstage secrets (.env files) and bulk artifacts before committing.
   try {
@@ -71,7 +116,10 @@ async function gitCommitAndPush(repoPath, branchName, message) {
   }
   // Only push when the branch actually has commits the default branch lacks —
   // pushing an empty branch just produces a "no commits between..." PR error.
-  if (!gitBranchHasNewCommits(repoPath, gitDefaultBranch(repoPath))) {
+  const hasNewCommits = options.compareRef
+    ? gitBranchHasNewCommitsSince(repoPath, options.compareRef)
+    : gitBranchHasNewCommits(repoPath, gitDefaultBranch(repoPath));
+  if (!hasNewCommits) {
     return { pushed: false };
   }
   gitExec(['push', '-u', 'origin', branchName], repoPath);
@@ -83,6 +131,19 @@ function gitHasUncommittedChanges(repoPath) {
   try { return gitExec(['status', '--porcelain'], repoPath).length > 0; } catch { return false; }
 }
 
+function gitTreeSnapshot(repoPath) {
+  return {
+    head: gitExec(['rev-parse', 'HEAD'], repoPath),
+    status: gitExec(['status', '--porcelain=v1', '--untracked-files=all'], repoPath),
+  };
+}
+
+function gitQuarantineChanges(repoPath, label = 'read-only policy violation') {
+  if (!gitHasUncommittedChanges(repoPath)) return false;
+  gitExec(['stash', 'push', '--include-untracked', '-m', `hive: ${label}`], repoPath);
+  return true;
+}
+
 // True when the branch has commits that main does not (i.e. there is something
 // worth opening a PR for).
 function gitBranchHasNewCommits(repoPath, base = 'main') {
@@ -92,11 +153,25 @@ function gitBranchHasNewCommits(repoPath, base = 'main') {
   return false;
 }
 
+function gitBranchHasNewCommitsSince(repoPath, ref) {
+  if (!ref || !String(ref).trim()) return gitBranchHasNewCommits(repoPath);
+  try { return Number(gitExec(['rev-list', '--count', `${String(ref)}..HEAD`], repoPath)) > 0; } catch {
+    return false;
+  }
+}
+
 module.exports = {
   gitExec,
   gitDefaultBranch,
   gitCheckoutBranch,
+  gitCheckoutBranchFromRef,
+  gitCreateReviewWorktree,
+  gitRemoveReviewWorktree,
+  gitFetchPullRequest,
   gitCommitAndPush,
   gitHasUncommittedChanges,
+  gitTreeSnapshot,
+  gitQuarantineChanges,
   gitBranchHasNewCommits,
+  gitBranchHasNewCommitsSince,
 };

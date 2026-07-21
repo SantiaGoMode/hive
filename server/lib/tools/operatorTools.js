@@ -110,6 +110,111 @@ module.exports = {
     },
   },
 
+  schedule_mission: {
+    group: 'colony_operator',
+    definition: {
+      type: 'function',
+      function: {
+        name: 'schedule_mission',
+        description: 'Create a RECURRING mission for this colony team on a cron schedule. Each time it fires, the direction runs as a new mission (or is queued if the team is busy). Use when the human asks for something to run repeatedly ("every morning", "each Monday at 9", "nightly"). Translate their phrasing into a 5-field cron expression. The human\'s request is the authorization; do not ask for confirmation.',
+        parameters: {
+          type: 'object',
+          properties: {
+            cron: { type: 'string', description: 'Standard 5-field cron expression, e.g. "0 9 * * 1" (Mondays 09:00), "0 8 * * *" (every day 08:00), "*/30 * * * *" (every 30 min).' },
+            direction: { type: 'string', description: 'The full mission direction to run on each fire, restated clearly from the human\'s instruction.' },
+            label: { type: 'string', description: 'Optional short name for the schedule (defaults to a snippet of the direction).' },
+          },
+          required: ['cron', 'direction'],
+        },
+      },
+    },
+    async handler({ cron, direction, label }, ctx) {
+      const { team, error } = teamFromContext(ctx);
+      if (error) return { error };
+      try {
+        const row = require('../colonySchedules').createColonySchedule(team.id, { cronExpr: cron, prompt: direction, label });
+        return { success: true, schedule_id: row.id, label: row.label, cron: row.cron_expr, message: `Scheduled "${row.label}" (${row.cron_expr}). It will run automatically; I'll post each run to this thread.` };
+      } catch (e) {
+        return { error: e.message };
+      }
+    },
+  },
+
+  list_schedules: {
+    group: 'colony_operator',
+    definition: {
+      type: 'function',
+      function: {
+        name: 'list_schedules',
+        description: 'List this colony team\'s recurring scheduled missions (id, label, cron, enabled/paused, last run/error). Use before cancelling or pausing so you have the right schedule id.',
+        parameters: { type: 'object', properties: {} },
+      },
+    },
+    async handler(args, ctx) {
+      const { team, error } = teamFromContext(ctx);
+      if (error) return { error };
+      const rows = require('../colonySchedules').listColonySchedules(team.id);
+      return {
+        schedules: rows.map(r => ({
+          id: r.id, label: r.label, cron: r.cron_expr,
+          direction: String(r.prompt || '').slice(0, 200),
+          enabled: !!r.enabled,
+          last_run: r.last_run || null,
+          last_error: r.last_error || null,
+        })),
+      };
+    },
+  },
+
+  cancel_schedule: {
+    group: 'colony_operator',
+    definition: {
+      type: 'function',
+      function: {
+        name: 'cancel_schedule',
+        description: 'Permanently delete one of this team\'s recurring scheduled missions by id (get ids from list_schedules). To temporarily stop one instead, use pause_schedule.',
+        parameters: {
+          type: 'object',
+          properties: { schedule_id: { type: 'string', description: 'The schedule id to delete.' } },
+          required: ['schedule_id'],
+        },
+      },
+    },
+    async handler({ schedule_id: scheduleId }, ctx) {
+      const { team, error } = teamFromContext(ctx);
+      if (error) return { error };
+      const row = require('../colonySchedules').removeColonySchedule(scheduleId, team.id);
+      if (!row) return { error: 'No such schedule for this team (check the id with list_schedules).' };
+      return { success: true, message: `Deleted schedule "${row.label}".` };
+    },
+  },
+
+  pause_schedule: {
+    group: 'colony_operator',
+    definition: {
+      type: 'function',
+      function: {
+        name: 'pause_schedule',
+        description: 'Pause (stop firing) or resume one of this team\'s recurring scheduled missions by id. The schedule is kept and can be resumed later.',
+        parameters: {
+          type: 'object',
+          properties: {
+            schedule_id: { type: 'string', description: 'The schedule id (from list_schedules).' },
+            paused: { type: 'boolean', description: 'true to pause, false to resume.' },
+          },
+          required: ['schedule_id', 'paused'],
+        },
+      },
+    },
+    async handler({ schedule_id: scheduleId, paused }, ctx) {
+      const { team, error } = teamFromContext(ctx);
+      if (error) return { error };
+      const row = require('../colonySchedules').setColonyScheduleEnabled(scheduleId, !paused, team.id);
+      if (!row) return { error: 'No such schedule for this team (check the id with list_schedules).' };
+      return { success: true, enabled: !!row.enabled, message: row.enabled ? `Resumed "${row.label}".` : `Paused "${row.label}".` };
+    },
+  },
+
   get_team_status: {
     group: 'colony_operator',
     definition: {

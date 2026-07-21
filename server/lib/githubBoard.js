@@ -233,6 +233,159 @@ async function fetchIssueBoard({ owner, repo, token }) {
   };
 }
 
+function extractPullNumbers(text, repoSlug = '') {
+  const numbers = [];
+  const seen = new Set();
+  const add = (value) => {
+    const n = Number(value);
+    if (Number.isInteger(n) && n > 0 && !seen.has(n)) {
+      seen.add(n);
+      numbers.push(n);
+    }
+  };
+  const raw = String(text || '');
+  if (!raw.trim()) return numbers;
+
+  const urlRe = /github\.com\/([^/\s]+)\/([^/\s]+)\/pull\/(\d+)/ig;
+  let match;
+  while ((match = urlRe.exec(raw))) {
+    const slug = `${match[1]}/${match[2].replace(/\.git$/i, '')}`;
+    if (!repoSlug || slug.toLowerCase() === repoSlug.toLowerCase()) add(match[3]);
+  }
+
+  const explicitRe = /\b(?:pr|pull\s+request)\s*#?\s*(\d+)\b/ig;
+  while ((match = explicitRe.exec(raw))) add(match[1]);
+  return numbers;
+}
+
+function sameTitle(a, b) {
+  const norm = (s) => String(s || '')
+    .toLowerCase()
+    .replace(/^\[colony\]\s*/i, '')
+    .replace(/[^\w]+/g, ' ')
+    .trim();
+  const left = norm(a);
+  const right = norm(b);
+  return !!left && !!right && (left === right || left.includes(right) || right.includes(left));
+}
+
+function prReferencesIssue(pr, issueNumber) {
+  if (!issueNumber) return false;
+  const text = [pr.title, pr.body, pr.head?.ref, pr.html_url].filter(Boolean).join('\n');
+  const escaped = String(issueNumber).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?:#${escaped}\\b|issues/${escaped}\\b|issue\\s*#?\\s*${escaped}\\b)`, 'i').test(text);
+}
+
+async function fetchPullRequest({ owner, repo, number, token }) {
+  const auth = token || githubToken();
+  return githubFetch(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${encodeURIComponent(number)}`,
+    { token: auth },
+  );
+}
+
+async function fetchPullRequestFiles({ owner, repo, number, token }) {
+  const auth = token || githubToken();
+  const files = await githubFetch(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${encodeURIComponent(number)}/files?per_page=100`,
+    { token: auth },
+  );
+  return (Array.isArray(files) ? files : []).map(f => ({
+    path: f.filename,
+    status: f.status || 'modified',
+    previous_filename: f.previous_filename || null,
+    additions: f.additions || 0,
+    deletions: f.deletions || 0,
+    changes: f.changes || 0,
+  }));
+}
+
+async function listPullRequests({ owner, repo, token, state = 'all' }) {
+  const auth = token || githubToken();
+  return githubFetch(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls?state=${encodeURIComponent(state)}&per_page=100&sort=updated&direction=desc`,
+    { token: auth },
+  );
+}
+
+function pullToReviewTarget(pr, files = [], reason = '') {
+  if (!pr?.number) return null;
+  return {
+    provider: 'github',
+    type: 'pull_request',
+    number: pr.number,
+    title: pr.title || '',
+    state: pr.state || '',
+    url: pr.html_url || pr.url || '',
+    base_ref: pr.base?.ref || '',
+    base_sha: pr.base?.sha || '',
+    base_repo: pr.base?.repo?.full_name || '',
+    head_ref: pr.head?.ref || '',
+    head_sha: pr.head?.sha || '',
+    head_repo: pr.head?.repo?.full_name || '',
+    reason,
+    changed_files: files,
+  };
+}
+
+async function hydrateReviewPull({ owner, repo, number, token, reason }) {
+  const pr = await fetchPullRequest({ owner, repo, number, token });
+  const files = await fetchPullRequestFiles({ owner, repo, number, token });
+  return pullToReviewTarget(pr, files, reason);
+}
+
+async function resolveReviewPullRequest({ owner, repo, card = null, goal = '', token } = {}) {
+  if (!owner || !repo) return null;
+  const repoSlug = `${owner}/${repo}`;
+  const cardText = [goal, card?.title, card?.description, card?.body, card?.url, card?.html_url].filter(Boolean).join('\n');
+
+  if (card?.type === 'pull_request' && card.number) {
+    return hydrateReviewPull({ owner, repo, number: card.number, token, reason: 'linked board card is a pull request' });
+  }
+
+  const explicit = extractPullNumbers(cardText, repoSlug)[0];
+  if (explicit) {
+    return hydrateReviewPull({ owner, repo, number: explicit, token, reason: 'explicit PR reference in run context' });
+  }
+
+  const issueNumber = card?.type === 'issue' ? card.number : null;
+  if (!issueNumber) return null;
+
+  const pulls = await listPullRequests({ owner, repo, token, state: 'all' });
+  const openMatches = pulls
+    .filter(pr => pr.state === 'open')
+    .filter(pr => prReferencesIssue(pr, issueNumber) || sameTitle(pr.title, card?.title));
+  if (openMatches.length > 0) {
+    return hydrateReviewPull({
+      owner, repo, number: openMatches[0].number, token,
+      reason: prReferencesIssue(openMatches[0], issueNumber)
+        ? `open PR references issue #${issueNumber}`
+        : `open PR title matches issue #${issueNumber}`,
+    });
+  }
+
+  let linkedNumbers = [];
+  try {
+    const comments = await githubFetch(
+      `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${encodeURIComponent(issueNumber)}/comments?per_page=100`,
+      { token: token || githubToken() },
+    );
+    linkedNumbers = (Array.isArray(comments) ? comments : []).flatMap(c => extractPullNumbers(c.body, repoSlug));
+  } catch {
+    linkedNumbers = [];
+  }
+  if (linkedNumbers.length > 0) {
+    return hydrateReviewPull({ owner, repo, number: linkedNumbers[linkedNumbers.length - 1], token, reason: `PR linked from issue #${issueNumber} comments` });
+  }
+
+  const titleMatch = pulls.find(pr => sameTitle(pr.title, card?.title));
+  if (titleMatch) {
+    return hydrateReviewPull({ owner, repo, number: titleMatch.number, token, reason: `PR title matches issue #${issueNumber}` });
+  }
+
+  return null;
+}
+
 async function fetchRepoBoard({ cwd = process.cwd() } = {}) {
   const repoInfo = detectGitHubRepo(cwd);
   if (!repoInfo) {
@@ -367,6 +520,16 @@ async function createDraftPR({ owner, repo, title, body, head, base, token }) {
   );
 }
 
+async function createPullRequestReview({ owner, repo, number, body, event = 'COMMENT', token }) {
+  const auth = token || githubToken();
+  if (!auth) throw new Error('No GitHub token configured.');
+  const normalizedEvent = ['APPROVE', 'REQUEST_CHANGES', 'COMMENT'].includes(event) ? event : 'COMMENT';
+  return githubFetch(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${encodeURIComponent(number)}/reviews`,
+    { token: auth, method: 'POST', body: { body, event: normalizedEvent } },
+  );
+}
+
 // Render a colony's deliverable as a Markdown comment for the linked work-item.
 // Shared by the manual "Post update" route and the automatic post-run write-back.
 function buildBoardComment(colony) {
@@ -399,7 +562,13 @@ module.exports = {
   createGitHubIssue,
   updateGitHubIssue,
   createDraftPR,
+  createPullRequestReview,
   fetchDependabotAlerts,
   fetchCodeScanningAlerts,
+  extractPullNumbers,
+  fetchPullRequest,
+  fetchPullRequestFiles,
+  listPullRequests,
+  resolveReviewPullRequest,
   buildBoardComment,
 };

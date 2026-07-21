@@ -38,7 +38,7 @@ const defaultAction = () => ({
 });
 
 function WebhookEditor({ open, webhook, onClose, onSave }) {
-  const [form, setForm] = useState({ name: '', description: '', secret: '', enabled: true });
+  const [form, setForm] = useState({ name: '', description: '', secret: '', enabled: false });
   const [spec, setSpec] = useState([]);
   const [actions, setActions] = useState([]);
   const [pipelines, setPipelines] = useState([]);
@@ -54,7 +54,7 @@ function WebhookEditor({ open, webhook, onClose, onSave }) {
         setSpec(parseSpec(webhook));
         setActions(parseActions(webhook));
       } else {
-        setForm({ name: '', description: '', secret: '', enabled: true });
+        setForm({ name: '', description: '', secret: '', enabled: false });
         setSpec([]);
         setActions([]);
       }
@@ -70,6 +70,7 @@ function WebhookEditor({ open, webhook, onClose, onSave }) {
 
   const handleSave = async () => {
     if (!form.name.trim()) return toast.error('Name is required');
+    if (form.enabled && !form.secret.trim()) return toast.error('A secret is required before enabling this webhook');
     // Keep only rows with both a label and a path; drop blank event_type.
     const cleanSpec = spec
       .filter(m => m.label.trim() && m.path.trim())
@@ -109,7 +110,7 @@ function WebhookEditor({ open, webhook, onClose, onSave }) {
       <div className="flex flex-col gap-4 max-h-[70vh] overflow-y-auto pr-1">
         <Input label="Name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="e.g. GitHub Commits" />
         <Input label="Description" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="Optional description" />
-        <Input label="Secret Token" value={form.secret} onChange={e => setForm({ ...form, secret: e.target.value })} placeholder="Optional secret or env:WEBHOOK_SECRET" />
+        <Input label="Secret Token" value={form.secret} onChange={e => setForm({ ...form, secret: e.target.value })} placeholder="Required when enabled; use a value or env:WEBHOOK_SECRET" />
 
         <label className="flex items-center gap-2 cursor-pointer mt-2">
           <input type="checkbox" checked={form.enabled} onChange={e => setForm({ ...form, enabled: e.target.checked })} className="rounded bg-gray-900 border-gray-700 text-blue-500 focus:ring-blue-500" />

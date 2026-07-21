@@ -15,6 +15,7 @@ const { buildRecipeWorkerConfigs, recipeOrchestratorPrompt, isCustomAutoRecipe }
 const { addAgentToColony } = require('./persistence');
 const { connectedMcpServers, mcpCategoriesForWorker } = require('./mcp');
 const { orchestratorPrompt } = require('./prompts');
+const { EXECUTION_MODES, recipeExecutionPolicy } = require('../colonyPolicy');
 
 // ── Role-metadata seeding decisions ───────────────────────────────────────────
 // Worker configs carry `_role_meta` (capabilities, repo_access, network, mcp)
@@ -34,8 +35,17 @@ function workerIsCoding(workerConfig) {
 const DOC_WRITER_ROLES = new Set(['project_manager', 'ui_ux_designer']);
 
 // 'write' | 'read' | null — how (and whether) to mount the colony repo.
-function workerRepoAccess(workerConfig) {
+function workerRepoAccess(workerConfig, executionPolicy = null) {
   const declared = workerConfig._role_meta?.repo_access;
+  // Hard run boundary: review/advisory recipes can inspect a connected repo but
+  // never receive a writable mount, even if a customized staff profile or stale
+  // role definition asks for one.
+  if (executionPolicy?.mode === EXECUTION_MODES.READ_ONLY) {
+    return declared ? 'read' : null;
+  }
+  if (executionPolicy?.mode === EXECUTION_MODES.ARTIFACT_ONLY) {
+    return declared ? 'read' : null;
+  }
   if (declared === 'write' || declared === 'read') return declared;
   if (declared === null && workerConfig._role_meta?.capabilities) {
     // Metadata-bearing role that explicitly declares no repo access.
@@ -83,6 +93,7 @@ function seedRecipeWorkers(ctx) {
     });
   }
   let workerConfigs = buildRecipeWorkerConfigs(recipe, row.goal, row.model, modelPlan);
+  const executionPolicy = recipeExecutionPolicy(recipe);
   // Operator staffing: pick the best staff member for each preset role
   // based on the colony's requirements (team name/description + mission).
   const staffingRequirements = [teamRow?.name, teamRow?.description, row.goal].filter(Boolean).join(' ');
@@ -139,6 +150,10 @@ update), and ONE checkpoint at the very end. Re-posting the same status is failu
 not progress. NEVER end your turn silently: finish with handoff() when your work is
 complete, or a plain-text answer stating exactly what you did and what remains.`;
   for (const workerConfig of workerConfigs) {
+    workerConfig.system_prompt += `\n\n[Execution policy — enforced by Hive]\nMode: ${executionPolicy.mode}. ` +
+      (executionPolicy.mode === EXECUTION_MODES.REPOSITORY_WRITE
+        ? 'Repository changes are allowed when they are intentional mission deliverables.'
+        : 'The connected repository is READ-ONLY. Do not install dependencies, run fix/format commands, generate files into the repo, or attempt any source-tree mutation. Save reports and other deliverables with save_artifact instead. A no-change result is valid.');
     workerConfig.system_prompt += protocolDiscipline;
     if (memorySection) workerConfig.system_prompt += memorySection;
     const wantCats = mcpCategoriesForWorker(workerConfig);
@@ -167,7 +182,7 @@ complete, or a plain-text answer stating exactly what you did and what remains.`
     // Role metadata decides the repo mount: 'write' roles edit the real
     // project (coding, doc-writing), 'read' roles inspect it (reviewers,
     // analysts), everyone else gets no mount at all.
-    const repoAccess = workerRepoAccess(workerConfig);
+    const repoAccess = workerRepoAccess(workerConfig, executionPolicy);
     if (row.repo_path && repoAccess) {
       try { sandbox.setAgentRepo(worker.id, row.repo_path, { writable: repoAccess === 'write' }); } catch (e) { logSwallowed('colonyRunner:setAgentRepo', e, { agentId: worker.id }); }
     }
@@ -206,7 +221,10 @@ function createOrchestrator(ctx) {
     reasoningByAgentId, addEntry, onEvent,
   } = ctx;
 
-  const recipePrompt = recipeOrchestratorPrompt(row.goal, operatorModel, recipe, recipeWorkers, { githubWriteback: !!row.github_writeback });
+  const recipePrompt = recipeOrchestratorPrompt(row.goal, operatorModel, recipe, recipeWorkers, {
+    githubPublish: !!row.github_publish,
+    githubReview: !!row.github_review,
+  });
   const orchestratorTools = isCustomAutoRecipe(recipe.id)
     ? ['colony_tools', 'agent_tools', 'sandbox', 'memory', 'protocol']
     : ['colony_tools', 'delegation', 'protocol'];

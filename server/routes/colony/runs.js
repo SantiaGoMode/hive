@@ -2,9 +2,10 @@
 // trigger routing, and the resumable SSE tail. Registered after the fixed
 // /teams routes so these dynamic /:id routes don't shadow them.
 const { getColony } = require('../../lib/colonyRunner');
-const { getBus, hasBus, maybeCleanup } = require('../../lib/colonyBus');
+const { getBus, maybeCleanup } = require('../../lib/colonyBus');
 const { normalizeTriggerConfig } = require('../../lib/colonyTriggers');
 const db = require('../../db');
+const { listRunEvents } = require('../../lib/colony/runEvents');
 const { fs, sseHeaders, sseWrite, getColonyRepoPath } = require('./shared');
 
 // Artifacts are file paths relative to the run's repo; this serves their
@@ -52,7 +53,9 @@ module.exports = function registerRunReadRoutes(router) {
         const isText = mime.startsWith('text/') || mime === 'application/json' || /\.(md|markdown|csv|svg|html|txt)$/i.test(rel);
         if (req.query.raw === '1') {
           res.setHeader('Content-Type', mime);
-          const disp = req.query.download === '1' ? 'attachment' : 'inline';
+          res.setHeader('X-Content-Type-Options', 'nosniff');
+          const activeContent = /\.(?:html?|svg)$/i.test(rel);
+          const disp = req.query.download === '1' || activeContent ? 'attachment' : 'inline';
           res.setHeader('Content-Disposition', `${disp}; filename="${nodePath.basename(abs)}"`);
           return fs.createReadStream(abs).pipe(res);
         }
@@ -63,6 +66,14 @@ module.exports = function registerRunReadRoutes(router) {
         const buf = fs.readFileSync(abs);
         return res.json({ path: rel, size, truncated: buf.length > ARTIFACT_MAX_BYTES, source: 'artifacts', mime, content: buf.slice(0, ARTIFACT_MAX_BYTES).toString('utf8') });
       }
+    }
+
+    // Repo-less run: outputs live ONLY in the artifact bucket (handled above).
+    // Don't fall back to a default repo / git branch — that yields a confusing
+    // "not found on the run's branch (colony-…), branch may be deleted" 404 for
+    // a run that never had a branch. Say plainly it isn't among the outputs.
+    if (!colony.repo_path) {
+      return res.status(404).json({ error: `"${rel}" is not among this run's produced artifacts.` });
     }
 
     const repoPath = colony.repo_path || getColonyRepoPath();
@@ -162,9 +173,13 @@ module.exports = function registerRunReadRoutes(router) {
 
     const since = parseInt(req.query.since || '0', 10) || 0;
 
-    // Replay historical entries (already persisted).
+    // Replay the append-only durable event stream. Fall back to the legacy log
+    // projection for pre-migration runs.
     let lastSentSeq = since;
-    const historical = Array.isArray(colony.log) ? colony.log : [];
+    const durable = listRunEvents(colony.id, { since, limit: 5000, eventType: 'log_entry' });
+    const historical = durable.length
+      ? durable.map(event => event.payload).filter(Boolean)
+      : (Array.isArray(colony.log) ? colony.log : []);
     for (const entry of historical) {
       const seq = entry.seq || 0;
       if (seq > since) {
@@ -182,7 +197,7 @@ module.exports = function registerRunReadRoutes(router) {
     }
 
     // If the run is no longer active, close immediately.
-    if (colony.status !== 'running' || !hasBus(colony.id)) {
+    if (colony.status !== 'running') {
       sseWrite(res, { type: 'done', status: colony.status });
       res.end();
       return;
@@ -190,6 +205,8 @@ module.exports = function registerRunReadRoutes(router) {
 
     // Otherwise attach to the live bus. Filter out log_entry events we've already
     // sent historically, so clients don't see duplicates across the handoff.
+    // A durable run may be executing before anybody opens its stream. Creating
+    // a fresh bus here is safe: the runner publishes to the same keyed bus.
     const bus = getBus(colony.id);
     const listener = (event) => {
       if (event.type === 'log_entry' && event.entry?.seq && event.entry.seq <= lastSentSeq) {

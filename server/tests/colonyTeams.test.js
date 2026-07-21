@@ -26,6 +26,8 @@ describe('createTeam', () => {
     assert.equal(t.description, 'hi');         // trimmed
     assert.equal(t.cloud_enabled, true);       // coerced from 1
     assert.equal(t.github_writeback, false);   // default
+    assert.equal(t.github_review, false);
+    assert.equal(t.github_publish, false);
     assert.ok(t.recipe_id);
     assert.ok(t.id && t.created_at);
   });
@@ -60,6 +62,14 @@ describe('updateTeam', () => {
     assert.equal(upd.description, 'new desc');
     assert.equal(upd.github_writeback, true);
     assert.equal(upd.name, t.name); // untouched
+  });
+  it('separates PR review permission from repository publishing', () => {
+    const review = make({ recipeId: 'code_review', githubReview: true, githubPublish: true });
+    assert.equal(review.github_review, true);
+    assert.equal(review.github_publish, false, 'read-only review recipes cannot publish');
+    const delivery = make({ recipeId: 'development_team', githubReview: true, githubPublish: true });
+    assert.equal(delivery.github_review, false, 'delivery recipe does not request GitHub review capability');
+    assert.equal(delivery.github_publish, true);
   });
 });
 

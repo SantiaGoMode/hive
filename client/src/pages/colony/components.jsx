@@ -8,7 +8,8 @@ import {
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { api } from '../../lib/api';
+import { api, downloadAuthenticated } from '../../lib/api';
+import { useAuthenticatedUrl } from '../../hooks/useAuthenticatedUrl';
 import { Button } from '../../components/ui/Button';
 import { formatDate } from '../../lib/utils';
 import { mergeToolEntries } from '../../lib/colonyUtils';
@@ -506,11 +507,12 @@ function LogEntry({ entry, agentColorMap }) {
   }
 
   if (entry.type === 'done') {
+    const failed = entry.status === 'failed' || entry.status === 'blocked';
     return (
       <div className="flex items-center gap-2 py-2">
-        <CheckCircle2 size={14} className="text-green-400 flex-shrink-0" />
-        <span className="text-sm font-medium text-green-400">
-          {entry.status === 'stopped' ? 'Colony stopped' : 'Colony complete'}
+        {failed ? <XCircle size={14} className="text-red-400 flex-shrink-0" /> : <CheckCircle2 size={14} className="text-green-400 flex-shrink-0" />}
+        <span className={`text-sm font-medium ${failed ? 'text-red-400' : 'text-green-400'}`}>
+          {entry.status === 'stopped' ? 'Colony stopped' : entry.status === 'blocked' ? 'Colony blocked' : entry.status === 'failed' ? 'Colony failed' : 'Colony complete'}
         </span>
       </div>
     );
@@ -1228,12 +1230,14 @@ export function ColonyLiveView({ colony, log, agentColorMap, running, streamingB
 
   const agents = Object.entries(agentColorMap).map(([name, color]) => ({ name, color }));
 
-  const statusColor = { running: 'text-blue-400', done: 'text-green-400', stopped: 'text-gray-400', awaiting_tasks: 'text-amber-300', error: 'text-red-400' };
+  const statusColor = { running: 'text-blue-400', done: 'text-green-400', stopped: 'text-gray-400', awaiting_tasks: 'text-amber-300', blocked: 'text-amber-300', failed: 'text-red-400', error: 'text-red-400' };
   const statusIcon = {
     running: <Loader2 size={12} className="animate-spin" />,
     done: <CheckCircle2 size={12} />,
     stopped: <Square size={12} />,
     awaiting_tasks: <FileText size={12} />,
+    blocked: <XCircle size={12} />,
+    failed: <XCircle size={12} />,
     error: <XCircle size={12} />,
   };
 
@@ -1264,12 +1268,12 @@ export function ColonyLiveView({ colony, log, agentColorMap, running, streamingB
             </span>
             <span className="text-xs text-gray-600">{colony.model}</span>
             <span className="text-xs text-gray-700">{formatDate(colony.created_at * 1000)}</span>
-            {colony.trigger?.source_url && (
+            {isSafeUrl(colony.trigger?.source_url) && (
               <a href={colony.trigger.source_url} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs text-blue-300 hover:underline">
                 <Flag size={11} /> source event
               </a>
             )}
-            {colony.board_card?.number && (
+            {colony.board_card?.number && isSafeUrl(colony.board_card?.url) && (
               <a href={colony.board_card.url} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-200">
                 <Link2 size={11} /> {colony.board_card.repo ? `${colony.board_card.repo} ` : ''}#{colony.board_card.number}
               </a>
@@ -1319,7 +1323,7 @@ export function ColonyLiveView({ colony, log, agentColorMap, running, streamingB
       />
 
       {/* Draft PR badge — shown once the branch has been pushed */}
-      {prUrl && (
+      {isSafeUrl(prUrl) && (
         <a href={prUrl} target="_blank" rel="noreferrer"
           className="mb-3 flex items-center gap-2 rounded-lg border border-green-700/50 bg-green-950/20 px-3 py-2 text-xs text-green-300 hover:bg-green-950/40 transition-colors">
           <GitBranch size={13} className="flex-shrink-0" />
@@ -1472,7 +1476,7 @@ export function ColonyLiveView({ colony, log, agentColorMap, running, streamingB
                   {posting ? 'Posting…' : `Retry posting update to #${colony.board_card.number}`}
                 </Button>
               )}
-              {postResult?.ok && (
+              {postResult?.ok && isSafeUrl(postResult.url || colony.board_card.url) && (
                 <a href={postResult.url || colony.board_card.url} target="_blank" rel="noreferrer" className="text-xs text-green-300 hover:underline">
                   Posted to {colony.board_card.repo ? `${colony.board_card.repo} ` : ''}#{colony.board_card.number}
                 </a>
@@ -1654,7 +1658,8 @@ export function TeamConfigModal({ initial = null, recipes, presetRecipeId = null
   const [recipeId, setRecipeId] = useState(initial?.recipe_id || presetRecipeId || 'development_team');
   const [repoPath, setRepoPath] = useState(initial?.repo_path || '');
   const [cloudEnabled, setCloudEnabled] = useState(!!initial?.cloud_enabled);
-  const [githubWriteback, setGithubWriteback] = useState(!!initial?.github_writeback);
+  const [githubReview, setGithubReview] = useState(!!initial?.github_review);
+  const [githubPublish, setGithubPublish] = useState(!!(initial?.github_publish ?? initial?.github_writeback));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -1664,7 +1669,7 @@ export function TeamConfigModal({ initial = null, recipes, presetRecipeId = null
     setSaving(true);
     setError('');
     try {
-      const payload = { name, description, recipe_id: recipeId, repo_path: repoPath, cloud_enabled: cloudEnabled, github_writeback: githubWriteback };
+      const payload = { name, description, recipe_id: recipeId, repo_path: repoPath, cloud_enabled: cloudEnabled, github_review: githubReview, github_publish: githubPublish };
       const team = editing
         ? await api.updateColonyTeam(initial.id, payload)
         : await api.createColonyTeam(payload);
@@ -1709,6 +1714,11 @@ export function TeamConfigModal({ initial = null, recipes, presetRecipeId = null
             </select>
           )}
           {selectedRecipe?.summary && <p className="text-xs text-gray-500 leading-relaxed">{selectedRecipe.summary}</p>}
+          {selectedRecipe?.execution_policy?.mode && (
+            <p className="text-xs text-blue-300/80 border border-blue-900/40 bg-blue-950/20 rounded px-2 py-1.5">
+              Execution mode: {selectedRecipe.execution_policy.mode === 'read_only' ? 'Read-only repository review' : selectedRecipe.execution_policy.mode === 'artifact_only' ? 'Artifacts only — repository changes blocked' : 'Repository delivery — intentional changes allowed'}
+            </p>
+          )}
           {selectedRecipe?.roles?.length > 0 && (
             <div className="flex flex-wrap gap-1.5 pt-0.5">
               {selectedRecipe.roles.map(role => (
@@ -1737,16 +1747,31 @@ export function TeamConfigModal({ initial = null, recipes, presetRecipeId = null
           </button>
         </div>
 
-        <div className="flex items-center justify-between rounded-lg bg-gray-900/50 border border-gray-800 px-3 py-2.5">
-          <div className="min-w-0">
-            <p className="text-xs font-medium text-gray-300">Enable GitHub write-back & branching</p>
-            <p className="text-xs text-gray-600 mt-0.5">Off = read-only. On = drafts become issues, agents branch/commit/PR automatically.</p>
+        {selectedRecipe?.execution_policy?.github_review && (
+          <div className="flex items-center justify-between rounded-lg bg-gray-900/50 border border-gray-800 px-3 py-2.5">
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-gray-300">Post review to the original PR</p>
+              <p className="text-xs text-gray-600 mt-0.5">Posts the verdict/report only. It never edits files, creates a branch, or opens another PR.</p>
+            </div>
+            <button type="button" role="switch" aria-checked={githubReview} onClick={() => setGithubReview(v => !v)}
+              className={`relative w-10 h-6 rounded-full flex-shrink-0 transition-colors ${githubReview ? 'bg-blue-600' : 'bg-gray-700'}`}>
+              <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${githubReview ? 'right-0.5' : 'left-0.5'}`} />
+            </button>
           </div>
-          <button type="button" role="switch" aria-checked={githubWriteback} onClick={() => setGithubWriteback(v => !v)}
-            className={`relative w-10 h-6 rounded-full flex-shrink-0 transition-colors ${githubWriteback ? 'bg-blue-600' : 'bg-gray-700'}`}>
-            <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${githubWriteback ? 'right-0.5' : 'left-0.5'}`} />
-          </button>
-        </div>
+        )}
+
+        {selectedRecipe?.execution_policy?.mode === 'repository_write' && (
+          <div className="flex items-center justify-between rounded-lg bg-gray-900/50 border border-gray-800 px-3 py-2.5">
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-gray-300">Publish repository changes</p>
+              <p className="text-xs text-amber-500/70 mt-0.5">Allows intentional edits, commits, pushes, and a Draft PR after a successful run. Failed or stopped runs are never published.</p>
+            </div>
+            <button type="button" role="switch" aria-checked={githubPublish} onClick={() => setGithubPublish(v => !v)}
+              className={`relative w-10 h-6 rounded-full flex-shrink-0 transition-colors ${githubPublish ? 'bg-amber-600' : 'bg-gray-700'}`}>
+              <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all ${githubPublish ? 'right-0.5' : 'left-0.5'}`} />
+            </button>
+          </div>
+        )}
 
         {error && <p className="text-xs text-red-400">{error}</p>}
 
@@ -2041,6 +2066,8 @@ export function InsightsPanel({ insights }) {
 export function ArtifactViewerModal({ runId, path, onClose }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
+  const rawUrl = api.colonyArtifactRawUrl(runId, path);
+  const mediaUrl = useAuthenticatedUrl(data?.binary ? rawUrl : '');
   useEffect(() => {
     let cancelled = false;
     api.getColonyArtifact(runId, path)
@@ -2066,15 +2093,15 @@ export function ArtifactViewerModal({ runId, path, onClose }) {
             <div className="flex items-center gap-2 text-gray-600 justify-center py-6"><Loader2 size={14} className="animate-spin" /><span className="text-xs">Loading…</span></div>
           ) : data.binary ? (
             data.mime?.startsWith('image/') ? (
-              <img src={api.colonyArtifactRawUrl(runId, path)} alt={path} className="max-w-full mx-auto rounded" />
+              <img src={mediaUrl} alt={path} className="max-w-full mx-auto rounded" />
             ) : data.mime?.startsWith('audio/') ? (
-              <audio controls src={api.colonyArtifactRawUrl(runId, path)} className="w-full" />
+              <audio controls src={mediaUrl} className="w-full" />
             ) : data.mime?.startsWith('video/') ? (
-              <video controls src={api.colonyArtifactRawUrl(runId, path)} className="max-w-full mx-auto rounded" />
+              <video controls src={mediaUrl} className="max-w-full mx-auto rounded" />
             ) : (
-              <a href={api.colonyArtifactRawUrl(runId, path, { download: true })} className="inline-flex items-center gap-1.5 text-sm text-blue-300 hover:underline">
+              <button type="button" onClick={() => downloadAuthenticated(api.colonyArtifactRawUrl(runId, path, { download: true }), path)} className="inline-flex items-center gap-1.5 text-sm text-blue-300 hover:underline">
                 <FileText size={14} /> Download {path} ({Math.round((data.size || 0) / 1024)} KB)
-              </a>
+              </button>
             )
           ) : (path === '__report__' || /\.(md|markdown)$/i.test(path)) ? (
             <div className="text-sm text-gray-300"><AgentMarkdown>{data.content}</AgentMarkdown></div>
@@ -2087,7 +2114,7 @@ export function ArtifactViewerModal({ runId, path, onClose }) {
   );
 }
 
-export function ArtifactsPanel({ artifacts, onOpenArtifact }) {
+export function ArtifactsPanel({ artifacts, onOpenArtifact, onDeleteRun }) {
   if (!artifacts?.length) return null;
   return (
     <div className="rounded-xl border border-gray-800 bg-gray-900/40 px-4 py-3">
@@ -2098,10 +2125,20 @@ export function ArtifactsPanel({ artifacts, onOpenArtifact }) {
       </div>
       <div className="flex flex-col gap-2">
         {artifacts.map(a => (
-          <div key={a.run_id} className="rounded-lg bg-gray-950/50 border border-gray-800/60 px-2.5 py-2">
+          <div key={a.run_id} className="rounded-lg bg-gray-950/50 border border-gray-800/60 px-2.5 py-2 group">
             <div className="flex items-center gap-2 mb-1">
               <span className="text-xs text-gray-400 truncate flex-1">{runLabel(a)}</span>
               <span className="text-xs text-gray-600 flex-shrink-0">{formatDate(a.created_at * 1000)}</span>
+              {onDeleteRun && (
+                <button
+                  type="button"
+                  onClick={() => onDeleteRun(a.run_id)}
+                  className="p-1 text-gray-700 hover:text-red-400 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition flex-shrink-0"
+                  title="Delete this run and its artifacts"
+                >
+                  <Trash2 size={12} />
+                </button>
+              )}
             </div>
             {a.links?.length > 0 && (
               <div className="flex flex-wrap items-center gap-1.5">
@@ -2368,14 +2405,17 @@ export function WorkQueuePanel({
 // the model plan (the inputs that used to live on the launch form), then
 // launches through the queue start endpoint.
 export function StartRunModal({
+  team, recipe,
   item, direction, setDirection,
   model, setModel, models, groupedModels, cloudEnabled,
   modelPlan, setModelPlan, crew, proposing, onProposeModels,
   advancedOpen, setAdvancedOpen,
   launching, error, activeColonyId, onStart, onClose,
 }) {
+  const [publishConfirmed, setPublishConfirmed] = useState(false);
   if (!item) return null;
   const card = item.board_card;
+  const publishEnabled = !!team?.github_publish;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
       <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl border border-gray-800 bg-gray-950 p-5 flex flex-col gap-4" onClick={e => e.stopPropagation()}>
@@ -2393,6 +2433,22 @@ export function StartRunModal({
             {card?.repo || item.source}
             {card?.labels?.length ? ` · ${card.labels.join(', ')}` : ''}
           </p>
+        </div>
+
+        <div className={`rounded-lg border px-3 py-2.5 ${publishEnabled ? 'border-amber-800/50 bg-amber-950/20' : 'border-blue-900/40 bg-blue-950/15'}`}>
+          <p className="text-xs font-medium text-gray-200">
+            Execution policy: {recipe?.execution_policy?.mode === 'read_only' ? 'Read-only review' : recipe?.execution_policy?.mode === 'artifact_only' ? 'Artifacts only' : 'Repository delivery'}
+          </p>
+          <p className="text-xs text-gray-500 mt-1">
+            {team?.github_review ? 'The final report may be posted to the original PR. ' : ''}
+            {publishEnabled ? 'This successful run may commit, push, and open a Draft PR.' : 'This run cannot publish repository changes.'}
+          </p>
+          {publishEnabled && (
+            <label className="flex items-start gap-2 mt-2 text-xs text-amber-200/80 cursor-pointer">
+              <input type="checkbox" checked={publishConfirmed} onChange={e => setPublishConfirmed(e.target.checked)} className="mt-0.5" />
+              <span>I understand this run may publish intentional repository changes. Failed or stopped runs will not publish.</span>
+            </label>
+          )}
         </div>
 
         <div className="flex flex-col gap-1.5">
@@ -2460,7 +2516,7 @@ export function StartRunModal({
 
         {error && <p className="text-xs text-red-400">{error}</p>}
         <div className="flex items-center gap-2 pt-1">
-          <Button onClick={onStart} disabled={!model || launching || !!activeColonyId} className="flex-1">
+          <Button onClick={onStart} disabled={!model || launching || !!activeColonyId || (publishEnabled && !publishConfirmed)} className="flex-1">
             {launching ? <><Loader2 size={13} className="animate-spin" /> Starting…</>
               : activeColonyId ? <><Loader2 size={13} className="animate-spin" /> A run is in progress…</>
               : <><Zap size={13} /> Start run</>}

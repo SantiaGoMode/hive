@@ -23,7 +23,11 @@ extraResources:
     to: gateway
 asar: true
 npmRebuild: false # staging is already Electron-ABI; don't touch desktop deps
+afterSign: ./scripts/verify-macos-signature.js
 mac:
+  sign: ./scripts/sign-macos.js
+  hardenedRuntime: true
+  notarize: true
   icon: assets/hive.icns
   category: public.app-category.developer-tools
   target:

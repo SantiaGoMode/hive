@@ -7,11 +7,31 @@ const { serializeActions, triggerWebhookActions } = require('../lib/webhookActio
 const { processWebhookEvent } = require('../lib/colonyTriggers');
 const { routeWebhookEvent } = require('../lib/workRouter');
 const { resolveSecret, parseEnvRef } = require('../lib/secrets');
-const { timingSafeEqualString } = require('../lib/auth');
+const { createWebhookRateLimiter, isLocalRequest, timingSafeEqualString } = require('../lib/auth');
 const { validateBody, createWebhookSchema, updateWebhookSchema } = require('../lib/validate');
 
 function newId() {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  return crypto.randomUUID();
+}
+
+const webhookRateLimiter = createWebhookRateLimiter();
+const SAFE_EVENT_HEADERS = new Set([
+  'content-type', 'user-agent', 'x-github-delivery', 'x-github-event',
+  'x-gitlab-event', 'x-gitlab-event-uuid',
+]);
+
+function sanitizedEventHeaders(headers = {}) {
+  return Object.fromEntries(Object.entries(headers)
+    .filter(([name]) => SAFE_EVENT_HEADERS.has(String(name).toLowerCase()))
+    .map(([name, value]) => [String(name).toLowerCase(), value]));
+}
+
+function validatedEnabledSecret({ secret, enabled }) {
+  if (!enabled) return null;
+  if (!secret || isMasked(secret)) {
+    return 'An enabled webhook requires a secret or env:NAME reference';
+  }
+  return null;
 }
 
 // Normalize a context spec (array or JSON string) into a JSON string for storage.
@@ -49,6 +69,8 @@ router.get('/', (req, res) => {
 
 router.post('/', validateBody(createWebhookSchema), (req, res) => {
   const { name, description = '', secret = '', enabled = 1, context_spec, actions_config } = req.body;
+  const secretError = validatedEnabledSecret({ secret, enabled: !!enabled });
+  if (secretError) return res.status(400).json({ error: secretError });
   const id = newId();
   db.prepare('INSERT INTO webhooks (id, name, description, secret, enabled, context_spec, actions_config) VALUES (?, ?, ?, ?, ?, ?, ?)')
     .run(id, name, description, isMasked(secret) ? '' : secret, enabled ? 1 : 0, serializeSpec(context_spec), serializeActions(actions_config));
@@ -60,13 +82,17 @@ router.put('/:id', validateBody(updateWebhookSchema), (req, res) => {
   const { name, description, secret, enabled, context_spec, actions_config } = req.body;
   const existing = db.prepare('SELECT * FROM webhooks WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Webhook not found' });
+  const nextSecret = secret === undefined || isMasked(secret) ? existing.secret : secret;
+  const nextEnabled = enabled !== undefined ? !!enabled : !!existing.enabled;
+  const secretError = validatedEnabledSecret({ secret: nextSecret, enabled: nextEnabled });
+  if (secretError) return res.status(400).json({ error: secretError });
 
   db.prepare('UPDATE webhooks SET name=?, description=?, secret=?, enabled=?, context_spec=?, actions_config=?, updated_at=unixepoch() WHERE id=?')
     .run(
       name ?? existing.name,
       description ?? existing.description,
-      secret === undefined || isMasked(secret) ? existing.secret : secret,
-      enabled !== undefined ? (enabled ? 1 : 0) : existing.enabled,
+      nextSecret,
+      nextEnabled ? 1 : 0,
       context_spec !== undefined ? serializeSpec(context_spec) : (existing.context_spec ?? '[]'),
       actions_config !== undefined ? serializeActions(actions_config) : (existing.actions_config ?? '[]'),
       req.params.id
@@ -139,7 +165,7 @@ router.delete('/:id/events', (req, res) => {
 
 // ── Incoming Webhook Handler ──────────────────────────────────────────────────
 
-router.post('/incoming/:id', (req, res) => {
+router.post('/incoming/:id', webhookRateLimiter, (req, res) => {
   const webhookId = req.params.id;
   const webhook = db.prepare('SELECT * FROM webhooks WHERE id = ?').get(webhookId);
   
@@ -148,6 +174,14 @@ router.post('/incoming/:id', (req, res) => {
   }
   if (!webhook.enabled) {
     return res.status(403).json({ error: 'Webhook endpoint is disabled' });
+  }
+
+  // Incoming routes intentionally bypass the Hive UI token. The webhook's
+  // own secret is therefore mandatory for every enabled endpoint.
+  if (!webhook.secret) {
+    return res.status(isLocalRequest(req) ? 409 : 401).json({
+      error: 'Webhook is unsafe and has been disabled until a secret is configured',
+    });
   }
 
   // 1. Signature Verification
@@ -173,9 +207,6 @@ router.post('/incoming/:id', (req, res) => {
       && timingSafeEqualString(req.headers['authorization'], `Bearer ${secret}`)) isValid = true;
     if (!isValid && typeof req.headers['x-api-key'] === 'string'
       && timingSafeEqualString(req.headers['x-api-key'], secret)) isValid = true;
-    if (!isValid && typeof req.query.secret === 'string'
-      && timingSafeEqualString(req.query.secret, secret)) isValid = true;
-
     if (!isValid) {
       return res.status(401).json({ error: 'Invalid or missing signature/secret' });
     }
@@ -191,13 +222,14 @@ router.post('/incoming/:id', (req, res) => {
 
   // 3. Save to database
   const eventId = req.headers['x-github-delivery'] ? String(req.headers['x-github-delivery']) : newId();
+  const safeHeaders = sanitizedEventHeaders(req.headers);
   const insert = db.prepare('INSERT OR IGNORE INTO webhook_events (id, webhook_id, event_type, payload, headers) VALUES (?, ?, ?, ?, ?)')
     .run(
       eventId,
       webhook.id,
       eventType,
       JSON.stringify(req.body || {}),
-      JSON.stringify(req.headers || {})
+      JSON.stringify(safeHeaders)
     );
 
   const event = {
@@ -205,7 +237,7 @@ router.post('/incoming/:id', (req, res) => {
     webhook_id: webhook.id,
     event_type: eventType,
     payload: req.body || {},
-    headers: req.headers || {},
+    headers: safeHeaders,
   };
 
   if (insert.changes > 0) {
@@ -224,3 +256,4 @@ router.post('/incoming/:id', (req, res) => {
 });
 
 module.exports = router;
+module.exports.sanitizedEventHeaders = sanitizedEventHeaders;
