@@ -27,6 +27,7 @@ const REDACT = [
   [/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, 'Bearer [redacted]'],
   [/\b(api[_-]?key|token|secret|password|authorization)\b(\s*[=:]\s*)[^\s,;&"'}\]]+/gi, (_, k, sep) => `${k}${sep}[redacted]`],
 ];
+const SENSITIVE_KEY = /(?:^|[_-])(api[_-]?key|token|secret|password|authorization|cookie)(?:$|[_-])/i;
 function redact(text) {
   let out = String(text);
   for (const [re, rep] of REDACT) out = out.replace(re, rep);
@@ -39,6 +40,7 @@ function safeMeta(meta) {
   try {
     const seen = new WeakSet();
     const json = JSON.stringify(meta, (key, value) => {
+      if (key && SENSITIVE_KEY.test(key)) return '[redacted]';
       if (typeof value === 'object' && value !== null) {
         if (seen.has(value)) return '[circular]';
         seen.add(value);

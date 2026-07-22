@@ -292,7 +292,10 @@ export function ChatWindow({ agent, initialMessages, initialSessionId, onSession
   const bottomRef  = useRef(null);
   const inputRef   = useRef(null);
   const fileInputRef = useRef(null);
+  const onMessagesChangeRef = useRef(onMessagesChange);
   const { connect, disconnect, wsRef } = useWebSocket(agent.id);
+
+  useEffect(() => { onMessagesChangeRef.current = onMessagesChange; }, [onMessagesChange]);
 
   // Reset when agent changes or new chat triggered externally
   useEffect(() => {
@@ -317,7 +320,7 @@ export function ChatWindow({ agent, initialMessages, initialSessionId, onSession
   }, [messages, streamingText, liveTools]);
 
   useEffect(() => {
-    onMessagesChange?.(messages);
+    onMessagesChangeRef.current?.(messages);
   }, [messages]);
 
   const commitStreamingText = useCallback((text, tools, truncated = false, thinking = '') => {

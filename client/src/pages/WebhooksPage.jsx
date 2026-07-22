@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Plus, Trash2, Webhook, RefreshCw, Activity, Filter, Play, FileJson, Clock, Zap } from 'lucide-react';
 import { api } from '../lib/api';
 import { Button } from '../components/ui/Button';
@@ -299,7 +299,7 @@ export default function WebhooksPage() {
   const [config, setConfig] = useState({});
   const [ngrokStatus, setNgrokStatus] = useState({ running: false, url: null });
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       const wh = await api.getWebhooks();
       setWebhooks(wh);
@@ -307,13 +307,13 @@ export default function WebhooksPage() {
       setConfig(conf);
       const ng = await api.getNgrokStatus();
       setNgrokStatus(ng);
-      if (wh.length > 0 && !activeId) setActiveId(wh[0].id);
+      if (wh.length > 0) setActiveId(current => current || wh[0].id);
     } catch { toast.error('Failed to load webhooks'); }
-  };
+  }, []);
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => { loadData(); }, [loadData]);
 
-  const loadEvents = async () => {
+  const loadEvents = useCallback(async () => {
     if (!activeId) return;
     try {
       const evts = await api.getWebhookEvents(activeId, eventTypeFilter);
@@ -321,9 +321,9 @@ export default function WebhooksPage() {
       const runs = await api.getWebhookActionRuns(activeId);
       setActionRuns(runs);
     } catch { setEvents([]); }
-  };
+  }, [activeId, eventTypeFilter]);
 
-  useEffect(() => { loadEvents(); }, [activeId, eventTypeFilter]);
+  useEffect(() => { loadEvents(); }, [loadEvents]);
 
   const activeWebhook = webhooks.find(w => w.id === activeId);
   const activeActions = parseActions(activeWebhook);

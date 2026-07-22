@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Download, Trash2, HardDrive, RefreshCw, Plus, Cpu, Search, Bot } from 'lucide-react';
 import { api, getHiveAuthToken } from '../../lib/api';
 import { Button } from '../ui/Button';
@@ -16,6 +16,9 @@ function PullProgress({ name, onDone, onDismiss }) {
   const [pct, setPct] = useState(0);
   const [done, setDone] = useState(false);
   const [error, setError] = useState(null);
+  const onDoneRef = useRef(onDone);
+
+  useEffect(() => { onDoneRef.current = onDone; }, [onDone]);
 
   useEffect(() => {
     const ctrl = new AbortController();
@@ -36,7 +39,7 @@ function PullProgress({ name, onDone, onDismiss }) {
         if (data.error) { setError(String(data.error)); return; }
         if (data.status) setProgress(data.status);
         if (data.completed && data.total) setPct(Math.round(data.completed / data.total * 100));
-        if (data.status === 'success' || data.status === 'done') { setDone(true); onDone(); }
+        if (data.status === 'success' || data.status === 'done') { setDone(true); onDoneRef.current(); }
       }
       // Stream ended without success or an explicit error — treat as failed.
       setDone(prev => { if (!prev) setError('Pull ended without completing — check the model tag and Ollama logs.'); return prev; });
@@ -86,13 +89,13 @@ export function ModelBrowser({ onPullComplete }) {
   const [recFamily, setRecFamily] = useState('All');
   const [recSort, setRecSort] = useState('fit');
 
-  const load = () => {
+  const load = useCallback(() => {
     setLoading(true);
     api.getModels().then(setModels).catch(() => setModels([])).finally(() => setLoading(false));
     api.getSystemStatus().then(setSystemStatus).catch(() => setSystemStatus(null));
-  };
+  }, []);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [load]);
 
   const handlePull = () => {
     if (!pullName.trim()) return;

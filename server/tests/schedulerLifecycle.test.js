@@ -46,4 +46,24 @@ describe('scheduler lifecycle registry', () => {
     assert.ok(status.last_tick_at, 'last tick timestamp is exposed');
     assert.match(status.last_error, /Agent not found/);
   });
+
+  it('records valid direct schedules in the durable automation ledger', () => {
+    const agentId = `scheduled-agent-${Date.now()}`;
+    const scheduleId = `durable-schedule-${Date.now()}`;
+    db.prepare('INSERT INTO agents (id, name, model) VALUES (?, ?, ?)').run(agentId, 'Scheduled test', 'fake-model');
+    db.prepare(`
+      INSERT INTO scheduled_runs (id, agent_id, label, cron_expr, prompt, tools)
+      VALUES (?, ?, 'Durable', '0 9 * * *', 'work', '[]')
+    `).run(scheduleId, agentId);
+    try {
+      const job = scheduler.runSchedule(db.prepare('SELECT * FROM scheduled_runs WHERE id=?').get(scheduleId));
+      assert.equal(job.kind, 'schedule');
+      assert.equal(job.source_ref, scheduleId);
+      assert.equal(JSON.parse(job.policy).source, 'schedule');
+    } finally {
+      db.prepare("DELETE FROM automation_jobs WHERE kind='schedule' AND source_ref=?").run(scheduleId);
+      db.prepare('DELETE FROM scheduled_runs WHERE id=?').run(scheduleId);
+      db.prepare('DELETE FROM agents WHERE id=?').run(agentId);
+    }
+  });
 });

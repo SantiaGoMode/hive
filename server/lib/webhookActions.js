@@ -8,9 +8,7 @@ const { buildEnvelope } = require('./webhookProjection');
 const { getOllamaUrl } = require('./ollamaUrl');
 const { logSwallowed } = require('./logSwallowed');
 const { unattendedRunContext } = require('./colonyPolicy');
-const { scheduleAutomation } = require('./automationQueue');
-
-const queuedRunIds = new Set();
+const automationJobs = require('./automationJobs');
 
 function newId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -86,35 +84,42 @@ function runRecordForAction(webhook, event, action, input) {
   return runId;
 }
 
-function enqueueActionRun(runId, action, input) {
-  if (queuedRunIds.has(runId)) return;
-  queuedRunIds.add(runId);
-  scheduleAutomation(() => executeActionRun(runId, action, input))
-    .finally(() => queuedRunIds.delete(runId));
+function enqueueActionRun(runId) {
+  return automationJobs.enqueue({
+    kind: 'webhook_action',
+    source: 'webhook',
+    sourceRef: runId,
+    idempotencyKey: `webhook-action:${runId}`,
+    payload: { runId },
+    policy: unattendedRunContext('webhook'),
+  });
+}
+
+function actionFromRow(row) {
+  return {
+    id: row.action_id,
+    label: row.action_label,
+    target_type: row.action_type,
+    pipeline_id: row.action_type === 'pipeline' ? row.target_id : '',
+    agent_id: row.action_type === 'agent' ? row.target_id : '',
+  };
 }
 
 function recoverPendingActions() {
   const rows = db.prepare("SELECT * FROM webhook_action_runs WHERE status IN ('queued','running') ORDER BY created_at ASC, id ASC").all();
   db.prepare("UPDATE webhook_action_runs SET status='queued' WHERE status='running'").run();
   for (const row of rows) {
-    const action = {
-      id: row.action_id,
-      label: row.action_label,
-      target_type: row.action_type,
-      pipeline_id: row.action_type === 'pipeline' ? row.target_id : '',
-      agent_id: row.action_type === 'agent' ? row.target_id : '',
-    };
-    enqueueActionRun(row.id, action, row.input);
+    enqueueActionRun(row.id);
   }
   return rows.length;
 }
 
-async function executeActionRun(runId, action, input) {
+async function executeActionRun(runId, action, input, signal = null) {
   try {
     db.prepare("UPDATE webhook_action_runs SET status='running' WHERE id=?").run(runId);
     const runContext = unattendedRunContext('webhook');
     if (action.target_type === 'pipeline') {
-      const result = await runPipelineById(action.pipeline_id, input, { runContext });
+      const result = await runPipelineById(action.pipeline_id, input, { runContext, signal });
       db.prepare(`
         UPDATE webhook_action_runs
         SET status='done', output=?, pipeline_run_id=?, completed_at=unixepoch()
@@ -128,7 +133,7 @@ async function executeActionRun(runId, action, input) {
     if (!agent.model) throw new Error('No model configured');
     const ollamaUrl = getOllamaUrl();
     const hivePath = process.env.HIVE_HOME || path.join(os.homedir(), '.hive');
-    const output = await runAgentOnce(agent, [{ role: 'user', content: input }], ollamaUrl, 0, null, hivePath, null, undefined, null, runContext);
+    const output = await runAgentOnce(agent, [{ role: 'user', content: input }], ollamaUrl, 0, null, hivePath, null, undefined, signal, runContext);
     db.prepare(`
       UPDATE webhook_action_runs
       SET status='done', output=?, completed_at=unixepoch()
@@ -140,8 +145,16 @@ async function executeActionRun(runId, action, input) {
       SET status='error', error=?, completed_at=unixepoch()
       WHERE id=?
     `).run(e.message || String(e), runId);
+    throw e;
   }
 }
+
+automationJobs.registerHandler('webhook_action', async ({ runId }, job) => {
+  const row = db.prepare('SELECT * FROM webhook_action_runs WHERE id=?').get(runId);
+  if (!row) throw new Error(`Webhook action run not found: ${runId}`);
+  await executeActionRun(runId, actionFromRow(row), row.input, job.signal);
+  return { resultRef: runId };
+});
 
 function triggerWebhookActions(webhook, event) {
   const actions = normalizeActions(webhook.actions_config);
@@ -157,7 +170,7 @@ function triggerWebhookActions(webhook, event) {
     const input = renderTemplate(action.prompt, envelope);
     const runId = runRecordForAction(webhook, event, action, input);
     runIds.push(runId);
-    enqueueActionRun(runId, action, input);
+    enqueueActionRun(runId);
   }
 
   return runIds;

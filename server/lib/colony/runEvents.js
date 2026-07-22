@@ -1,6 +1,5 @@
-// Durable append-only event stream for Colony runs. The legacy colonies.log
-// JSON column remains a bounded projection for compatibility; this table is the
-// replay/audit source and survives continuation, reconnects, and process restarts.
+// Durable append-only event stream for Colony runs. This is the sole replay and
+// audit source and survives continuation, reconnects, and process restarts.
 const db = require('../../db');
 
 function safeParse(value, fallback = {}) {
@@ -31,4 +30,10 @@ function listRunEvents(runId, { since = 0, limit = 5000, eventType = null } = {}
   return rows.map(row => ({ ...row, payload: safeParse(row.payload, {}) }));
 }
 
-module.exports = { appendRunEvent, listRunEvents, lastSequence };
+function listLogEntries(runId, { since = 0, limit = 5000 } = {}) {
+  return listRunEvents(runId, { since, limit, eventType: 'log_entry' })
+    .map(event => event.payload)
+    .filter(entry => entry && typeof entry === 'object');
+}
+
+module.exports = { appendRunEvent, listLogEntries, listRunEvents, lastSequence };

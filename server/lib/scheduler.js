@@ -8,7 +8,7 @@ const lifecycle = require('./schedulerLifecycle');
 const path = require('path');
 const os = require('os');
 const { unattendedRunContext } = require('./colonyPolicy');
-const { scheduleAutomation } = require('./automationQueue');
+const automationJobs = require('./automationJobs');
 
 // Map of schedule id → cron.ScheduledTask
 const tasks = new Map();
@@ -24,14 +24,13 @@ function getSettings() {
   };
 }
 
-function runSchedule(schedule) {
+async function executeSchedule(schedule, { signal = null } = {}) {
   if (running.has(schedule.id)) {
     lifecycle.heartbeat('scheduler', { schedule_id: schedule.id, event: 'skip_overlapping_run' });
     db.prepare('UPDATE scheduled_runs SET last_error=? WHERE id=?')
       .run('Skipped: previous run still in progress', schedule.id);
-    return;
+    throw new Error('Skipped: previous run still in progress');
   }
-  lifecycle.heartbeat('scheduler', { schedule_id: schedule.id, event: 'run' });
 
   // Pipeline target: run the whole pipeline with the schedule's prompt as
   // input and store its final output. Required lazily — the module graph
@@ -40,25 +39,25 @@ function runSchedule(schedule) {
   if (schedule.pipeline_id) {
     const { runPipelineById } = require('./pipelineRunner');
     running.add(schedule.id);
-    scheduleAutomation(() => runPipelineById(schedule.pipeline_id, schedule.prompt, {
-      hivePath: getSettings().hivePath,
-      runContext: unattendedRunContext('schedule'),
-    }))
-      .then(({ final_output }) => {
-        db.prepare(
-          'UPDATE scheduled_runs SET last_run=unixepoch(), last_output=?, last_error=NULL, run_count=run_count+1 WHERE id=?',
-        ).run(final_output, schedule.id);
-      })
-      .catch((err) => {
-        lifecycle.recordError('scheduler', err);
-        db.prepare(
-          'UPDATE scheduled_runs SET last_run=unixepoch(), last_error=?, run_count=run_count+1 WHERE id=?',
-        ).run(err.message, schedule.id);
-      })
-      .finally(() => {
-        running.delete(schedule.id);
+    try {
+      const { final_output, run_id } = await runPipelineById(schedule.pipeline_id, schedule.prompt, {
+        hivePath: getSettings().hivePath,
+        runContext: unattendedRunContext('schedule'),
+        signal,
       });
-    return;
+      db.prepare(
+        'UPDATE scheduled_runs SET last_run=unixepoch(), last_output=?, last_error=NULL, run_count=run_count+1 WHERE id=?',
+      ).run(final_output, schedule.id);
+      return { resultRef: run_id || null };
+    } catch (err) {
+      lifecycle.recordError('scheduler', err);
+      db.prepare(
+        'UPDATE scheduled_runs SET last_run=unixepoch(), last_error=?, run_count=run_count+1 WHERE id=?',
+      ).run(err.message, schedule.id);
+      throw err;
+    } finally {
+      running.delete(schedule.id);
+    }
   }
 
   // Colony team target: launch (or queue, if the team is busy) a mission for the
@@ -75,7 +74,7 @@ function runSchedule(schedule) {
       db.prepare('UPDATE scheduled_runs SET last_run=unixepoch(), last_error=?, run_count=run_count+1 WHERE id=?')
         .run('No Operator model available to run the scheduled mission', schedule.id);
       lifecycle.recordError('scheduler', `No operator model for schedule ${schedule.id}`);
-      return;
+      throw new Error('No Operator model available to run the scheduled mission');
     }
     try {
       let output;
@@ -95,7 +94,7 @@ function runSchedule(schedule) {
       db.prepare('UPDATE scheduled_runs SET last_run=unixepoch(), last_error=?, run_count=run_count+1 WHERE id=?')
         .run(err.message, schedule.id);
     }
-    return;
+    return { resultRef: null };
   }
 
   const agent = readAgent(schedule.agent_id);
@@ -103,13 +102,13 @@ function runSchedule(schedule) {
     db.prepare('UPDATE scheduled_runs SET last_run=unixepoch(), last_error=? WHERE id=?')
       .run('Agent not found', schedule.id);
     lifecycle.recordError('scheduler', `Agent not found: ${schedule.agent_id}`);
-    return;
+    throw new Error('Agent not found');
   }
   if (!agent.model) {
     db.prepare('UPDATE scheduled_runs SET last_run=unixepoch(), last_error=? WHERE id=?')
       .run('Agent has no model configured', schedule.id);
     lifecycle.recordError('scheduler', `Agent has no model configured: ${schedule.agent_id}`);
-    return;
+    throw new Error('Agent has no model configured');
   }
 
   const { ollamaUrl, hivePath } = getSettings();
@@ -124,21 +123,53 @@ function runSchedule(schedule) {
   // Context labels gateway spend as 'schedule'; runAgentOnce also honors the
   // agent's own reasoning toggle on this path.
   const runCtx = unattendedRunContext('schedule');
-  scheduleAutomation(() => runAgentOnce(agent, [{ role: 'user', content: schedule.prompt }], ollamaUrl, 0, null, hivePath, toolsOverride, undefined, null, runCtx))
-    .then((output) => {
-      db.prepare(
-        'UPDATE scheduled_runs SET last_run=unixepoch(), last_output=?, last_error=NULL, run_count=run_count+1 WHERE id=?',
-      ).run(output, schedule.id);
-    })
-    .catch((err) => {
-      lifecycle.recordError('scheduler', err);
-      db.prepare(
-        'UPDATE scheduled_runs SET last_run=unixepoch(), last_error=?, run_count=run_count+1 WHERE id=?',
-      ).run(err.message, schedule.id);
-    })
-    .finally(() => {
-      running.delete(schedule.id);
-    });
+  try {
+    const output = await runAgentOnce(agent, [{ role: 'user', content: schedule.prompt }], ollamaUrl, 0, null, hivePath, toolsOverride, undefined, signal, runCtx);
+    db.prepare(
+      'UPDATE scheduled_runs SET last_run=unixepoch(), last_output=?, last_error=NULL, run_count=run_count+1 WHERE id=?',
+    ).run(output, schedule.id);
+    return { resultRef: null };
+  } catch (err) {
+    lifecycle.recordError('scheduler', err);
+    db.prepare(
+      'UPDATE scheduled_runs SET last_run=unixepoch(), last_error=?, run_count=run_count+1 WHERE id=?',
+    ).run(err.message, schedule.id);
+    throw err;
+  } finally {
+    running.delete(schedule.id);
+  }
+}
+
+function runSchedule(schedule, { idempotencyKey = null } = {}) {
+  lifecycle.heartbeat('scheduler', { schedule_id: schedule.id, event: 'run' });
+
+  // Colony launches already land on Colony's durable queue. Direct agent and
+  // pipeline schedules use the generic unattended-job ledger below.
+  if (schedule.team_id) return executeSchedule(schedule).catch(() => null);
+
+  // Configuration errors are deterministic and should surface immediately,
+  // not consume retry attempts indefinitely.
+  if (!schedule.pipeline_id) {
+    const agent = readAgent(schedule.agent_id);
+    if (!agent || !agent.model) return executeSchedule(schedule).catch(() => null);
+  }
+
+  const existing = automationJobs.activeFor('schedule', schedule.id);
+  if (existing) {
+    db.prepare('UPDATE scheduled_runs SET last_error=? WHERE id=?')
+      .run('Skipped: previous run still in progress', schedule.id);
+    lifecycle.heartbeat('scheduler', { schedule_id: schedule.id, event: 'skip_overlapping_run' });
+    return existing;
+  }
+
+  return automationJobs.enqueue({
+    kind: 'schedule',
+    source: 'schedule',
+    sourceRef: schedule.id,
+    idempotencyKey: idempotencyKey || `schedule:${schedule.id}:manual:${Date.now()}`,
+    payload: { schedule },
+    policy: unattendedRunContext('schedule'),
+  });
 }
 
 function register(schedule) {
@@ -149,7 +180,9 @@ function register(schedule) {
   if (!schedule.enabled) return;
   if (!cron.validate(schedule.cron_expr)) return;
 
-  const task = cron.schedule(schedule.cron_expr, () => runSchedule(schedule), { scheduled: true });
+  const task = cron.schedule(schedule.cron_expr, () => runSchedule(schedule, {
+    idempotencyKey: `schedule:${schedule.id}:${Math.floor(Date.now() / 60_000)}`,
+  }), { scheduled: true });
   tasks.set(schedule.id, task);
 }
 
@@ -181,6 +214,7 @@ function rawStatus() {
 }
 
 lifecycle.register('scheduler', { start: loadAll, stop: stopAll, status: rawStatus });
+automationJobs.registerHandler('schedule', ({ schedule }, job) => executeSchedule(schedule, { signal: job.signal }));
 
 module.exports = {
   loadAll,

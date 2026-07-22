@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Wand2, Trash2, Save, RefreshCw, Plug, Terminal, RotateCcw, FolderOpen, FileText, ChevronRight, ExternalLink, UserRound } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
@@ -83,6 +83,11 @@ const TOOLS = [
 
 const BASE_TABS = ['Identity', 'Model', 'System Prompt', 'Tools', 'Memory', 'Advanced'];
 const ROUTINE_TOOLS = new Set(['agent_tools', 'memory', 'web_search']);
+const AGENT_DEFAULTS = {
+  name: '', persona_name: '', persona_role: '', description: '', avatar_color: '#d97706',
+  model: '', temperature: 0.7, max_tokens: 4096, context_length: 8192,
+  system_prompt: '', tools: [], skills: [], reasoning: false,
+};
 
 function AdvancedDisclosure({ id, title, summary, children, defaultOpen = false }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -120,13 +125,8 @@ export function AgentEditor({ open, onClose, agent, initialValues }) {
   const [staffProfileId, setStaffProfileId] = useState('');
   const [staffCreating, setStaffCreating] = useState(false);
   const [createMode, setCreateMode] = useState('staff');
-  const DEFAULTS = {
-    name: '', persona_name: '', persona_role: '', description: '', avatar_color: '#d97706',
-    model: '', temperature: 0.7, max_tokens: 4096, context_length: 8192,
-    system_prompt: '', tools: [], skills: [], reasoning: false,
-  };
-
-  const [form, setForm] = useState(DEFAULTS);
+  const initialValuesRef = useRef(initialValues);
+  const [form, setForm] = useState(AGENT_DEFAULTS);
   const [mcpServers, setMcpServers] = useState([]);
   const [skillOptions, setSkillOptions] = useState([]);
   const [memory, setMemory] = useState('');
@@ -144,9 +144,11 @@ export function AgentEditor({ open, onClose, agent, initialValues }) {
   const TABS = hasSandbox ? [...BASE_TABS, 'Sandbox'] : BASE_TABS;
   const selectedStaffProfile = staffProfiles.find(profile => profile.id === staffProfileId) || null;
 
+  useEffect(() => { initialValuesRef.current = initialValues; }, [initialValues]);
+
   useEffect(() => {
-    if (agent) setForm({ ...DEFAULTS, ...agent });
-    else setForm({ ...DEFAULTS, ...(initialValues || {}) });
+    if (agent) setForm({ ...AGENT_DEFAULTS, ...agent });
+    else setForm({ ...AGENT_DEFAULTS, ...(initialValuesRef.current || {}) });
     setCreateMode(agent ? 'manual' : 'staff');
     setTab(0);
     setShowTemplates(false);
@@ -166,7 +168,7 @@ export function AgentEditor({ open, onClose, agent, initialValues }) {
   // Load memory when Memory tab is opened
   useEffect(() => {
     if (tab === 4 && agent?.id) loadMemory();
-  }, [tab, agent?.id]);
+  }, [tab, agent?.id, loadMemory]);
 
   // Load sandbox status when Tools tab is opened
   useEffect(() => {
@@ -181,7 +183,7 @@ export function AgentEditor({ open, onClose, agent, initialValues }) {
       api.getSandboxFiles(agent.id).then(d => setSandboxFiles(d.files || [])).catch(() => setSandboxFiles([]));
       api.getSandboxStatus(agent.id).then(setSandboxStatus).catch(() => {});
     }
-  }, [tab, agent?.id, hasSandbox]);
+  }, [tab, agent?.id, hasSandbox, sandboxTabIndex]);
 
   const loadSandboxFile = async (filePath) => {
     if (filePath.endsWith('/') || filePath === '.') return;

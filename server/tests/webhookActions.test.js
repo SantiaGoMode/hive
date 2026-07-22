@@ -65,6 +65,10 @@ describe('webhook automatic actions', () => {
       event_type: 'issues',
       payload: { issue: { number: 42 } },
     };
+    db.prepare('INSERT INTO webhooks (id, name, secret, context_spec, actions_config) VALUES (?, ?, ?, ?, ?)')
+      .run(webhook.id, 'Webhook action test', 'test-secret', webhook.context_spec, webhook.actions_config);
+    db.prepare('INSERT INTO webhook_events (id, webhook_id, event_type, payload) VALUES (?, ?, ?, ?)')
+      .run(event.id, webhook.id, event.event_type, JSON.stringify(event.payload));
 
     const runIds = triggerWebhookActions(webhook, event);
     assert.equal(runIds.length, 1);
@@ -74,10 +78,15 @@ describe('webhook automatic actions', () => {
     assert.equal(queued.action_label, 'Coding flow for issues');
     assert.equal(queued.action_type, 'pipeline');
     assert.match(queued.input, /"issue": 42/);
+    const durableJob = db.prepare("SELECT * FROM automation_jobs WHERE kind='webhook_action' AND source_ref=?").get(runIds[0]);
+    assert.ok(durableJob, 'webhook action is represented by a durable automation job');
+    assert.equal(JSON.parse(durableJob.policy).source, 'webhook');
 
     await sleep(25);
     const finished = db.prepare('SELECT * FROM webhook_action_runs WHERE id=?').get(runIds[0]);
     assert.equal(finished.status, 'error');
     assert.match(finished.error, /Pipeline not found/);
+    db.prepare('DELETE FROM automation_jobs WHERE source_ref=?').run(runIds[0]);
+    db.prepare('DELETE FROM webhooks WHERE id=?').run(webhook.id);
   });
 });

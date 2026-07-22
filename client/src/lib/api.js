@@ -248,6 +248,7 @@ export const api = {
   getDatabaseIntegrity: () => req('GET', '/system/database/integrity'),
   getDatabaseBackups: () => req('GET', '/system/database/backups'),
   createDatabaseBackup: () => req('POST', '/system/database/backups'),
+  getDiagnostics: () => req('GET', '/system/diagnostics'),
   stopModel: (model) => req('POST', '/system/model/stop', { model }),
   startNgrok: () => req('POST', '/system/ngrok/start'),
   stopNgrok: () => req('POST', '/system/ngrok/stop'),

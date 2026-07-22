@@ -88,7 +88,7 @@ export function ModelsPage() {
   useEffect(() => {
     fetchAgents().finally(() => setAgentsLoaded(true));
     api.getAllModels().then(setGrouped).catch(() => setGrouped({}));
-  }, []);
+  }, [fetchAgents]);
 
   // First-run CTA: a usable model exists (or one was just pulled) but no agent yet.
   const bannerModel = agentsLoaded && agents.length === 0

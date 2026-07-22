@@ -1,6 +1,6 @@
 // Pipelines page — composition + top-level state. Presentational pieces,
 // editors, the run modal, and history live under ../features/pipelines/ (#23).
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Plus } from 'lucide-react';
 import { api } from '../lib/api';
 import { Button } from '../components/ui/Button';
@@ -27,13 +27,13 @@ export function PipelinesPage() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [historyTarget, setHistoryTarget] = useState(null);
 
-  useEffect(() => { fetchAgents(); }, []);
+  useEffect(() => { fetchAgents(); }, [fetchAgents]);
 
-  const load = () => {
+  const load = useCallback(() => {
     setLoading(true);
     api.getPipelines().then(setPipelines).catch(() => setPipelines([])).finally(() => setLoading(false));
-  };
-  useEffect(load, []);
+  }, []);
+  useEffect(load, [load]);
 
   const handleEditorClose = (saved) => { setEditorOpen(false); setEditing(null); setEditorTemplate(null); if (saved) load(); };
   const handleEdit = (p) => { setEditing(p); setEditorTemplate(null); setEditorOpen(true); };

@@ -16,6 +16,8 @@ const gatewaySpend = require('../lib/gatewaySpend');
 const setupStatus = require('../lib/setupStatus');
 const { invalidateSettingsCache } = require('../lib/config');
 const databaseMaintenance = require('../lib/databaseMaintenance');
+const { buildDiagnostics } = require('../lib/diagnostics');
+const automationJobs = require('../lib/automationJobs');
 
 // Read a value from a source, swallowing any failure so /metrics never 500s on
 // one bad source.
@@ -89,7 +91,10 @@ router.get('/metrics', async (req, res) => {
     memory: safe(() => getSystemMemory(), null),
     active_colony_runs: safe(() => colonyRunner.activeRunCount(), null),
     active_pipeline_runs: safe(() => require('../lib/pipelineRunner').activeRunCount(), null),
-    automation_queue: safe(() => require('../lib/automationQueue').status(), null),
+    automation_queue: safe(() => ({
+      durable: automationJobs.status(),
+      dispatcher: require('../lib/automationQueue').status(),
+    }), null),
     scheduled_tasks: safe(() => scheduler.scheduledCount(), null),
     scheduler_lifecycle: safe(() => schedulerLifecycle.statuses(), null),
     ollama: { reachable: ollamaReachable, url: getOllamaUrl(), loaded_models: loadedModels, loaded_model_details: loadedModelDetails },
@@ -128,6 +133,23 @@ router.post('/database/backups', async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: `Database backup failed: ${error.message}` });
   }
+});
+
+router.get('/diagnostics', (req, res) => {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  res.setHeader('Content-Disposition', `attachment; filename="hive-diagnostics-${stamp}.json"`);
+  res.json(buildDiagnostics());
+});
+
+router.get('/automation/jobs', (req, res) => {
+  res.json({ jobs: automationJobs.list({ status: req.query.status, limit: req.query.limit }) });
+});
+
+router.post('/automation/jobs/:id/replay', (req, res) => {
+  if (!automationJobs.replay(req.params.id)) {
+    return res.status(409).json({ error: 'Only dead-letter jobs can be replayed' });
+  }
+  res.json({ ok: true });
 });
 
 // POST /api/system/model/stop — unload a model from Ollama memory

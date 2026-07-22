@@ -1,5 +1,5 @@
 // Extracted from PipelinesPage (#23).
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { CheckCircle, XCircle, Loader, ArrowDown, History, X, ChevronDown, ChevronUp, GitMerge, RotateCcw } from 'lucide-react';
 import { api } from '../../lib/api';
 import { groupStepEntries } from '../../components/pipelines/pipelineRunUtils';
@@ -91,16 +91,16 @@ export function HistoryDrawer({ pipeline, onClose }) {
   const [loading, setLoading] = useState(true);
   const [clearing, setClearing] = useState(false);
 
-  const loadRuns = () => {
+  const loadRuns = useCallback(() => {
     if (!pipeline) return;
     setLoading(true);
     api.getPipelineRuns(pipeline.id)
       .then(setRuns)
       .catch(() => setRuns([]))
       .finally(() => setLoading(false));
-  };
+  }, [pipeline]);
 
-  useEffect(() => { loadRuns(); }, [pipeline]);
+  useEffect(() => { loadRuns(); }, [loadRuns]);
 
   const handleClearHistory = async () => {
     if (!confirm('Clear all run history for this pipeline?')) return;

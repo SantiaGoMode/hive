@@ -6,6 +6,7 @@ const { logSwallowed } = require('../logSwallowed');
 const colonyModels = require('../colonyModels');
 const { DEFAULT_RECIPE_ID, getColonyRecipe } = require('../colonyRecipes');
 const { runCapabilitySnapshot, defaultContextBudget } = require('../colonyPolicy');
+const { listLogEntries } = require('./runEvents');
 
 function newId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -31,11 +32,6 @@ function addAgentToColony(colonyId, agentId) {
     db.prepare('UPDATE colonies SET agent_ids=?, updated_at=unixepoch() WHERE id=?')
       .run(JSON.stringify(ids), colonyId);
   }
-}
-
-function persistLog(colonyId, entries) {
-  const json = JSON.stringify(entries);
-  db.prepare('UPDATE colonies SET log=?, updated_at=unixepoch() WHERE id=?').run(json, colonyId);
 }
 
 function drainPendingDirections(colonyId) {
@@ -117,7 +113,7 @@ function getColony(id) {
     ...row,
     agent_ids: JSON.parse(row.agent_ids || '[]'),
     agents,
-    log: JSON.parse(row.log || '[]'),
+    log: listLogEntries(id, { limit: 10000 }),
     plan,
     deliverable,
     board_card: boardCard,
@@ -167,7 +163,6 @@ module.exports = {
   newId,
   parseField,
   addAgentToColony,
-  persistLog,
   drainPendingDirections,
   createColony,
   listColonies,

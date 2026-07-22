@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Clock, MessageSquare, Wrench, Trash2, Download, Eye, ArrowRight, Pencil, Check, X } from 'lucide-react';
 import { api } from '../../lib/api';
 import { Button } from '../ui/Button';
@@ -84,12 +84,12 @@ export function SessionList({ agentId, onContinue }) {
   const [viewing, setViewing] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
 
-  const load = () => {
+  const load = useCallback(() => {
     setLoading(true);
     api.getSessions(agentId).then(setSessions).catch(() => setSessions([])).finally(() => setLoading(false));
-  };
+  }, [agentId]);
 
-  useEffect(() => { load(); }, [agentId]);
+  useEffect(() => { load(); }, [load]);
 
   const handleView = async (sess) => {
     try {

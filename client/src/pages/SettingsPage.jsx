@@ -3,12 +3,14 @@ import { Link } from 'react-router-dom';
 import {
   Trash2, RefreshCw, CheckCircle, XCircle, Loader, ChevronRight,
   Sun, Moon, Type, Cpu, Square, Wifi, WifiOff, MemoryStick, Play, Link2, Wrench, Bot,
+  Download,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { toast } from '../stores/toastStore';
 import { useThemeStore, ACCENT_PRESETS } from '../stores/themeStore';
+import { download } from '../lib/utils';
 
 // ── Model Providers Section ───────────────────────────────────────────────────
 
@@ -532,6 +534,7 @@ export function SettingsPage() {
   const [clearingBlackboard, setClearingBlackboard] = useState(false);
   const [clearingPipelineRuns, setClearingPipelineRuns] = useState(false);
   const [clearingScheduleHistory, setClearingScheduleHistory] = useState(false);
+  const [creatingDiagnostics, setCreatingDiagnostics] = useState(false);
   const [ngrokStatus, setNgrokStatus] = useState({ running: false, url: null });
   const [tunnelActionLoading, setTunnelActionLoading] = useState(false);
 
@@ -611,6 +614,17 @@ export function SettingsPage() {
       toast.success('Schedule history cleared');
     } catch (e) { toast.error(e.message); }
     finally { setClearingScheduleHistory(false); }
+  };
+
+  const handleDownloadDiagnostics = async () => {
+    setCreatingDiagnostics(true);
+    try {
+      const diagnostics = await api.getDiagnostics();
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      download(JSON.stringify(diagnostics, null, 2), `hive-diagnostics-${stamp}.json`, 'application/json');
+      toast.success('Redacted diagnostics downloaded');
+    } catch (e) { toast.error(e.message); }
+    finally { setCreatingDiagnostics(false); }
   };
 
   return (
@@ -744,6 +758,16 @@ export function SettingsPage() {
         <AdvancedDisclosure id="settings-maintenance" title="Maintenance actions" summary="Clear shared notes and run history">
           <div className="flex flex-col gap-4">
             <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-200">Support Diagnostics</p>
+                <p className="text-xs text-gray-500 mt-0.5">Downloads system health, schema, queue, and redacted error metadata without prompts, paths, URLs, or credential values</p>
+              </div>
+              <Button variant="secondary" size="sm" onClick={handleDownloadDiagnostics} disabled={creatingDiagnostics}>
+                <Download size={13} />
+                {creatingDiagnostics ? 'Preparing…' : 'Download'}
+              </Button>
+            </div>
+            <div className="flex items-center justify-between border-t border-gray-800 pt-4">
               <div>
                 <p className="text-sm text-gray-200">Shared Blackboard</p>
                 <p className="text-xs text-gray-500 mt-0.5">Notes written to <code className="bg-gray-800 px-1 rounded">~/.hive/shared/SHARED.md</code> by any agent</p>

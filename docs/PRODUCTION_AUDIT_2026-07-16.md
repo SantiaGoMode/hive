@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-16
 **Scope:** Current local worktree, including uncommitted files
-**Verdict after remediation:** **Production candidate pending signed/notarized CI packaging and a clean release commit**
+**Current verdict after the 2026-07-21 structural pass:** **Signed production release delivered; the principal structural backlog and legacy Colony log-reader retirement are implemented**
 
 Hive has a credible local-first security foundation: first-boot API authentication, strict data-file permissions, a hardened Docker sandbox, bounded durable Colony execution, replayable Colony events, capability snapshots, and focused security tests. The main blockers are at the boundaries where untrusted external input can start privileged work, where credentials are transported or retained, and where releases are published without mandatory quality/signing gates.
 
@@ -14,19 +14,34 @@ Implementation completed on 2026-07-16:
 
 - **Resolved:** SEC-001 through SEC-007. Enabled webhooks require secrets, credential headers are redacted and historical rows scrubbed, query credentials were removed, unattended runs receive a restricted capability context, browser/Electron tokens no longer travel in URLs or renderer globals, active artifacts are forced to download, security headers and Electron sandboxing are enabled, and the server binds loopback by default.
 - **Resolved:** OPS-002 and OPS-003. Colony jobs use fenced leases and bounded attempts; outbox delivery runs independently with backoff/dead-letter behavior; startup recovery, readiness, and coordinated fatal/signal shutdown are implemented.
-- **Substantially resolved:** OPS-001. Unattended actions now share bounded process-wide backpressure and expose queue metrics; webhook action rows recover across restart; Colony work remains durably queued. A generic durable job record for every direct scheduled agent/pipeline execution is still follow-up work.
-- **Substantially resolved:** DATA-001. SQLite now has explicit WAL/synchronous/busy-timeout/foreign-key pragmas, online backups, retention, integrity checks, and an offline guarded restore command. Schema-level foreign-key coverage remains incremental work because existing ownership relationships need migration-by-migration validation.
+- **Resolved:** OPS-001. Unattended actions share bounded process-wide backpressure and expose queue metrics; direct schedules and webhook actions have durable job records, fenced leases, retries, dead-letter replay, and restart recovery; Colony work remains durably queued.
+- **Substantially resolved:** DATA-001. SQLite now has explicit WAL/synchronous/busy-timeout/foreign-key pragmas, online backups, retention, integrity checks, and an offline guarded restore command. Webhook telemetry and durable Colony run projections have cascading ownership constraints; remaining polymorphic references stay application-enforced.
 - **Resolved release blocker:** REL-001. Release now depends on the full quality gate, fails closed for macOS signing/notarization credentials, pins GitHub Actions to immutable commits, emits SBOMs/checksums/provenance, and publishes only after the supported macOS and Linux builds succeed. Windows is excluded until Authenticode signing is configured.
-- **Resolved source gate:** REL-002. `npm run test:ci` passes: 567 server tests and 133 client tests, server lint, gateway validation, client lint, and production build. Client lint still reports 13 non-fatal pre-existing hook-dependency warnings. Root, client, and desktop audits report zero known vulnerabilities.
+- **Resolved source gate:** REL-002. `npm run test:ci` passes: 585 server tests and 133 client tests, server lint, gateway validation, warning-free client lint, and the production build. Root, client, and desktop audits report zero known vulnerabilities.
 - **Cleaned:** unused imports and unreferenced starter assets were removed; stale runtime, security, gateway, and design-status documentation was corrected; gateway images were pinned by digest; bundled fonts were reduced to the Latin subset.
 - **Packaging integrity hardened:** desktop builds now run outside File Provider-backed workspace paths, verify the strict code seal before and after notarization, and mount every generated DMG to verify its embedded app before publication.
 
-Still open before calling the product fully production-ready:
+Remaining release validation:
 
-- Run the release workflow with real signing/notarization credentials and smoke-test the installed artifacts on every supported platform.
-- Commit/review the remediation as a clean, immutable release candidate; the current local worktree contains unrelated and cumulative changes.
-- Complete DES-001 through DES-003: split oversized server/UI/catalog modules, converge recipe definitions, and retire legacy Colony state paths using measured migration evidence.
-- Complete REL-003: signed updater/rollback channels, schema compatibility policy, and a redacted diagnostics/support bundle.
+- Execute the new installed-package Linux release gate on the next tagged build; the workflow covers Ubuntu 22.04, Ubuntu 24.04, and Debian 12.
+
+## Backlog implementation update — 2026-07-21
+
+- **OPS-001 advanced:** direct webhook actions and scheduled agent/pipeline executions now create durable `automation_jobs` records with idempotency keys, source references, policy snapshots, fenced leases, bounded attempts/backoff, dead-letter state, restart recovery, and an authenticated replay endpoint. Colony missions continue to use their dedicated durable queue.
+- **DATA-001 advanced:** schema version 25 adds ownership foreign keys with cascading cleanup for webhook events/action history. Pending migrations create a consistent protected SQLite recovery snapshot and fail closed if backup creation fails. Older binaries refuse databases created by newer schemas.
+- **DES-001 advanced:** HTTP composition now lives in a testable app factory (`server/app.js`); executable startup retains process signals, integrations, workers, and shutdown lifecycle.
+- **DES-003 advanced:** support diagnostics measure durable-event versus legacy-only Colony runs, and `COLONY_LEGACY_RETIREMENT.md` records readers, writers, evidence gates, and removal targets.
+- **REL-002 completed:** client hook dependency warnings were fixed; client and server lint now run with zero warnings/errors in the focused verification pass.
+- **REL-003 substantially resolved:** stable/beta channel selection is explicit; update checks refuse downgrades, require the exact platform artifact in `SHA256SUMS.txt`, and create a database backup before opening the OS installer. Schema compatibility, rollback steps, and redacted support diagnostics are documented and implemented. Fully unattended in-app replacement remains intentionally out of scope for the operator-approved v1 updater.
+- **DES-002 substantially resolved:** the former 2,529-line Colony component module is split into stable live-view, log-rendering, protocol-panel, and persistent-team modules. Expanded recipes are split by product domain, staff analytics and persona overlays are isolated, and founding plus expanded presets now flow through one fail-fast validated registry.
+- **DATA-001 advanced:** schema version 26 adds cascading ownership constraints across the durable Colony job, event, workflow, evidence, and outbox projections, including historical-orphan cleanup and invariant tests.
+- **Linux installed smoke gate added:** tagged releases install the generated `.deb`, start the packaged Electron/server process under Xvfb, verify readiness, and confirm protected API authentication on Ubuntu 22.04, Ubuntu 24.04, and Debian 12 before publishing.
+- **DES-003 log path resolved:** schema version 27 migrates every legacy `colonies.log` entry into append-only run events transactionally, clears the old projection, and removes all runtime readers/writers. SSE replay, API run details, exports, staff analytics, and UI state now share the durable event source.
+
+Still open architectural work:
+
+- Continue opportunistic decomposition of other large screens such as `AgentEditor.jsx`; this is maintainability work, not a release blocker.
+- Expand foreign keys only where ownership remains unambiguous; polymorphic automation source references intentionally remain application-enforced.
 
 ## Original priority summary (pre-remediation)
 

@@ -10,6 +10,7 @@ const os = require('os');
 const net = require('net');
 const http = require('http');
 const { readAuthToken: resolveAuthToken } = require('./authToken');
+const { checksumFor, compareVersions, selectArtifact, selectRelease } = require('./updatePolicy');
 
 const HIVE_HOME = process.env.HIVE_HOME || path.join(os.homedir(), '.hive');
 const HIVE_DB_PATH = process.env.HIVE_DB_PATH || path.join(HIVE_HOME, 'hive.db');
@@ -158,32 +159,55 @@ function readAuthToken() {
   });
 }
 
-// v1 update story: manual check against GitHub Releases with a download link.
-// electron-updater can replace this once code signing is in place.
+// Updates remain operator-approved, but the app now fails closed unless the
+// platform artifact is present in the signed release's SHA-256 manifest and a
+// recovery backup succeeds before handing the artifact to the OS installer.
 const REPO_SLUG = 'SantiaGoMode/hive';
+
+async function createPreUpdateBackup() {
+  const res = await fetch(`http://127.0.0.1:${serverPort}/api/system/database/backups`, {
+    method: 'POST',
+    headers: { 'x-hive-auth-token': readAuthToken() },
+  });
+  if (!res.ok) throw new Error(`Pre-update database backup failed (${res.status})`);
+  return (await res.json()).backup;
+}
 
 async function checkForUpdates() {
   try {
-    const res = await fetch(`https://api.github.com/repos/${REPO_SLUG}/releases/latest`, {
+    const channel = process.env.HIVE_UPDATE_CHANNEL === 'beta' ? 'beta' : 'stable';
+    const res = await fetch(`https://api.github.com/repos/${REPO_SLUG}/releases?per_page=20`, {
       headers: { 'User-Agent': 'hive-desktop' },
     });
     if (!res.ok) throw new Error(`GitHub responded ${res.status}`);
-    const latest = await res.json();
+    const latest = selectRelease(await res.json(), channel);
+    if (!latest) throw new Error(`No ${channel} release is available`);
     const latestVersion = String(latest.tag_name || '').replace(/^v/, '');
-    if (latestVersion && latestVersion !== app.getVersion()) {
+    if (latestVersion && compareVersions(latestVersion, app.getVersion()) > 0) {
+      const artifact = selectArtifact(latest, process.platform, process.arch);
+      const checksums = latest.assets?.find(asset => asset.name === 'SHA256SUMS.txt');
+      if (!artifact || !checksums) throw new Error('Release is missing the expected platform artifact or checksum manifest');
+      const checksumResponse = await fetch(checksums.browser_download_url, { headers: { 'User-Agent': 'hive-desktop' } });
+      if (!checksumResponse.ok) throw new Error(`Checksum manifest download failed (${checksumResponse.status})`);
+      const checksum = checksumFor(await checksumResponse.text(), artifact.name);
+      if (!checksum) throw new Error(`Release checksum manifest does not authenticate ${artifact.name}`);
       const { response } = await dialog.showMessageBox({
         type: 'info',
-        message: `Hive ${latestVersion} is available`,
-        detail: `You have ${app.getVersion()}.`,
-        buttons: ['Download', 'Later'],
+        message: `Verified Hive ${latestVersion} is available`,
+        detail: `Channel: ${channel}\nArtifact: ${artifact.name}\nSHA-256: ${checksum.slice(0, 16)}…\n\nHive will create a database backup before opening the installer.`,
+        buttons: ['Back Up & Download', 'Later'],
         defaultId: 0,
       });
-      if (response === 0) shell.openExternal(latest.html_url);
+      if (response === 0) {
+        const backup = await createPreUpdateBackup();
+        log(`pre-update backup created: ${backup?.name || 'unknown'}`);
+        await shell.openExternal(artifact.browser_download_url);
+      }
     } else {
       dialog.showMessageBox({
         type: 'info',
         message: "You're up to date",
-        detail: `Hive ${app.getVersion()} is the latest version.`,
+        detail: `Hive ${app.getVersion()} is the latest ${channel} version.`,
       });
     }
   } catch (e) {

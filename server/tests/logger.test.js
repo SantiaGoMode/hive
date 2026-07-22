@@ -44,9 +44,17 @@ describe('ring buffer', () => {
 
 describe('redaction & safety', () => {
   it('redacts secrets from metadata', () => {
-    logger.error('c', 'e', { api_key: 'sk-abcdef123456', auth: 'Bearer abcdef123456xyz' });
+    logger.error('c', 'e', {
+      api_key: 'sk-abcdef123456',
+      apiKey: 'plain-structured-secret',
+      nested: { refresh_token: 'nested-secret', password: 'hunter22222' },
+      auth: 'Bearer abcdef123456xyz',
+    });
     const blob = JSON.stringify(getRecentLogs()[0].meta);
     assert.ok(!blob.includes('sk-abcdef123456'), 'sk- key redacted');
+    assert.ok(!blob.includes('plain-structured-secret'), 'camel-case api key redacted');
+    assert.ok(!blob.includes('nested-secret'), 'nested token redacted');
+    assert.ok(!blob.includes('hunter22222'), 'password redacted');
     assert.ok(!blob.includes('abcdef123456xyz'), 'bearer token redacted');
   });
 

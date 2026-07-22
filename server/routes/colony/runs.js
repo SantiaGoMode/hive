@@ -5,7 +5,7 @@ const { getColony } = require('../../lib/colonyRunner');
 const { getBus, maybeCleanup } = require('../../lib/colonyBus');
 const { normalizeTriggerConfig } = require('../../lib/colonyTriggers');
 const db = require('../../db');
-const { listRunEvents } = require('../../lib/colony/runEvents');
+const { listLogEntries } = require('../../lib/colony/runEvents');
 const { fs, sseHeaders, sseWrite, getColonyRepoPath } = require('./shared');
 
 // Artifacts are file paths relative to the run's repo; this serves their
@@ -173,13 +173,10 @@ module.exports = function registerRunReadRoutes(router) {
 
     const since = parseInt(req.query.since || '0', 10) || 0;
 
-    // Replay the append-only durable event stream. Fall back to the legacy log
-    // projection for pre-migration runs.
+    // Replay the append-only durable event stream. Migration 27 moved every
+    // pre-durable log projection here, so there is one authoritative reader.
     let lastSentSeq = since;
-    const durable = listRunEvents(colony.id, { since, limit: 5000, eventType: 'log_entry' });
-    const historical = durable.length
-      ? durable.map(event => event.payload).filter(Boolean)
-      : (Array.isArray(colony.log) ? colony.log : []);
+    const historical = listLogEntries(colony.id, { since, limit: 5000 });
     for (const entry of historical) {
       const seq = entry.seq || 0;
       if (seq > since) {

@@ -441,7 +441,7 @@ export function Dashboard() {
   useEffect(() => {
     fetchAgents();
     api.getAllModels().then(setModels).catch(() => setModels({}));
-  }, []);
+  }, [fetchAgents]);
 
   const handleEdit = (agent) => { setEditingAgent(agent); setEditorOpen(true); };
   const handleCreate = () => { setEditingAgent(null); setEditorOpen(true); };

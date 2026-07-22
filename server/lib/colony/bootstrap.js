@@ -86,12 +86,12 @@ function normalizeBootstrapTask(task, idx = 0) {
 // colony plan. Returns true when the run should stop early (awaiting tasks).
 // `ctx` = { colonyId, row, recipe, recipeWorkers, ollamaUrl, signal,
 //           reasoningByAgentId, workerReasoningDefault,
-//           fetchRepoBoard, runAgentOnce, addEntry, onEvent, flush }
+//           fetchRepoBoard, runAgentOnce, addEntry, onEvent }
 async function maybeRunBootstrap(ctx) {
   const {
     colonyId, row, recipe, recipeWorkers, ollamaUrl, signal,
     reasoningByAgentId, workerReasoningDefault,
-    fetchRepoBoard, runAgentOnce, addEntry, onEvent, flush,
+    fetchRepoBoard, runAgentOnce, addEntry, onEvent,
   } = ctx;
 
   if (!(row.repo_path && recipe.id === 'development_team' && !row.bootstrap_accepted && !row.bootstrap_tasks)) {
@@ -110,7 +110,6 @@ async function maybeRunBootstrap(ctx) {
     protocol.writeBlackboard(colonyId, 'operator', 'blocker', msg, { bootstrap: true });
     db.prepare("UPDATE colonies SET status='awaiting_tasks', updated_at=unixepoch() WHERE id=?").run(colonyId);
     addEntry({ kind: 'bootstrap', status: 'blocked', message: msg });
-    flush();
     onEvent({ type: 'done', status: 'awaiting_tasks' });
     return true;
   }
@@ -145,7 +144,6 @@ async function maybeRunBootstrap(ctx) {
         `Bootstrap task draft from ${source.path}:\n${tasks.map(t => `- ${t.id}. ${t.title}`).join('\n')}`,
         { bootstrap: true, source: source.path, tasks });
       addEntry({ kind: 'bootstrap', status: 'awaiting_acceptance', source: source.path, task_count: tasks.length, tasks });
-      flush();
       onEvent({ type: 'done', status: 'awaiting_tasks' });
       return true;
     }
@@ -155,7 +153,6 @@ async function maybeRunBootstrap(ctx) {
   protocol.writeBlackboard(colonyId, 'operator', 'blocker', msg, { bootstrap: true, source: source.path });
   db.prepare("UPDATE colonies SET status='awaiting_tasks', updated_at=unixepoch() WHERE id=?").run(colonyId);
   addEntry({ kind: 'bootstrap', status: 'blocked', source: source.path, message: msg });
-  flush();
   onEvent({ type: 'done', status: 'awaiting_tasks' });
   return true;
 }

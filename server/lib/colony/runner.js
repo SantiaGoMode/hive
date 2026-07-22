@@ -24,7 +24,7 @@ const { EXECUTION_MODES, recipeExecutionPolicy, statusForOutcome, isSuccessfulOu
 
 const { runModelPreflightAndCheckout } = require('./preflight');
 const { maybeRunBootstrap } = require('./bootstrap');
-const { persistLog, drainPendingDirections, parseField } = require('./persistence');
+const { drainPendingDirections, parseField } = require('./persistence');
 const { makeFakeWs, makeColonyEventHandler } = require('./events');
 const { createPerformWriteback, postBoardComment, postPullRequestReview, emitVerifiedOutcome } = require('./writeback');
 const { seedRecipeWorkers, createOrchestrator } = require('./seeding');
@@ -34,19 +34,6 @@ const { gitTreeSnapshot, gitRemoveReviewWorktree } = require('./git');
 const runEvents = require('./runEvents');
 const colonyOutbox = require('../colonyOutbox');
 
-// Keep the last N entries in the single `colonies.log` TEXT field. Long runs
-// trim oldest entries — by seq number, so clients can still tell if they
-// missed anything. Previously there was a LOG_MAX_BYTES hard cap that silently
-// dropped writes above 200KB; that was a footgun because the UI would just
-// stop updating from the DB mid-run with no error.
-const LOG_MAX_ENTRIES = 1000;
-// Coalesce log persistence. addEntry used to persistLog() (a full JSON.stringify
-// of up to LOG_MAX_ENTRIES) on EVERY entry — O(N²) over a run, which stuttered
-// SSE late in long runs. We throttle instead: the first entry (and any after a
-// quiet gap) persists immediately so a refresh right after launch still sees it;
-// bursts within the window collapse into one trailing write. Terminal points
-// call flush() directly, so nothing is lost on completion.
-const LOG_FLUSH_INTERVAL_MS = 400;
 // Inactivity backstop for a run, enforced INSIDE runColony so every launch path
 // gets it — POST, bootstrap-accept, and webhook triggers alike. A stuck model
 // or a worker in an infinite tool loop otherwise pins resources and a triggered-
@@ -104,15 +91,8 @@ async function runColony(colonyId, onEventArg, signal) {
   signal = ac.signal;
   runningColonies.set(colonyId, ac);
 
-  const persistedAtStart = db.prepare('SELECT log, capabilities, context_budget, plan FROM colonies WHERE id=?').get(colonyId);
-  let existingLog = [];
-  try { existingLog = JSON.parse(persistedAtStart?.log || '[]'); } catch { existingLog = []; }
-  const logEntries = Array.isArray(existingLog) ? existingLog.slice(-LOG_MAX_ENTRIES) : [];
-  let logDirty = false;
-  let seqCounter = Math.max(
-    runEvents.lastSequence(colonyId),
-    ...logEntries.map(entry => Number(entry?.seq) || 0),
-  );
+  const logEntries = runEvents.listLogEntries(colonyId, { limit: 10000 });
+  let seqCounter = runEvents.lastSequence(colonyId);
   let touchActivity = () => {}; // reset the inactivity backstop; wired once armed
 
   // Every event goes to: (a) the per-colony event bus for resumable SSE,
@@ -127,37 +107,12 @@ async function runColony(colonyId, onEventArg, signal) {
     }
   };
 
-  // Persist log to DB. flush() is the immediate write (used at terminal points);
-  // scheduleFlush() throttles bursts so we don't re-stringify the whole log on
-  // every entry. See LOG_FLUSH_INTERVAL_MS.
-  let flushTimer = null;
-  let lastFlushAt = 0;
-  const flush = () => {
-    if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
-    if (!logDirty) return;
-    try {
-      persistLog(colonyId, logEntries.slice(-LOG_MAX_ENTRIES));
-    } catch (e) { logSwallowed('colonyRunner:persistLog', e, { colonyId }); }
-    logDirty = false;
-    lastFlushAt = Date.now();
-  };
-  const scheduleFlush = () => {
-    if (!logDirty || flushTimer) return;
-    const sinceLast = Date.now() - lastFlushAt;
-    // Leading edge: first entry (lastFlushAt=0) and any after a quiet gap write
-    // now; otherwise defer to the end of the current window.
-    if (sinceLast >= LOG_FLUSH_INTERVAL_MS) flush();
-    else flushTimer = setTimeout(() => { flushTimer = null; flush(); }, LOG_FLUSH_INTERVAL_MS - sinceLast);
-  };
-
   const addEntry = (entry) => {
     const e = { ...entry, ts: Date.now(), seq: ++seqCounter };
     logEntries.push(e);
     try { runEvents.appendRunEvent(colonyId, 'log_entry', e, e.seq); }
     catch (error) { logSwallowed('colonyRunner:appendEvent', error, { colonyId, seq: e.seq }); }
-    logDirty = true;
     onEvent({ type: 'log_entry', entry: e });
-    scheduleFlush();
   };
 
   // Inactivity backstop (see COLONY_MAX_DURATION_MS / colonyTimeoutMs). Reset on
@@ -281,7 +236,7 @@ async function runColony(colonyId, onEventArg, signal) {
     const bootstrapped = await maybeRunBootstrap({
       colonyId, row, recipe, recipeWorkers, ollamaUrl, signal,
       reasoningByAgentId, workerReasoningDefault,
-      fetchRepoBoard, runAgentOnce, addEntry, onEvent, flush,
+      fetchRepoBoard, runAgentOnce, addEntry, onEvent,
     });
     if (bootstrapped) return;
 
@@ -512,7 +467,6 @@ async function runColony(colonyId, onEventArg, signal) {
 
     cleanupSandboxContainers();
     addEntry({ kind: 'done', status });
-    flush();
     onEvent({ type: 'done', status });
 
   } catch (e) {
@@ -525,7 +479,6 @@ async function runColony(colonyId, onEventArg, signal) {
       try { await updateColonyMemoryAfterRun(colonyId, state.row, state.goalSummary, 'stopped', addEntry, stoppedOutcome); } catch (e) { logSwallowed('colonyRunner:memoryUpdate', e, { colonyId }); }
       cleanupSandboxContainers();
       addEntry({ kind: 'done', status: 'stopped' });
-      flush();
       onEvent({ type: 'done', status: 'stopped' });
     } else {
       db.prepare("UPDATE colonies SET status='error', updated_at=unixepoch() WHERE id=?").run(colonyId);
@@ -535,14 +488,12 @@ async function runColony(colonyId, onEventArg, signal) {
       try { await updateColonyMemoryAfterRun(colonyId, state.row, state.goalSummary, 'error', addEntry, errorOutcome); } catch (e2) { logSwallowed('colonyRunner:memoryUpdate', e2, { colonyId }); }
       cleanupSandboxContainers();
       addEntry({ kind: 'error', message: e.message });
-      flush();
       onEvent({ type: 'error', message: e.message });
     }
   } finally {
-    // Stop the wall-clock timer and persist any entries still pending in the
-    // throttle window before we detach.
+    // Stop the wall-clock timer before we detach. Log entries are already
+    // durable because addEntry appends each one transactionally.
     clearTimeout(runTimeout);
-    flush();
     if (state.reviewWorktree && state.originalRepoPath) {
       gitRemoveReviewWorktree(state.originalRepoPath, state.reviewWorktree);
     }

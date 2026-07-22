@@ -129,6 +129,8 @@ Access the dashboard at `http://localhost:3001`.
 
 Hive creates protected online SQLite backups under `~/.hive/backups` (seven daily backups by default). Check integrity through `/api/system/database/integrity`. To restore, stop Hive and run `npm run db:restore -- <backup-name> --confirm-stopped`; the utility validates the backup and preserves the current database before replacement.
 
+The update, schema-compatibility, rollback, and redacted-support-diagnostics policy is documented in [docs/RELEASE_AND_RECOVERY.md](docs/RELEASE_AND_RECOVERY.md). A support report can be downloaded from Settings → Advanced → Maintenance actions without including prompts, stored rows, paths, URLs, headers, or credential values.
+
 ---
 
 ## Data & Configuration

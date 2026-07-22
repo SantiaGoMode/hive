@@ -15,6 +15,7 @@ const {
 } = require('../lib/colonyRecipes');
 const { workerIsCoding, workerRepoAccess, workerNetwork } = require('../lib/colony/seeding');
 const { mcpCategoriesForWorker } = require('../lib/colony/mcp');
+const { RECIPES, validateRecipeDefinitions } = require('../lib/recipeRegistry');
 
 function buildApp() {
   const app = express();
@@ -63,6 +64,31 @@ after(() => {
   for (const id of cleanupHandoffColonies) {
     try { db.prepare('DELETE FROM colony_handoffs WHERE colony_id=?').run(id); } catch {}
   }
+});
+
+describe('canonical recipe registry', () => {
+  it('validates every founding and expanded recipe at module load', () => {
+    assert.equal(validateRecipeDefinitions(RECIPES), RECIPES);
+    assert.ok(RECIPES.development_team);
+    assert.ok(RECIPES.research_brief);
+    assert.ok(RECIPES.code_review);
+  });
+
+  it('rejects malformed metadata before runtime seeding can consume it', () => {
+    assert.throws(
+      () => validateRecipeDefinitions({ broken: { id: 'other' } }),
+      /key mismatch/,
+    );
+    assert.throws(
+      () => validateRecipeDefinitions({
+        broken: {
+          id: 'broken', name: 'Broken', summary: 'Broken recipe', placeholder: 'Run it',
+          execution_policy: { mode: 'unknown' }, roles: [{}],
+        },
+      }),
+      /invalid execution policy/,
+    );
+  });
 });
 
 describe('expanded recipe catalog — listing', () => {

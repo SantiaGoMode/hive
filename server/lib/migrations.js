@@ -14,6 +14,8 @@
 // db is passed in (never required here) to avoid a cycle with db.js.
 
 const { logger } = require('./logger');
+const fs = require('fs');
+const path = require('path');
 
 function columnExists(db, table, column) {
   return db.prepare(`PRAGMA table_info(${table})`).all().some(c => c.name === column);
@@ -401,9 +403,238 @@ const MIGRATIONS = [
       addColumn(db, 'colony_outbox', 'next_attempt_at', 'INTEGER');
     },
   },
+  {
+    version: 24,
+    name: 'durable unattended automation jobs',
+    up(db) {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS automation_jobs (
+          id TEXT PRIMARY KEY,
+          kind TEXT NOT NULL,
+          source TEXT NOT NULL,
+          source_ref TEXT,
+          idempotency_key TEXT NOT NULL UNIQUE,
+          payload TEXT NOT NULL DEFAULT '{}',
+          policy TEXT NOT NULL DEFAULT '{}',
+          status TEXT NOT NULL DEFAULT 'queued',
+          lease_owner TEXT,
+          lease_expires_at INTEGER,
+          attempt INTEGER NOT NULL DEFAULT 0,
+          max_attempts INTEGER NOT NULL DEFAULT 3,
+          next_attempt_at INTEGER,
+          last_error TEXT,
+          result_ref TEXT,
+          created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+          started_at INTEGER,
+          finished_at INTEGER,
+          updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+        );
+        CREATE INDEX IF NOT EXISTS idx_automation_jobs_claim
+          ON automation_jobs(status, next_attempt_at, lease_expires_at, created_at);
+        CREATE INDEX IF NOT EXISTS idx_automation_jobs_source
+          ON automation_jobs(kind, source_ref, status, created_at);
+      `);
+    },
+  },
+  {
+    version: 25,
+    name: 'webhook ownership foreign keys',
+    up(db) {
+      db.exec(`
+        DELETE FROM webhook_action_runs WHERE webhook_id NOT IN (SELECT id FROM webhooks);
+        DELETE FROM webhook_events WHERE webhook_id NOT IN (SELECT id FROM webhooks);
+
+        CREATE TABLE webhook_events_fk (
+          id TEXT PRIMARY KEY,
+          webhook_id TEXT NOT NULL REFERENCES webhooks(id) ON DELETE CASCADE,
+          event_type TEXT DEFAULT 'webhook',
+          payload TEXT NOT NULL DEFAULT '{}',
+          headers TEXT NOT NULL DEFAULT '{}',
+          created_at INTEGER DEFAULT (unixepoch())
+        );
+        INSERT INTO webhook_events_fk SELECT id, webhook_id, event_type, payload, headers, created_at FROM webhook_events;
+        DROP TABLE webhook_events;
+        ALTER TABLE webhook_events_fk RENAME TO webhook_events;
+        CREATE INDEX IF NOT EXISTS idx_webhook_events_owner ON webhook_events(webhook_id, created_at);
+
+        CREATE TABLE webhook_action_runs_fk (
+          id TEXT PRIMARY KEY,
+          webhook_id TEXT NOT NULL REFERENCES webhooks(id) ON DELETE CASCADE,
+          event_id TEXT NOT NULL,
+          action_id TEXT,
+          action_label TEXT DEFAULT '',
+          action_type TEXT NOT NULL,
+          target_id TEXT,
+          input TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL DEFAULT 'running',
+          output TEXT,
+          error TEXT,
+          pipeline_run_id TEXT,
+          created_at INTEGER DEFAULT (unixepoch()),
+          completed_at INTEGER
+        );
+        INSERT INTO webhook_action_runs_fk
+          SELECT id, webhook_id, event_id, action_id, action_label, action_type, target_id,
+                 input, status, output, error, pipeline_run_id, created_at, completed_at
+          FROM webhook_action_runs;
+        DROP TABLE webhook_action_runs;
+        ALTER TABLE webhook_action_runs_fk RENAME TO webhook_action_runs;
+        CREATE INDEX IF NOT EXISTS idx_webhook_action_runs_owner ON webhook_action_runs(webhook_id, created_at);
+      `);
+    },
+  },
+  {
+    version: 26,
+    name: 'durable colony run ownership foreign keys',
+    up(db) {
+      // These tables are projections of a Colony run and have no valid
+      // lifecycle after their parent run is removed. Clean historical orphans
+      // before enforcing ownership, then rebuild because SQLite cannot add a
+      // foreign key constraint with ALTER TABLE.
+      db.exec(`
+        DELETE FROM colony_run_jobs WHERE run_id NOT IN (SELECT id FROM colonies);
+        DELETE FROM colony_run_events WHERE run_id NOT IN (SELECT id FROM colonies);
+        DELETE FROM colony_workflow_nodes WHERE run_id NOT IN (SELECT id FROM colonies);
+        DELETE FROM colony_evidence WHERE run_id NOT IN (SELECT id FROM colonies);
+        DELETE FROM colony_outbox WHERE run_id NOT IN (SELECT id FROM colonies);
+
+        CREATE TABLE colony_run_jobs_fk (
+          run_id TEXT PRIMARY KEY REFERENCES colonies(id) ON DELETE CASCADE,
+          team_id TEXT,
+          status TEXT NOT NULL DEFAULT 'queued',
+          lease_owner TEXT,
+          lease_expires_at INTEGER,
+          attempt INTEGER NOT NULL DEFAULT 0,
+          last_error TEXT,
+          created_at INTEGER DEFAULT (unixepoch()),
+          started_at INTEGER,
+          finished_at INTEGER,
+          updated_at INTEGER DEFAULT (unixepoch())
+        );
+        INSERT INTO colony_run_jobs_fk SELECT * FROM colony_run_jobs;
+        DROP TABLE colony_run_jobs;
+        ALTER TABLE colony_run_jobs_fk RENAME TO colony_run_jobs;
+        CREATE INDEX idx_colony_jobs_claim ON colony_run_jobs(status, lease_expires_at, created_at);
+        CREATE INDEX idx_colony_jobs_active_team ON colony_run_jobs(team_id, status);
+
+        CREATE TABLE colony_run_events_fk (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          run_id TEXT NOT NULL REFERENCES colonies(id) ON DELETE CASCADE,
+          seq INTEGER NOT NULL,
+          event_type TEXT NOT NULL,
+          payload TEXT NOT NULL DEFAULT '{}',
+          created_at INTEGER DEFAULT (unixepoch()),
+          UNIQUE(run_id, seq)
+        );
+        INSERT INTO colony_run_events_fk SELECT * FROM colony_run_events;
+        DROP TABLE colony_run_events;
+        ALTER TABLE colony_run_events_fk RENAME TO colony_run_events;
+        CREATE INDEX idx_colony_events_replay ON colony_run_events(run_id, seq);
+
+        CREATE TABLE colony_workflow_nodes_fk (
+          run_id TEXT NOT NULL REFERENCES colonies(id) ON DELETE CASCADE,
+          node_id TEXT NOT NULL,
+          role_key TEXT,
+          description TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          depends_on TEXT NOT NULL DEFAULT '[]',
+          evidence_requirements TEXT NOT NULL DEFAULT '[]',
+          attempt_count INTEGER NOT NULL DEFAULT 0,
+          note TEXT,
+          created_at INTEGER DEFAULT (unixepoch()),
+          updated_at INTEGER DEFAULT (unixepoch()),
+          PRIMARY KEY (run_id, node_id)
+        );
+        INSERT INTO colony_workflow_nodes_fk SELECT * FROM colony_workflow_nodes;
+        DROP TABLE colony_workflow_nodes;
+        ALTER TABLE colony_workflow_nodes_fk RENAME TO colony_workflow_nodes;
+        CREATE INDEX idx_colony_nodes_state ON colony_workflow_nodes(run_id, status);
+
+        CREATE TABLE colony_evidence_fk (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          run_id TEXT NOT NULL REFERENCES colonies(id) ON DELETE CASCADE,
+          node_id TEXT,
+          kind TEXT NOT NULL,
+          source_agent_id TEXT,
+          payload TEXT NOT NULL DEFAULT '{}',
+          verified INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER DEFAULT (unixepoch())
+        );
+        INSERT INTO colony_evidence_fk SELECT * FROM colony_evidence;
+        DROP TABLE colony_evidence;
+        ALTER TABLE colony_evidence_fk RENAME TO colony_evidence;
+        CREATE INDEX idx_colony_evidence_node ON colony_evidence(run_id, node_id, kind);
+
+        CREATE TABLE colony_outbox_fk (
+          id TEXT PRIMARY KEY,
+          run_id TEXT NOT NULL REFERENCES colonies(id) ON DELETE CASCADE,
+          action_type TEXT NOT NULL,
+          idempotency_key TEXT NOT NULL UNIQUE,
+          payload TEXT NOT NULL DEFAULT '{}',
+          status TEXT NOT NULL DEFAULT 'pending',
+          attempt_count INTEGER NOT NULL DEFAULT 0,
+          last_error TEXT,
+          created_at INTEGER DEFAULT (unixepoch()),
+          updated_at INTEGER DEFAULT (unixepoch()),
+          completed_at INTEGER,
+          next_attempt_at INTEGER
+        );
+        INSERT INTO colony_outbox_fk SELECT * FROM colony_outbox;
+        DROP TABLE colony_outbox;
+        ALTER TABLE colony_outbox_fk RENAME TO colony_outbox;
+        CREATE INDEX idx_colony_outbox_pending ON colony_outbox(status, created_at);
+      `);
+    },
+  },
+  {
+    version: 27,
+    name: 'migrate legacy colony log projection to durable events',
+    up(db) {
+      const rows = db.prepare("SELECT id, log FROM colonies WHERE COALESCE(log, '[]') <> '[]'").all();
+      const insert = db.prepare(`
+        INSERT OR IGNORE INTO colony_run_events (run_id, seq, event_type, payload)
+        VALUES (?, ?, 'log_entry', ?)
+      `);
+      for (const row of rows) {
+        let entries;
+        try { entries = JSON.parse(row.log); }
+        catch { throw new Error(`Colony ${row.id} has an invalid legacy log; restore or repair it before migration`); }
+        if (!Array.isArray(entries)) {
+          throw new Error(`Colony ${row.id} has a non-array legacy log; restore or repair it before migration`);
+        }
+        let nextSequence = db.prepare('SELECT COALESCE(MAX(seq), 0) AS seq FROM colony_run_events WHERE run_id=?')
+          .get(row.id).seq;
+        for (const entry of entries) {
+          const requested = Number(entry?.seq);
+          const sequence = Number.isInteger(requested) && requested > 0 ? requested : ++nextSequence;
+          nextSequence = Math.max(nextSequence, sequence);
+          insert.run(row.id, sequence, JSON.stringify(entry || {}));
+        }
+      }
+      // Keep the column for downgrade/schema compatibility, but make it
+      // permanently empty. Version 27+ has no runtime reader or writer for it.
+      db.prepare("UPDATE colonies SET log='[]' WHERE COALESCE(log, '[]') <> '[]'").run();
+    },
+  },
 ];
 
 const LATEST_VERSION = MIGRATIONS.reduce((max, m) => Math.max(max, m.version), 0);
+
+function createPreMigrationBackup(db, fromVersion, toVersion) {
+  const file = db.prepare('PRAGMA database_list').all().find(row => row.name === 'main')?.file;
+  if (!file || file === ':memory:') return null;
+  const dir = path.join(path.dirname(file), 'backups');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  const destination = path.join(dir, `hive-${stamp}.db`);
+  const escaped = destination.replace(/'/g, "''");
+  db.exec(`VACUUM INTO '${escaped}'`);
+  try { fs.chmodSync(destination, 0o600); } catch { /* Windows */ }
+  logger.info('db', 'pre_migration_backup_created', {
+    from_version: fromVersion, to_version: toVersion, name: path.basename(destination),
+  });
+  return destination;
+}
 
 // Apply all pending migrations in order. Each runs in its own transaction and
 // is recorded only on success. A failing migration aborts startup — running
@@ -417,7 +648,22 @@ function runMigrations(db) {
       applied_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
   `);
+  const databaseVersion = currentVersion(db);
+  if (databaseVersion > LATEST_VERSION) {
+    throw new Error(
+      `Database schema version ${databaseVersion} is newer than this Hive build supports (${LATEST_VERSION}). ` +
+      'Refusing to start because rolling back the app without restoring a compatible backup could corrupt data.',
+    );
+  }
   const applied = new Set(db.prepare('SELECT version FROM schema_migrations').all().map(r => r.version));
+  const pending = MIGRATIONS.filter(migration => !applied.has(migration.version));
+  if (pending.length > 0 && databaseVersion > 0 && !process.env.NODE_TEST_CONTEXT && process.env.NODE_ENV !== 'test') {
+    try {
+      createPreMigrationBackup(db, databaseVersion, LATEST_VERSION);
+    } catch (error) {
+      throw new Error(`Pre-migration database backup failed: ${error.message}. Refusing to migrate without a recovery point.`);
+    }
+  }
   const record = db.prepare('INSERT OR IGNORE INTO schema_migrations (version, name) VALUES (?, ?)');
   let ran = 0;
 
@@ -446,4 +692,4 @@ function currentVersion(db) {
   catch { return 0; }
 }
 
-module.exports = { runMigrations, currentVersion, MIGRATIONS, LATEST_VERSION, columnExists, addColumn };
+module.exports = { runMigrations, currentVersion, createPreMigrationBackup, MIGRATIONS, LATEST_VERSION, columnExists, addColumn };

@@ -102,9 +102,8 @@ router.put('/:id', validateBody(updateWebhookSchema), (req, res) => {
 });
 
 router.delete('/:id', (req, res) => {
+  // Ownership foreign keys cascade events and action history atomically.
   db.prepare('DELETE FROM webhooks WHERE id = ?').run(req.params.id);
-  db.prepare('DELETE FROM webhook_events WHERE webhook_id = ?').run(req.params.id);
-  db.prepare('DELETE FROM webhook_action_runs WHERE webhook_id = ?').run(req.params.id);
   res.json({ success: true });
 });
 

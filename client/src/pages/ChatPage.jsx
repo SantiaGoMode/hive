@@ -26,12 +26,12 @@ export function ChatPage() {
   const [sessionListKey, setSessionListKey]     = useState(0); // bump to refresh list
   const chatMessagesRef = useRef([]);  // kept in sync by ChatWindow via onMessagesChange
 
-  const loadAgent = () => {
+  const loadAgent = useCallback(() => {
     setLoading(true);
     api.getAgent(agentId).then(a => { setAgent(a); setLoading(false); }).catch(() => setLoading(false));
-  };
+  }, [agentId]);
 
-  useEffect(() => { loadAgent(); }, [agentId]);
+  useEffect(() => { loadAgent(); }, [loadAgent]);
 
   // Auto-load a session when navigated here from search results
   useEffect(() => {

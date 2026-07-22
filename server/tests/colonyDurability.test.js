@@ -1,4 +1,4 @@
-const { describe, it, after } = require('node:test');
+const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const db = require('../db');
 const { appendRunEvent, listRunEvents, lastSequence } = require('../lib/colony/runEvents');
@@ -8,10 +8,12 @@ const { runCapabilitySnapshot, defaultContextBudget } = require('../lib/colonyPo
 const outbox = require('../lib/colonyOutbox');
 
 const runId = `durable-test-${Date.now()}`;
+before(() => {
+  db.prepare('INSERT INTO colonies (id, goal, model, status) VALUES (?, ?, ?, ?)')
+    .run(runId, 'Durability ownership test', 'test-model', 'running');
+});
 after(() => {
-  for (const table of ['colony_run_events', 'colony_workflow_nodes', 'colony_evidence', 'colony_outbox']) {
-    try { db.prepare(`DELETE FROM ${table} WHERE run_id=?`).run(runId); } catch {}
-  }
+  try { db.prepare('DELETE FROM colonies WHERE id=?').run(runId); } catch {}
 });
 
 describe('durable colony primitives', () => {

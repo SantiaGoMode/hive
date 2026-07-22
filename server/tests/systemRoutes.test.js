@@ -4,6 +4,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 const request = require('supertest');
+const db = require('../db');
 const systemRouter = require('../routes/system');
 const gatewayHealth = require('../lib/gatewayHealth');
 const gatewaySpend = require('../lib/gatewaySpend');
@@ -197,6 +198,49 @@ describe('GET /api/system/metrics', () => {
 });
 
 describe('other /api/system endpoints (#47)', () => {
+  it('GET /diagnostics returns a redacted support bundle', async () => {
+    const logger = require('../lib/logger');
+    logger._resetLogs();
+    logger.logger.error('diagnostics-test', 'failure', {
+      apiKey: 'must-not-leak',
+      authorization: 'Bearer must-also-not-leak',
+    });
+    const res = await request(app).get('/api/system/diagnostics').expect(200);
+    const blob = JSON.stringify(res.body);
+    assert.equal(res.body.format, 'hive-support-diagnostics');
+    assert.equal(typeof res.body.hive.schema_version, 'number');
+    assert.equal(res.body.database.integrity.ok, true);
+    assert.equal(res.body.database.pragmas.foreign_keys, true);
+    assert.equal(typeof res.body.database.colony_event_state.runs_without_events, 'number');
+    assert.equal(res.body.compatibility, undefined);
+    assert.match(res.headers['content-disposition'], /^attachment;/);
+    assert.ok(!blob.includes('must-not-leak'));
+    assert.ok(!blob.includes('must-also-not-leak'));
+    assert.ok(!blob.includes(process.env.HIVE_DB_PATH));
+  });
+
+  it('lists automation jobs without payloads and replays only dead letters', async () => {
+    const id = `system-job-${Date.now()}`;
+    db.prepare(`
+      INSERT INTO automation_jobs
+        (id, kind, source, idempotency_key, payload, policy, status, attempt, max_attempts)
+      VALUES (?, 'system-test-unregistered', 'test', ?, ?, '{}', 'dead_letter', 1, 1)
+    `).run(id, id, JSON.stringify({ secretPrompt: 'do not expose this' }));
+    try {
+      const listed = await request(app).get('/api/system/automation/jobs?status=dead_letter').expect(200);
+      const row = listed.body.jobs.find(job => job.id === id);
+      assert.ok(row);
+      assert.equal(row.has_payload, true);
+      assert.equal(row.payload, undefined);
+      assert.ok(!JSON.stringify(listed.body).includes('do not expose this'));
+      await request(app).post(`/api/system/automation/jobs/${id}/replay`).expect(200);
+      assert.equal(db.prepare('SELECT status FROM automation_jobs WHERE id=?').get(id).status, 'queued');
+      await request(app).post(`/api/system/automation/jobs/${id}/replay`).expect(409);
+    } finally {
+      db.prepare('DELETE FROM automation_jobs WHERE id=?').run(id);
+    }
+  });
+
   it('POST /model/stop requires a model', async () => {
     const res = await request(app).post('/api/system/model/stop').send({}).expect(400);
     assert.match(res.body.error, /model is required/i);
