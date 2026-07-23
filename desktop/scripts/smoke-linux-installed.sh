@@ -19,7 +19,13 @@ export HIVE_HOME="${HIVE_HOME:-/tmp/hive-installed-smoke}"
 mkdir -p "$HIVE_HOME"
 
 log_file=/tmp/hive-installed-smoke.log
-xvfb-run -a hive --no-sandbox >"$log_file" 2>&1 &
+installed_executable="${HIVE_INSTALLED_EXECUTABLE:-/usr/bin/hive-desktop}"
+if [[ ! -x "$installed_executable" ]]; then
+  echo "Installed Hive executable not found at $installed_executable" >&2
+  exit 1
+fi
+
+xvfb-run -a "$installed_executable" --no-sandbox >"$log_file" 2>&1 &
 hive_pid=$!
 cleanup() {
   kill "$hive_pid" 2>/dev/null || true
