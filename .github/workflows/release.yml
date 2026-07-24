@@ -49,8 +49,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
+        include:
+          - runner: macos-14
+            artifact: macOS
+          - runner: ubuntu-latest
+            artifact: Linux-x64
+          - runner: ubuntu-24.04-arm
+            artifact: Linux-arm64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -119,7 +125,7 @@ jobs:
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: hive-${{ runner.os }}
+          name: hive-${{ matrix.artifact }}
           path: |
             desktop/dist/*.dmg
             desktop/dist/*.zip
@@ -131,18 +137,36 @@ jobs:
 
   linux-installed-smoke:
     needs: build
-    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        image: ['ubuntu:22.04', 'ubuntu:24.04', 'debian:12']
+        include:
+          - runner: ubuntu-latest
+            artifact: Linux-x64
+            image: ubuntu:22.04
+          - runner: ubuntu-latest
+            artifact: Linux-x64
+            image: ubuntu:24.04
+          - runner: ubuntu-latest
+            artifact: Linux-x64
+            image: debian:12
+          - runner: ubuntu-24.04-arm
+            artifact: Linux-arm64
+            image: ubuntu:22.04
+          - runner: ubuntu-24.04-arm
+            artifact: Linux-arm64
+            image: ubuntu:24.04
+          - runner: ubuntu-24.04-arm
+            artifact: Linux-arm64
+            image: debian:12
+    runs-on: ${{ matrix.runner }}
     container:
       image: ${{ matrix.image }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: hive-Linux
+          name: hive-${{ matrix.artifact }}
           path: linux-artifacts
       - name: Install and smoke-test the packaged application
         shell: bash

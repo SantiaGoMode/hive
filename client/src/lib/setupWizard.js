@@ -36,16 +36,15 @@ export function needsSetup({ setupStatus, agents }) {
 // the wizard never prevents continuing.
 export function dependencyChecklist(status) {
   if (!status) return [];
-  const modelAccess = hasModelAccess(status);
   return [
     {
-      key: 'model-access',
-      label: 'Model access (Ollama or a cloud API key)',
-      ok: modelAccess,
+      key: 'ollama-access',
+      label: 'Ollama access',
+      ok: !!status.ollama?.reachable,
       required: true,
       detail: status.ollama?.reachable
         ? `Ollama running at ${status.ollama.url} · ${status.ollama.installed_models} model${status.ollama.installed_models === 1 ? '' : 's'} installed`
-        : 'Ollama is not reachable — install it, or add a cloud API key in the next step',
+        : 'Ollama is not reachable — install and start it. Models can be installed after setup.',
       href: status.ollama?.reachable ? null : 'https://ollama.com/download',
     },
     {
