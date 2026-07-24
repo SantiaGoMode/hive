@@ -68,24 +68,33 @@ describe('dependencyChecklist', () => {
   it('marks core dependencies as required and carries install links for missing deps', () => {
     const items = dependencyChecklist(baseStatus);
     const required = items.filter(i => i.required).map(i => i.key);
-    expect(required).toEqual(['model-access', 'docker', 'gh', 'npx', 'uvx']);
-    const modelAccess = items.find(i => i.key === 'model-access');
-    expect(modelAccess.ok).toBe(false);
-    expect(modelAccess.href).toContain('ollama.com');
+    expect(required).toEqual(['ollama-access', 'docker', 'gh', 'npx', 'uvx']);
+    const ollamaAccess = items.find(i => i.key === 'ollama-access');
+    expect(ollamaAccess.ok).toBe(false);
+    expect(ollamaAccess.href).toContain('ollama.com');
     expect(items.find(i => i.key === 'docker').href).toContain('docker');
     expect(items.find(i => i.key === 'uvx').href).toContain('astral.sh');
   });
 
-  it('reflects a healthy system', () => {
+  it('marks Ollama access ready before any models are installed', () => {
     const items = dependencyChecklist({
       ...baseStatus,
-      ollama: { reachable: true, url: 'http://localhost:11434', version: '0.9.0', installed_models: 3 },
+      ollama: { reachable: true, url: 'http://localhost:11434', version: '0.9.0', installed_models: 0 },
       docker: { available: true, sandbox_ready: true },
       git: { present: true, version: 'git version 2.44.0' },
     });
-    expect(items.find(i => i.key === 'model-access').ok).toBe(true);
-    expect(items.find(i => i.key === 'model-access').href).toBeNull();
+    expect(items.find(i => i.key === 'ollama-access').ok).toBe(true);
+    expect(items.find(i => i.key === 'ollama-access').href).toBeNull();
     expect(items.find(i => i.key === 'docker').ok).toBe(true);
     expect(items.find(i => i.key === 'git').detail).toContain('2.44.0');
+  });
+
+  it('keeps cloud model access separate from Ollama access', () => {
+    const items = dependencyChecklist({
+      ...baseStatus,
+      providers: { ...baseStatus.providers, openai: true },
+    });
+    expect(hasModelAccess({ ...baseStatus, providers: { ...baseStatus.providers, openai: true } })).toBe(true);
+    expect(items.find(i => i.key === 'ollama-access').ok).toBe(false);
   });
 });
