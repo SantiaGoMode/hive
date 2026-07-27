@@ -126,7 +126,7 @@ button, input { font: inherit; }
 .float-card div { display: flex; flex-direction: column; }
 .float-card strong { font-size: 11px; }
 .float-card small { margin-top: 2px; color: #8a8277; font-size: 9px; }
-.float-model { left: 18px; bottom: -62px; }
+.float-model { left: -30px; bottom: -28px; }
 .float-model > i { width: 6px; height: 6px; margin-left: 10px; border-radius: 50%; background: var(--green); }
 .hex-mini { display: grid; place-items: center; width: 28px; height: 28px; color: #7e4700; background: var(--honey-pale); border-radius: 8px; }
 .float-private { right: 12px; top: -32px; }
