@@ -147,6 +147,7 @@ button, input { font: inherit; }
 .feature-card.featured { grid-row: span 2; min-height: 606px; background: linear-gradient(145deg, #fffdf8, #fff8e7); }
 .feature-top { display: flex; align-items: center; justify-content: space-between; }
 .feature-icon { display: grid; place-items: center; width: 37px; height: 37px; color: #8a5200; background: var(--honey-pale); border: 1px solid #f3dfaa; border-radius: 9px; font: 800 13px "Manrope", sans-serif; }
+.feature-svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .feature-number { color: #aaa399; font: 600 10px "Manrope", sans-serif; letter-spacing: .15em; }
 .feature-card h3 { margin: 32px 0 11px; font: 800 21px/1.2 "Manrope", sans-serif; letter-spacing: -.03em; }
 .feature-card p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.7; }
