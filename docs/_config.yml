@@ -3,6 +3,7 @@ description: A self-hosted, local-first command center for AI agents.
 url: https://santiagomode.github.io
 baseurl: /hive
 repository: SantiaGoMode/hive
+cloudflare_web_analytics_token: d3830e4d06fd469db3366392c664d3b0
 markdown: kramdown
 permalink: pretty
 
@@ -14,4 +15,3 @@ exclude:
   - RELEASE_AND_RECOVERY.md
   - specs
   - webhooks-agent-context.md
-
