@@ -1,0 +1,23 @@
+---
+permalink: /404.html
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Page not found · Hive</title>
+    <link rel="icon" href="{{ '/assets/hive-icon.svg' | relative_url }}" type="image/svg+xml">
+    <link rel="stylesheet" href="{{ '/assets/site.css' | relative_url }}">
+  </head>
+  <body class="error-page">
+    {% include site-header.html %}
+    <main>
+      <div class="error-cell">404</div>
+      <p>That cell is empty.</p>
+      <a class="button button-primary" href="{{ '/' | relative_url }}">Return to the hive</a>
+    </main>
+    <script src="{{ '/assets/site.js' | relative_url }}"></script>
+  </body>
+</html>
+

@@ -1,4 +1,14 @@
-# 03 - Colony Missions
+---
+layout: guide
+title: Colony missions
+description: Coordinate recipe-driven teams with explicit roles, enforced handoffs, and durable evidence.
+nav_order: 3
+permalink: /docs/colony-missions/
+previous_url: /docs/agents-and-tools/
+previous_label: Agents and tools
+next_url: /docs/pipelines-and-automation/
+next_label: Pipelines and automation
+---
 
 Colony Missions allow you to orchestrate multiple agents to execute a complex task sequentially. It replaces a free-form orchestrator with a highly structured, recipe-driven pipeline.
 

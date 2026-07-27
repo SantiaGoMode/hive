@@ -1,4 +1,14 @@
-# 04 - Pipelines and Automation
+---
+layout: guide
+title: Pipelines and automation
+description: Chain agents into repeatable workflows and trigger them with schedules or webhooks.
+nav_order: 4
+permalink: /docs/pipelines-and-automation/
+previous_url: /docs/colony-missions/
+previous_label: Colony missions
+next_url: /docs/security-and-architecture/
+next_label: Security and architecture
+---
 
 This chapter explains how to chain agents together and trigger them without manual intervention.
 

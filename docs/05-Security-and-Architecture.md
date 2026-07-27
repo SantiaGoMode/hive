@@ -1,4 +1,14 @@
-# 05 - Security and Architecture
+---
+layout: guide
+title: Security and architecture
+description: Understand Hive's local-first security model, sandbox boundaries, and secrets controls.
+nav_order: 5
+permalink: /docs/security-and-architecture/
+previous_url: /docs/pipelines-and-automation/
+previous_label: Pipelines and automation
+next_url: /docs/discord-bridge/
+next_label: Discord bridge
+---
 
 Hive is designed with a strict "local-first" security model, but because it executes arbitrary AI-generated code (via Sandboxes and Colonies), multiple layers of hardening are applied.
 

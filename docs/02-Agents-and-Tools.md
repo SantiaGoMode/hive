@@ -1,4 +1,14 @@
-# 02 - Agents and Tools
+---
+layout: guide
+title: Agents and tools
+description: Create specialized agents, assign capabilities, and run code safely inside hardened sandboxes.
+nav_order: 2
+permalink: /docs/agents-and-tools/
+previous_url: /docs/getting-started/
+previous_label: Getting started
+next_url: /docs/colony-missions/
+next_label: Colony missions
+---
 
 This chapter details how Agents function internally, the specifics of the Docker Sandbox, and the exact constraints of the built-in toolset.
 

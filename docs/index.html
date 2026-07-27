@@ -1,0 +1,210 @@
+---
+title: Hive — Local-first AI agent orchestration
+description: Build agents, assemble multi-agent crews, and automate work from one private, self-hosted command center.
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#0d0c0a">
+    <meta name="description" content="{{ page.description }}">
+    <meta property="og:title" content="{{ page.title }}">
+    <meta property="og:description" content="{{ page.description }}">
+    <meta property="og:type" content="website">
+    <meta property="og:image" content="{{ '/screenshots/1. Agents Tab  - Home.png' | absolute_url }}">
+    <title>{{ page.title }}</title>
+    <link rel="icon" href="{{ '/assets/hive-icon.svg' | relative_url }}" type="image/svg+xml">
+    <link rel="stylesheet" href="{{ '/assets/site.css' | relative_url }}">
+  </head>
+  <body class="home-page">
+    {% include site-header.html %}
+
+    <main>
+      <section class="hero shell">
+        <div class="hero-glow" aria-hidden="true"></div>
+        <div class="hero-copy">
+          <div class="eyebrow"><span></span>Local-first agent orchestration</div>
+          <h1>Your AI team.<br><em>On your machine.</em></h1>
+          <p>Build specialized agents, assemble multi-agent crews, and automate real work from one private command center.</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="https://github.com/SantiaGoMode/hive/releases">Download Hive <span>↗</span></a>
+            <a class="button button-secondary" href="{{ '/docs/getting-started/' | relative_url }}">Read the docs <span>→</span></a>
+          </div>
+          <div class="hero-proof">
+            <div><strong>100%</strong><span>self-hosted</span></div>
+            <div><strong>Offline</strong><span>with Ollama</span></div>
+            <div><strong>Open</strong><span>source</span></div>
+          </div>
+        </div>
+        <div class="hero-visual">
+          <div class="window">
+            <div class="window-bar">
+              <div class="traffic"><i></i><i></i><i></i></div>
+              <span>Hive · Agents</span>
+              <div class="window-status"><i></i> Local</div>
+            </div>
+            <img src="{{ '/screenshots/1. Agents Tab  - Home.png' | relative_url }}" alt="Hive agent dashboard showing a fleet of local AI agents">
+          </div>
+          <div class="float-card float-model">
+            <span class="hex-mini">⬡</span>
+            <div><strong>qwen3:8b</strong><small>Running locally</small></div>
+            <i></i>
+          </div>
+          <div class="float-card float-private">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 9h-1V7a4 4 0 0 0-8 0v2H7a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2Zm-7-2a2 2 0 0 1 4 0v2h-4V7Zm3 9.73V18h-2v-1.27a2 2 0 1 1 2 0Z"/></svg>
+            <div><strong>Private by default</strong><small>Data stays on your device</small></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="trust-strip">
+        <div class="shell">
+          <span>Built for the models you already use</span>
+          <div class="provider-list">
+            <strong>OLLAMA</strong><strong>OpenAI</strong><strong>ANTHROPIC</strong><strong>GEMINI</strong><strong>LiteLLM</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="section shell" id="features">
+        <div class="section-heading">
+          <div>
+            <div class="eyebrow"><span></span>One command center</div>
+            <h2>From a single agent<br>to a full operation.</h2>
+          </div>
+          <p>Start with chat. Grow into coordinated crews, repeatable pipelines, and autonomous schedules—without giving up control of your data.</p>
+        </div>
+        <div class="feature-grid">
+          <article class="feature-card featured">
+            <div class="feature-top"><span class="feature-icon">A</span><span class="feature-number">01</span></div>
+            <h3>Agents with a point of view</h3>
+            <p>Give every agent its own model, instructions, tools, and persistent memory. Swap local and cloud models without rebuilding your workflow.</p>
+            <div class="agent-stack" aria-hidden="true">
+              <div><span class="avatar amber">S</span><p><strong>Steward</strong><small>Executive assistant</small></p><i></i></div>
+              <div><span class="avatar blue">D</span><p><strong>Developer</strong><small>Code &amp; verification</small></p><i></i></div>
+              <div><span class="avatar rose">R</span><p><strong>Researcher</strong><small>Evidence &amp; synthesis</small></p><i></i></div>
+            </div>
+          </article>
+          <article class="feature-card">
+            <div class="feature-top"><span class="feature-icon">C</span><span class="feature-number">02</span></div>
+            <h3>Colony missions</h3>
+            <p>Launch recipe-driven teams with explicit roles, controlled handoffs, shared context, and live progress.</p>
+            <a href="{{ '/docs/colony-missions/' | relative_url }}">Explore colonies <span>→</span></a>
+          </article>
+          <article class="feature-card">
+            <div class="feature-top"><span class="feature-icon">P</span><span class="feature-number">03</span></div>
+            <h3>Repeatable pipelines</h3>
+            <p>Chain agents sequentially or in parallel, pass outputs forward, and turn good prompts into durable systems.</p>
+            <a href="{{ '/docs/pipelines-and-automation/' | relative_url }}">Build a pipeline <span>→</span></a>
+          </article>
+          <article class="feature-card">
+            <div class="feature-top"><span class="feature-icon">T</span><span class="feature-number">04</span></div>
+            <h3>Tools without lock-in</h3>
+            <p>Connect MCP servers, sandboxes, web search, GitHub, and your own APIs. Permissions stay explicit per agent.</p>
+            <a href="{{ '/docs/agents-and-tools/' | relative_url }}">See tools <span>→</span></a>
+          </article>
+          <article class="feature-card">
+            <div class="feature-top"><span class="feature-icon">↻</span><span class="feature-number">05</span></div>
+            <h3>Automation that reports back</h3>
+            <p>Run schedules and webhooks with bounded concurrency, durable history, and visible failure states.</p>
+            <a href="{{ '/docs/pipelines-and-automation/' | relative_url }}">Automate work <span>→</span></a>
+          </article>
+        </div>
+      </section>
+
+      <section class="colony-section">
+        <div class="shell colony-layout">
+          <div class="colony-copy">
+            <div class="eyebrow light"><span></span>Coordination, built in</div>
+            <h2>A crew, not a crowd.</h2>
+            <p>Colony recipes turn a complex goal into a controlled sequence of specialists. Every handoff is visible. Every artifact has an owner.</p>
+            <ul class="check-list">
+              <li><i>✓</i>Role-specific models and permissions</li>
+              <li><i>✓</i>Enforced handoffs and human gates</li>
+              <li><i>✓</i>Shared blackboard and durable evidence</li>
+            </ul>
+            <a class="text-link" href="{{ '/docs/colony-missions/' | relative_url }}">How Colony works <span>→</span></a>
+          </div>
+          <div class="mission-card">
+            <div class="mission-head">
+              <div><span class="live-dot"></span><p><strong>Release readiness</strong><small>Development team · Running</small></p></div>
+              <span>68%</span>
+            </div>
+            <div class="mission-progress"><i></i></div>
+            <ol class="mission-steps">
+              <li class="done"><span>✓</span><div><strong>Business analyst</strong><small>Requirements &amp; acceptance criteria</small></div><em>Complete</em></li>
+              <li class="done"><span>✓</span><div><strong>Project manager</strong><small>Plan &amp; task breakdown</small></div><em>Complete</em></li>
+              <li class="active"><span>03</span><div><strong>Software developer</strong><small>Implementation &amp; tests</small></div><em>Working</em></li>
+              <li><span>04</span><div><strong>QA engineer</strong><small>Acceptance verification</small></div><em>Queued</em></li>
+              <li><span>05</span><div><strong>Release coordinator</strong><small>Package &amp; publish</small></div><em>Queued</em></li>
+            </ol>
+          </div>
+        </div>
+      </section>
+
+      <section class="section shell security-section">
+        <div class="security-visual">
+          <div class="shield-orbit">
+            <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div>
+            <div class="shield-core">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4.5 5v5.5c0 4.8 3.2 9.3 7.5 10.5 4.3-1.2 7.5-5.7 7.5-10.5V5L12 2Zm3.6 7.6-4.3 4.3-2.2-2.2 1.1-1.1 1.1 1.1 3.2-3.2 1.1 1.1Z"/></svg>
+            </div>
+            <span class="orbit-label label-one">No cloud required</span>
+            <span class="orbit-label label-two">Sandboxed tools</span>
+            <span class="orbit-label label-three">Local secrets</span>
+          </div>
+        </div>
+        <div class="security-copy">
+          <div class="eyebrow"><span></span>Local-first by design</div>
+          <h2>Your agents work for you.<br>Your data does too.</h2>
+          <p>Hive runs on your hardware, stores state locally, and keeps agent execution inside hardened sandboxes. Cloud models are optional—not the architecture.</p>
+          <div class="security-grid">
+            <div><strong>Network off</strong><span>Sandbox egress is disabled by default.</span></div>
+            <div><strong>Scoped access</strong><span>Tools and repositories are granted per role.</span></div>
+            <div><strong>Secret control</strong><span>Use local storage or environment-backed references.</span></div>
+            <div><strong>Visible work</strong><span>Inspect runs, handoffs, and artifacts as they happen.</span></div>
+          </div>
+          <a class="text-link dark" href="{{ '/docs/security-and-architecture/' | relative_url }}">Read the security model <span>→</span></a>
+        </div>
+      </section>
+
+      <section class="gallery-section">
+        <div class="shell">
+          <div class="section-heading compact">
+            <div><div class="eyebrow"><span></span>See the whole operation</div><h2>One place to run it all.</h2></div>
+            <p>Agents, teams, models, schedules, tools, and the evidence they produce.</p>
+          </div>
+          <div class="gallery">
+            <figure class="gallery-wide"><img loading="lazy" src="{{ '/screenshots/4. Colony Tab.png' | relative_url }}" alt="Hive Colony dashboard"><figcaption>Colony teams</figcaption></figure>
+            <figure><img loading="lazy" src="{{ '/screenshots/2. Pipelines Tab.png' | relative_url }}" alt="Hive pipelines dashboard"><figcaption>Pipelines</figcaption></figure>
+            <figure><img loading="lazy" src="{{ '/screenshots/8. Models Tab - Local.png' | relative_url }}" alt="Hive local models dashboard"><figcaption>Local models</figcaption></figure>
+          </div>
+        </div>
+      </section>
+
+      <section class="cta shell">
+        <div class="cta-pattern" aria-hidden="true"></div>
+        <div>
+          <span class="cta-icon">⬡</span>
+          <h2>Build your hive.</h2>
+          <p>Download the desktop app or run from source. Your agents are waiting.</p>
+          <div class="hero-actions centered">
+            <a class="button button-dark" href="https://github.com/SantiaGoMode/hive/releases">Get the latest release <span>↗</span></a>
+            <a class="button button-ghost" href="{{ '/docs/getting-started/' | relative_url }}">Start with the docs <span>→</span></a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="shell footer-main">
+        <div><a class="brand footer-brand" href="{{ '/' | relative_url }}"><img src="{{ '/assets/hive-icon.svg' | relative_url }}" alt="" width="34" height="34"><span>Hive</span></a><p>Local-first AI agent orchestration.</p></div>
+        <div class="footer-links"><div><strong>Product</strong><a href="#features">Features</a><a href="https://github.com/SantiaGoMode/hive/releases">Releases</a></div><div><strong>Learn</strong><a href="{{ '/docs/getting-started/' | relative_url }}">Documentation</a><a href="{{ '/docs/security-and-architecture/' | relative_url }}">Security</a></div><div><strong>Project</strong><a href="https://github.com/SantiaGoMode/hive">GitHub</a><a href="https://github.com/SantiaGoMode/hive/issues">Issues</a></div></div>
+      </div>
+      <div class="shell footer-bottom"><span>© 2026 Hive. Open source under the ISC License.</span><span>Built locally. Runs locally.</span></div>
+    </footer>
+    <script src="{{ '/assets/site.js' | relative_url }}"></script>
+  </body>
+</html>
+

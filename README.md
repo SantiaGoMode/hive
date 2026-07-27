@@ -4,6 +4,8 @@
 
 ![local-first](https://img.shields.io/badge/local--first-AI-blue) ![node](https://img.shields.io/badge/node-%E2%89%A522-green) ![license](https://img.shields.io/badge/license-ISC-lightgrey)
 
+[Website](https://santiagomode.github.io/hive/) · [Documentation](https://santiagomode.github.io/hive/docs/getting-started/) · [Releases](https://github.com/SantiaGoMode/hive/releases)
+
 ![Hive dashboard](<docs/screenshots/1. Agents Tab  - Home.png>)
 
 ---

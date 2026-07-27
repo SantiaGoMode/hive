@@ -1,0 +1,17 @@
+title: Hive
+description: A self-hosted, local-first command center for AI agents.
+url: https://santiagomode.github.io
+baseurl: /hive
+repository: SantiaGoMode/hive
+markdown: kramdown
+permalink: pretty
+
+exclude:
+  - .DS_Store
+  - AUDIT.md
+  - COLONY_LEGACY_RETIREMENT.md
+  - PRODUCTION_AUDIT_2026-07-16.md
+  - RELEASE_AND_RECOVERY.md
+  - specs
+  - webhooks-agent-context.md
+

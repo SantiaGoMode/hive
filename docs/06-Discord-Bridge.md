@@ -1,4 +1,12 @@
-# Discord Bridge
+---
+layout: guide
+title: Discord bridge
+description: Run Hive from a private Discord server through the Steward, Operator, and Sentinel personas.
+nav_order: 6
+permalink: /docs/discord-bridge/
+previous_url: /docs/security-and-architecture/
+previous_label: Security and architecture
+---
 
 Run Hive from your own private Discord server. One bot account, three personas:
 
@@ -8,7 +16,7 @@ Run Hive from your own private Discord server. One bot account, three personas:
 | `colony` (forum) | **The Operator** | One thread per colony team, created automatically. Instructions in a thread start missions (or steer a live run); questions get answered from team state. Step-by-step progress (✅/❌ mission board) and a final status card post automatically. |
 | `health` (forum) | **The Sentinel** | Posts deduplicated findings — budget burn, provider outages, failed missions, blockers, repeated errors — one thread per problem, auto-resolved when it clears. Reply in a thread and a triage agent investigates and can file a GitHub issue. |
 
-The full design lives in [docs/specs/discord-bridge.md](specs/discord-bridge.md).
+The full design lives in the repository's [Discord bridge specification](https://github.com/SantiaGoMode/hive/blob/main/docs/specs/discord-bridge.md).
 
 ## Setup
 
