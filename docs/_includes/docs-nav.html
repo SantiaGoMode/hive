@@ -5,6 +5,7 @@
   <a {% if page.url contains '/getting-started/' %}class="active"{% endif %} href="{{ '/docs/getting-started/' | relative_url }}">Getting started</a>
   <a {% if page.url contains '/models-and-providers/' %}class="active"{% endif %} href="{{ '/docs/models-and-providers/' | relative_url }}">Models &amp; providers</a>
   <a {% if page.url contains '/configuration/' %}class="active"{% endif %} href="{{ '/docs/configuration/' | relative_url }}">Configuration</a>
+  <a {% if page.url contains '/guides/first-hour/' %}class="active"{% endif %} href="{{ '/docs/guides/first-hour/' | relative_url }}">Your first hour</a>
 </nav>
 
 <p class="sidebar-label">Capabilities</p>
@@ -19,11 +20,24 @@
   <a {% if page.url contains '/security-and-architecture/' %}class="active"{% endif %} href="{{ '/docs/security-and-architecture/' | relative_url }}">Security &amp; architecture</a>
 </nav>
 
-<p class="sidebar-label">How-to guides</p>
-<nav aria-label="How-to guides">
-  <a {% if page.url contains '/guides/first-agent/' %}class="active"{% endif %} href="{{ '/docs/guides/first-agent/' | relative_url }}">Create your first agent</a>
+<p class="sidebar-label">Agent how-to</p>
+<nav aria-label="Agent how-to guides">
+  <a {% if page.url contains '/guides/first-agent/' %}class="active"{% endif %} href="{{ '/docs/guides/first-agent/' | relative_url }}">Create &amp; configure an agent</a>
+  <a {% if page.url contains '/guides/edit-agent/' %}class="active"{% endif %} href="{{ '/docs/guides/edit-agent/' | relative_url }}">Edit &amp; tune an agent</a>
+  <a {% if page.url contains '/guides/agent-prompts/' %}class="active"{% endif %} href="{{ '/docs/guides/agent-prompts/' | relative_url }}">Write agent instructions</a>
+  <a {% if page.url contains '/guides/agent-tools-memory/' %}class="active"{% endif %} href="{{ '/docs/guides/agent-tools-memory/' | relative_url }}">Tools, skills &amp; memory</a>
+  <a {% if page.url contains '/guides/chat-sessions/' %}class="active"{% endif %} href="{{ '/docs/guides/chat-sessions/' | relative_url }}">Chat &amp; sessions</a>
+</nav>
+
+<p class="sidebar-label">Team &amp; workflow how-to</p>
+<nav aria-label="Team and workflow how-to guides">
+  <a {% if page.url contains '/guides/staff-workflow/' %}class="active"{% endif %} href="{{ '/docs/guides/staff-workflow/' | relative_url }}">Build a Staff member</a>
   <a {% if page.url contains '/guides/first-colony/' %}class="active"{% endif %} href="{{ '/docs/guides/first-colony/' | relative_url }}">Run your first Colony</a>
-  <a {% if page.url contains '/guides/automation/' %}class="active"{% endif %} href="{{ '/docs/guides/automation/' | relative_url }}">Automate a workflow</a>
+  <a {% if page.url contains '/guides/pipeline/' %}class="active"{% endif %} href="{{ '/docs/guides/pipeline/' | relative_url }}">Build &amp; run a pipeline</a>
+  <a {% if page.url contains '/guides/schedules/' %}class="active"{% endif %} href="{{ '/docs/guides/schedules/' | relative_url }}">Schedule recurring work</a>
+  <a {% if page.url contains '/guides/webhooks/' %}class="active"{% endif %} href="{{ '/docs/guides/webhooks/' | relative_url }}">Trigger with webhooks</a>
+  <a {% if page.url contains '/guides/mcp-server/' %}class="active"{% endif %} href="{{ '/docs/guides/mcp-server/' | relative_url }}">Connect an MCP server</a>
+  <a {% if page.url contains '/guides/automation/' %}class="active"{% endif %} href="{{ '/docs/guides/automation/' | relative_url }}">Operate automation safely</a>
   <a {% if page.url contains '/backups-and-recovery/' %}class="active"{% endif %} href="{{ '/docs/backups-and-recovery/' | relative_url }}">Backups &amp; recovery</a>
 </nav>
 

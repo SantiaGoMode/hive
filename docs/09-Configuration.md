@@ -6,8 +6,8 @@ permalink: /docs/configuration/
 section: Start here
 previous_url: /docs/models-and-providers/
 previous_label: Models and providers
-next_url: /docs/staff/
-next_label: Staff
+next_url: /docs/guides/first-hour/
+next_label: Your first hour with Hive
 ---
 
 Hive reads configuration from environment variables and locally stored settings. Environment-backed secrets override stored values.
