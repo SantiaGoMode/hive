@@ -110,7 +110,7 @@ button, input { font: inherit; }
 .hero-proof strong { font: 800 15px "Manrope", sans-serif; }
 .hero-proof span { margin-top: 3px; color: #8b8377; font-size: 11px; }
 
-.hero-visual { position: relative; margin-right: -80px; }
+.hero-visual { position: relative; min-width: 0; margin-right: 0; }
 .window { overflow: hidden; background: #12110f; border: 1px solid #302b22; border-radius: 15px; box-shadow: 0 40px 100px rgba(38, 27, 10, .25), 0 0 0 8px rgba(255, 255, 255, .5); transform: perspective(1300px) rotateY(-3deg) rotateX(1deg); }
 .window-bar { height: 43px; padding: 0 15px; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; color: #8e887c; background: #1b1915; border-bottom: 1px solid #2d2922; font-size: 10px; }
 .traffic { display: flex; gap: 6px; }
@@ -121,7 +121,7 @@ button, input { font: inherit; }
 .window-status { justify-self: end; display: flex; align-items: center; gap: 5px; color: #9b9589; }
 .window-status i { width: 5px; height: 5px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); }
 .window img { width: 100%; aspect-ratio: 1.61; object-fit: cover; object-position: top; }
-.hero-visual .window img { height: auto; aspect-ratio: auto; object-fit: contain; }
+.hero-visual .window img { height: auto; aspect-ratio: auto; object-fit: contain; object-position: left top; }
 .float-card { position: absolute; z-index: 2; display: flex; align-items: center; gap: 10px; padding: 11px 14px; background: rgba(255, 255, 255, .95); border: 1px solid #eee7db; border-radius: 11px; box-shadow: 0 18px 40px rgba(43, 32, 15, .15); }
 .float-card div { display: flex; flex-direction: column; }
 .float-card strong { font-size: 11px; }
