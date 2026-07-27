@@ -3,9 +3,12 @@ layout: guide
 title: Getting started
 description: Install Hive, connect your models, and understand where your local data lives.
 nav_order: 1
+section: Start here
 permalink: /docs/getting-started/
-next_url: /docs/agents-and-tools/
-next_label: Agents and tools
+previous_url: /docs/installation/
+previous_label: Installation
+next_url: /docs/models-and-providers/
+next_label: Models and providers
 ---
 
 This chapter covers the technical specifics of setting up Hive, where data is stored, and how to configure models and environment variables for local or production use.

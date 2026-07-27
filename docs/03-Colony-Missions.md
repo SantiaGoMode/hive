@@ -3,6 +3,7 @@ layout: guide
 title: Colony missions
 description: Coordinate recipe-driven teams with explicit roles, enforced handoffs, and durable evidence.
 nav_order: 3
+section: Capabilities
 permalink: /docs/colony-missions/
 previous_url: /docs/agents-and-tools/
 previous_label: Agents and tools

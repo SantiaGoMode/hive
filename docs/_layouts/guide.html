@@ -14,22 +14,14 @@
     <button class="docs-toggle" type="button" aria-expanded="false" aria-controls="docs-sidebar">Browse documentation</button>
     <div class="docs-shell shell">
       <aside class="docs-sidebar" id="docs-sidebar">
-        <p class="sidebar-label">Documentation</p>
-        <nav aria-label="Documentation">
-          <a {% if page.url contains 'getting-started' %}class="active"{% endif %} href="{{ '/docs/getting-started/' | relative_url }}"><span>01</span>Getting started</a>
-          <a {% if page.url contains 'agents-and-tools' %}class="active"{% endif %} href="{{ '/docs/agents-and-tools/' | relative_url }}"><span>02</span>Agents &amp; tools</a>
-          <a {% if page.url contains 'colony-missions' %}class="active"{% endif %} href="{{ '/docs/colony-missions/' | relative_url }}"><span>03</span>Colony missions</a>
-          <a {% if page.url contains 'pipelines-and-automation' %}class="active"{% endif %} href="{{ '/docs/pipelines-and-automation/' | relative_url }}"><span>04</span>Pipelines &amp; automation</a>
-          <a {% if page.url contains 'security-and-architecture' %}class="active"{% endif %} href="{{ '/docs/security-and-architecture/' | relative_url }}"><span>05</span>Security &amp; architecture</a>
-          <a {% if page.url contains 'discord-bridge' %}class="active"{% endif %} href="{{ '/docs/discord-bridge/' | relative_url }}"><span>06</span>Discord bridge</a>
-        </nav>
+        {% include docs-nav.html %}
         <div class="sidebar-card">
           <span class="status-dot"></span>
           <div><strong>Local by default</strong><small>Your data stays on your machine.</small></div>
         </div>
       </aside>
       <main class="docs-content">
-        <div class="docs-kicker">Hive documentation / {{ page.nav_order | prepend: "0" }}</div>
+        <div class="docs-kicker">Hive documentation / {{ page.section | default: "Guide" }}</div>
         <h1>{{ page.title }}</h1>
         {% if page.description %}<p class="docs-lede">{{ page.description }}</p>{% endif %}
         <article class="prose">{{ content }}</article>
@@ -46,4 +38,3 @@
     <script src="{{ '/assets/site.js' | relative_url }}"></script>
   </body>
 </html>
-

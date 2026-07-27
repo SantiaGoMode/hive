@@ -1,0 +1,34 @@
+<p class="sidebar-label">Start here</p>
+<nav aria-label="Documentation">
+  <a {% if page.url == '/docs/' %}class="active"{% endif %} href="{{ '/docs/' | relative_url }}">Documentation home</a>
+  <a {% if page.url contains '/installation/' %}class="active"{% endif %} href="{{ '/docs/installation/' | relative_url }}">Installation</a>
+  <a {% if page.url contains '/getting-started/' %}class="active"{% endif %} href="{{ '/docs/getting-started/' | relative_url }}">Getting started</a>
+  <a {% if page.url contains '/models-and-providers/' %}class="active"{% endif %} href="{{ '/docs/models-and-providers/' | relative_url }}">Models &amp; providers</a>
+  <a {% if page.url contains '/configuration/' %}class="active"{% endif %} href="{{ '/docs/configuration/' | relative_url }}">Configuration</a>
+</nav>
+
+<p class="sidebar-label">Capabilities</p>
+<nav aria-label="Capabilities">
+  <a {% if page.url contains '/staff/' %}class="active"{% endif %} href="{{ '/docs/staff/' | relative_url }}">Staff</a>
+  <a {% if page.url contains '/agents-and-tools/' %}class="active"{% endif %} href="{{ '/docs/agents-and-tools/' | relative_url }}">Agents &amp; tools</a>
+  <a {% if page.url contains '/colony-missions/' %}class="active"{% endif %} href="{{ '/docs/colony-missions/' | relative_url }}">Colony missions</a>
+  <a {% if page.url contains '/pipelines-and-automation/' %}class="active"{% endif %} href="{{ '/docs/pipelines-and-automation/' | relative_url }}">Pipelines &amp; automation</a>
+  <a {% if page.url contains '/skills-and-mcp/' %}class="active"{% endif %} href="{{ '/docs/skills-and-mcp/' | relative_url }}">Skills &amp; MCP</a>
+  <a {% if page.url contains '/integrations-and-webhooks/' %}class="active"{% endif %} href="{{ '/docs/integrations-and-webhooks/' | relative_url }}">Integrations &amp; webhooks</a>
+  <a {% if page.url contains '/discord-bridge/' %}class="active"{% endif %} href="{{ '/docs/discord-bridge/' | relative_url }}">Discord bridge</a>
+  <a {% if page.url contains '/security-and-architecture/' %}class="active"{% endif %} href="{{ '/docs/security-and-architecture/' | relative_url }}">Security &amp; architecture</a>
+</nav>
+
+<p class="sidebar-label">How-to guides</p>
+<nav aria-label="How-to guides">
+  <a {% if page.url contains '/guides/first-agent/' %}class="active"{% endif %} href="{{ '/docs/guides/first-agent/' | relative_url }}">Create your first agent</a>
+  <a {% if page.url contains '/guides/first-colony/' %}class="active"{% endif %} href="{{ '/docs/guides/first-colony/' | relative_url }}">Run your first Colony</a>
+  <a {% if page.url contains '/guides/automation/' %}class="active"{% endif %} href="{{ '/docs/guides/automation/' | relative_url }}">Automate a workflow</a>
+  <a {% if page.url contains '/backups-and-recovery/' %}class="active"{% endif %} href="{{ '/docs/backups-and-recovery/' | relative_url }}">Backups &amp; recovery</a>
+</nav>
+
+<p class="sidebar-label">Help</p>
+<nav aria-label="Help">
+  <a {% if page.url contains '/troubleshooting/' %}class="active"{% endif %} href="{{ '/docs/troubleshooting/' | relative_url }}">Troubleshooting</a>
+  <a {% if page.url contains '/faq/' %}class="active"{% endif %} href="{{ '/docs/faq/' | relative_url }}">FAQ</a>
+</nav>

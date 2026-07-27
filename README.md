@@ -1,10 +1,10 @@
 # Hive
 
-**A self-hosted, local-first AI agent dashboard.** Build specialized agents, chat with them in real time, run multi-agent missions, chain them into pipelines, and schedule autonomous work — all on your machine. Run completely offline via [Ollama](https://ollama.com) with no account required, or integrate cloud models (Anthropic, OpenAI, Gemini) securely using your own API keys.
+**A self-hosted, local-first AI agent command center.** Build a durable Staff of specialists, deploy agents, run multi-agent missions, chain pipelines, and schedule autonomous work — all on your machine. Run completely offline via [Ollama](https://ollama.com) with no account required, or integrate cloud models (Anthropic, OpenAI, Gemini) securely using your own API keys.
 
 ![local-first](https://img.shields.io/badge/local--first-AI-blue) ![node](https://img.shields.io/badge/node-%E2%89%A522-green) ![license](https://img.shields.io/badge/license-ISC-lightgrey)
 
-[Website](https://santiagomode.github.io/hive/) · [Documentation](https://santiagomode.github.io/hive/docs/getting-started/) · [Releases](https://github.com/SantiaGoMode/hive/releases)
+[Website](https://santiagomode.github.io/hive/) · [Documentation](https://santiagomode.github.io/hive/docs/) · [Releases](https://github.com/SantiaGoMode/hive/releases)
 
 ![Hive dashboard](<docs/screenshots/1. Agents Tab  - Home.png>)
 
@@ -15,6 +15,7 @@
 Hive is a unified command center for running AI agents locally. Instead of relying on a single monolithic LLM chat window, Hive lets you create a fleet of distinct **agents**, each with its own designated model, custom system prompt, specific toolsets, and persistent memory.
 
 With Hive, you can:
+- **Build a Staff**: Maintain durable specialist profiles with roles, personalities, prompts, model preferences, skills, tools, memory, performance history, and improvement suggestions.
 - **Chat** seamlessly with any agent (includes real-time streaming, tool use, and file attachments).
 - **Run Colony Missions**: Deploy multi-agent teams seeded from recipes (e.g., PM → Designer → Developer) orchestrated automatically to achieve complex goals.
 - **Build Pipelines**: Chain agents together sequentially or concurrently to process data continuously.
@@ -28,6 +29,14 @@ Hive prioritizes your privacy and security. By default, API keys are stored loca
 ---
 
 ## Features
+
+### 👥 Staff
+- Create durable specialists with a name, role, personality, system prompt, preferred model, skills, tools, and memory.
+- Seed Staff automatically from Colony recipe roles or create custom profiles for your organization.
+- Create and synchronize durable agents from Staff profiles.
+- Match proven Staff members to Colony roles using recipe fit, skills, memory, and handoff history.
+- Review suggestions derived from tool errors, workarounds, blockers, user feedback, and rejected handoffs.
+- Inspect performance metrics, scorecards, interactions, and run history for every specialist.
 
 ### 🤖 Custom Agents
 - Create specialized agents with distinct models, prompts, tool groups, and memory.

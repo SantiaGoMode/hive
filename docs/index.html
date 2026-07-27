@@ -1,6 +1,6 @@
 ---
 title: Hive — Local-first AI agent orchestration
-description: Build agents, assemble multi-agent crews, and automate work from one private, self-hosted command center.
+description: Build a durable AI staff, run specialized agents and multi-agent crews, and automate work from one private, self-hosted command center.
 ---
 <!doctype html>
 <html lang="en">
@@ -25,11 +25,11 @@ description: Build agents, assemble multi-agent crews, and automate work from on
         <div class="hero-glow" aria-hidden="true"></div>
         <div class="hero-copy">
           <div class="eyebrow"><span></span>Local-first agent orchestration</div>
-          <h1>Your AI team.<br><em>On your machine.</em></h1>
-          <p>Build specialized agents, assemble multi-agent crews, and automate real work from one private command center.</p>
+          <h1>Your AI staff.<br><em>On your machine.</em></h1>
+          <p>Build durable specialists, deploy them as agents and coordinated crews, and automate real work from one private command center.</p>
           <div class="hero-actions">
             <a class="button button-primary" href="https://github.com/SantiaGoMode/hive/releases">Download Hive <span>↗</span></a>
-            <a class="button button-secondary" href="{{ '/docs/getting-started/' | relative_url }}">Read the docs <span>→</span></a>
+            <a class="button button-secondary" href="{{ '/docs/' | relative_url }}">Read the docs <span>→</span></a>
           </div>
           <div class="hero-proof">
             <div><strong>100%</strong><span>self-hosted</span></div>
@@ -78,13 +78,14 @@ description: Build agents, assemble multi-agent crews, and automate work from on
         <div class="feature-grid">
           <article class="feature-card featured">
             <div class="feature-top"><span class="feature-icon">A</span><span class="feature-number">01</span></div>
-            <h3>Agents with a point of view</h3>
-            <p>Give every agent its own model, instructions, tools, and persistent memory. Swap local and cloud models without rebuilding your workflow.</p>
+            <h3>A Staff that gets better</h3>
+            <p>Build durable specialists with a role, personality, model, skills, tools, memory, performance history, and actionable improvement suggestions.</p>
             <div class="agent-stack" aria-hidden="true">
               <div><span class="avatar amber">S</span><p><strong>Steward</strong><small>Executive assistant</small></p><i></i></div>
               <div><span class="avatar blue">D</span><p><strong>Developer</strong><small>Code &amp; verification</small></p><i></i></div>
               <div><span class="avatar rose">R</span><p><strong>Researcher</strong><small>Evidence &amp; synthesis</small></p><i></i></div>
             </div>
+            <a href="{{ '/docs/staff/' | relative_url }}">Meet Staff <span>→</span></a>
           </article>
           <article class="feature-card">
             <div class="feature-top"><span class="feature-icon">C</span><span class="feature-number">02</span></div>
@@ -99,17 +100,45 @@ description: Build agents, assemble multi-agent crews, and automate work from on
             <a href="{{ '/docs/pipelines-and-automation/' | relative_url }}">Build a pipeline <span>→</span></a>
           </article>
           <article class="feature-card">
-            <div class="feature-top"><span class="feature-icon">T</span><span class="feature-number">04</span></div>
-            <h3>Tools without lock-in</h3>
-            <p>Connect MCP servers, sandboxes, web search, GitHub, and your own APIs. Permissions stay explicit per agent.</p>
-            <a href="{{ '/docs/agents-and-tools/' | relative_url }}">See tools <span>→</span></a>
+            <div class="feature-top"><span class="feature-icon">A</span><span class="feature-number">04</span></div>
+            <h3>Specialized agents</h3>
+            <p>Deploy a Staff member or create a focused worker with its own prompt, model, tools, files, chat, and persistent memory.</p>
+            <a href="{{ '/docs/agents-and-tools/' | relative_url }}">Build an agent <span>→</span></a>
           </article>
           <article class="feature-card">
-            <div class="feature-top"><span class="feature-icon">↻</span><span class="feature-number">05</span></div>
+            <div class="feature-top"><span class="feature-icon">T</span><span class="feature-number">05</span></div>
+            <h3>Tools without lock-in</h3>
+            <p>Connect MCP servers, sandboxes, web search, GitHub, and your own APIs. Permissions stay explicit per agent.</p>
+            <a href="{{ '/docs/skills-and-mcp/' | relative_url }}">See skills &amp; tools <span>→</span></a>
+          </article>
+          <article class="feature-card">
+            <div class="feature-top"><span class="feature-icon">↻</span><span class="feature-number">06</span></div>
             <h3>Automation that reports back</h3>
             <p>Run schedules and webhooks with bounded concurrency, durable history, and visible failure states.</p>
             <a href="{{ '/docs/pipelines-and-automation/' | relative_url }}">Automate work <span>→</span></a>
           </article>
+        </div>
+      </section>
+
+      <section class="staff-section">
+        <div class="shell staff-layout">
+          <div class="staff-shot">
+            <div class="window">
+              <div class="window-bar"><div class="traffic"><i></i><i></i><i></i></div><span>Hive · Staff</span><div class="window-status"><i></i> Local</div></div>
+              <img loading="lazy" src="{{ '/screenshots/6. Staff Tab.png' | relative_url }}" alt="Hive Staff directory showing durable specialist profiles">
+            </div>
+          </div>
+          <div class="staff-copy">
+            <div class="eyebrow"><span></span>Your durable organization</div>
+            <h2>More than a list of agents.</h2>
+            <p>Staff gives every specialist an identity that survives the task: role, personality, operating prompt, model preference, tools, skills, and memory. Hive carries that identity into individual agents and Colony missions.</p>
+            <div class="staff-points">
+              <div><strong>Develop</strong><span>Review suggestions grounded in errors, blockers, workarounds, and rejected handoffs.</span></div>
+              <div><strong>Measure</strong><span>Inspect performance, scorecards, interactions, and run history by specialist.</span></div>
+              <div><strong>Reuse</strong><span>Match proven Staff members to recipe roles across missions.</span></div>
+            </div>
+            <a class="text-link dark" href="{{ '/docs/staff/' | relative_url }}">Explore Staff <span>→</span></a>
+          </div>
         </div>
       </section>
 
@@ -176,7 +205,7 @@ description: Build agents, assemble multi-agent crews, and automate work from on
             <p>Agents, teams, models, schedules, tools, and the evidence they produce.</p>
           </div>
           <div class="gallery">
-            <figure class="gallery-wide"><img loading="lazy" src="{{ '/screenshots/4. Colony Tab.png' | relative_url }}" alt="Hive Colony dashboard"><figcaption>Colony teams</figcaption></figure>
+            <figure class="gallery-wide"><img loading="lazy" src="{{ '/screenshots/6. Staff Tab.png' | relative_url }}" alt="Hive Staff directory"><figcaption>Staff directory</figcaption></figure>
             <figure><img loading="lazy" src="{{ '/screenshots/2. Pipelines Tab.png' | relative_url }}" alt="Hive pipelines dashboard"><figcaption>Pipelines</figcaption></figure>
             <figure><img loading="lazy" src="{{ '/screenshots/8. Models Tab - Local.png' | relative_url }}" alt="Hive local models dashboard"><figcaption>Local models</figcaption></figure>
           </div>
@@ -191,7 +220,7 @@ description: Build agents, assemble multi-agent crews, and automate work from on
           <p>Download the desktop app or run from source. Your agents are waiting.</p>
           <div class="hero-actions centered">
             <a class="button button-dark" href="https://github.com/SantiaGoMode/hive/releases">Get the latest release <span>↗</span></a>
-            <a class="button button-ghost" href="{{ '/docs/getting-started/' | relative_url }}">Start with the docs <span>→</span></a>
+            <a class="button button-ghost" href="{{ '/docs/' | relative_url }}">Start with the docs <span>→</span></a>
           </div>
         </div>
       </section>
@@ -200,11 +229,10 @@ description: Build agents, assemble multi-agent crews, and automate work from on
     <footer class="site-footer">
       <div class="shell footer-main">
         <div><a class="brand footer-brand" href="{{ '/' | relative_url }}"><img src="{{ '/assets/hive-icon.svg' | relative_url }}" alt="" width="34" height="34"><span>Hive</span></a><p>Local-first AI agent orchestration.</p></div>
-        <div class="footer-links"><div><strong>Product</strong><a href="#features">Features</a><a href="https://github.com/SantiaGoMode/hive/releases">Releases</a></div><div><strong>Learn</strong><a href="{{ '/docs/getting-started/' | relative_url }}">Documentation</a><a href="{{ '/docs/security-and-architecture/' | relative_url }}">Security</a></div><div><strong>Project</strong><a href="https://github.com/SantiaGoMode/hive">GitHub</a><a href="https://github.com/SantiaGoMode/hive/issues">Issues</a></div></div>
+        <div class="footer-links"><div><strong>Product</strong><a href="#features">Capabilities</a><a href="{{ '/docs/staff/' | relative_url }}">Staff</a><a href="https://github.com/SantiaGoMode/hive/releases">Releases</a></div><div><strong>Learn</strong><a href="{{ '/docs/' | relative_url }}">Documentation</a><a href="{{ '/docs/guides/first-agent/' | relative_url }}">How-to guides</a><a href="{{ '/docs/faq/' | relative_url }}">FAQ</a></div><div><strong>Project</strong><a href="https://github.com/SantiaGoMode/hive">GitHub</a><a href="https://github.com/SantiaGoMode/hive/issues">Issues</a></div></div>
       </div>
       <div class="shell footer-bottom"><span>© 2026 Hive. Open source under the ISC License.</span><span>Built locally. Runs locally.</span></div>
     </footer>
     <script src="{{ '/assets/site.js' | relative_url }}"></script>
   </body>
 </html>
-

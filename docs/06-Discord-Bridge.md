@@ -3,9 +3,12 @@ layout: guide
 title: Discord bridge
 description: Run Hive from a private Discord server through the Steward, Operator, and Sentinel personas.
 nav_order: 6
+section: Capabilities
 permalink: /docs/discord-bridge/
-previous_url: /docs/security-and-architecture/
-previous_label: Security and architecture
+previous_url: /docs/integrations-and-webhooks/
+previous_label: Integrations and webhooks
+next_url: /docs/security-and-architecture/
+next_label: Security and architecture
 ---
 
 Run Hive from your own private Discord server. One bot account, three personas:
