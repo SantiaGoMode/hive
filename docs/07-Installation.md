@@ -12,7 +12,7 @@ next_label: Getting started
 
 ## Desktop app
 
-The desktop app is the recommended path. Download the latest artifact from [GitHub Releases](https://github.com/SantiaGoMode/hive/releases).
+The desktop app is the recommended path. Use the [Hive download chooser]({{ '/download/' | relative_url }}) to detect your platform and select the newest compatible installer. The complete artifact list remains available on [GitHub Releases](https://github.com/SantiaGoMode/hive/releases).
 
 | Platform | Package | Notes |
 |---|---|---|

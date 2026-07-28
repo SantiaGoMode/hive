@@ -1,0 +1,103 @@
+---
+title: Download Hive
+description: Get the newest Hive desktop release for your operating system and processor.
+permalink: /download/
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#0d0c0a">
+    <meta name="description" content="{{ page.description }}">
+    <title>{{ page.title }} · Local-first AI agent orchestration</title>
+    <link rel="icon" href="{{ '/assets/hive-icon.svg' | relative_url }}" type="image/svg+xml">
+    <link rel="stylesheet" href="{{ '/assets/site.css' | relative_url }}?v={{ site.time | date: '%s' }}">
+  </head>
+  <body class="download-page">
+    {% include site-header.html %}
+
+    <main class="download-main">
+      <section class="download-hero shell">
+        <div class="eyebrow"><span></span>Latest desktop release</div>
+        <h1>Get Hive for <em id="detected-platform">your system</em>.</h1>
+        <p>Hive checks your browser’s platform information and recommends the newest compatible installer. Nothing is installed automatically.</p>
+
+        <div class="download-panel" aria-live="polite">
+          <div class="download-loading" id="download-loading">
+            <span class="download-spinner" aria-hidden="true"></span>
+            <div><strong>Finding the latest compatible build…</strong><small>Checking the current GitHub release.</small></div>
+          </div>
+
+          <div class="download-recommendation" id="download-recommendation" hidden>
+            <div class="download-mark" aria-hidden="true">⬡</div>
+            <div class="download-copy">
+              <span class="download-label">Recommended for this device</span>
+              <h2 id="download-title">Hive</h2>
+              <p id="download-description"></p>
+              <div class="download-actions">
+                <a class="button button-primary" id="download-primary" href="#">Download Hive <span>↓</span></a>
+                <a class="download-release-link" id="download-release-link" href="https://github.com/SantiaGoMode/hive/releases">Release notes <span>↗</span></a>
+              </div>
+              <small class="download-filename" id="download-filename"></small>
+            </div>
+          </div>
+
+          <div class="download-message" id="download-message" hidden>
+            <h2 id="download-message-title">Choose a build</h2>
+            <p id="download-message-copy"></p>
+            <a class="button button-secondary" href="#all-downloads">See compatible downloads <span>↓</span></a>
+          </div>
+        </div>
+      </section>
+
+      <section class="download-options shell" id="all-downloads">
+        <div class="section-heading compact">
+          <div>
+            <div class="eyebrow"><span></span>All desktop builds</div>
+            <h2>Choose manually.</h2>
+          </div>
+          <p>Browser detection can be limited—especially for Mac processor type. Select your platform if the recommendation is not right.</p>
+        </div>
+
+        <div class="download-selectors" aria-label="Download filters">
+          <label>
+            Operating system
+            <select id="download-os">
+              <option value="mac">macOS</option>
+              <option value="linux">Linux</option>
+              <option value="windows">Windows</option>
+            </select>
+          </label>
+          <label>
+            Processor
+            <select id="download-arch">
+              <option value="arm64">ARM64 / Apple silicon</option>
+              <option value="x64">x64 / Intel or AMD</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="download-choice" id="download-choice" aria-live="polite"></div>
+
+        <div class="download-help">
+          <div><strong>Not sure which processor?</strong><span>On macOS, open Apple menu → About This Mac. On Linux, run <code>uname -m</code>.</span></div>
+          <div><strong>Linux package choice</strong><span>The native Debian package is recommended for Ubuntu and Debian. It provides normal installation and launcher integration.</span></div>
+          <div><strong>Verify the download</strong><span>Checksums and release artifacts remain available on GitHub for every published version.</span></div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="shell footer-main">
+        <div><a class="brand footer-brand" href="{{ '/' | relative_url }}"><img src="{{ '/assets/hive-icon.svg' | relative_url }}" alt="" width="34" height="34"><span>Hive</span></a><p>Local-first AI agent orchestration.</p></div>
+        <div class="footer-links"><div><strong>Product</strong><a href="{{ '/#features' | relative_url }}">Capabilities</a><a href="{{ '/docs/staff/' | relative_url }}">Staff</a><a href="https://github.com/SantiaGoMode/hive/releases">Releases</a></div><div><strong>Learn</strong><a href="{{ '/docs/' | relative_url }}">Documentation</a><a href="{{ '/docs/guides/first-agent/' | relative_url }}">Agent how-to</a><a href="{{ '/docs/guides/pipeline/' | relative_url }}">Workflow how-to</a><a href="{{ '/docs/faq/' | relative_url }}">FAQ</a></div><div><strong>Project</strong><a href="https://github.com/SantiaGoMode/hive">GitHub</a><a href="https://github.com/SantiaGoMode/hive/issues">Issues</a></div></div>
+      </div>
+      <div class="shell footer-bottom"><span>© 2026 Hive. Open source under the ISC License.</span><span>Built locally. Runs locally.</span></div>
+    </footer>
+
+    <script src="{{ '/assets/site.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
+    <script src="{{ '/assets/download.js' | relative_url }}?v={{ site.time | date: '%s' }}"></script>
+    {% include analytics.html %}
+  </body>
+</html>
