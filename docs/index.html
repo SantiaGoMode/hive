@@ -15,7 +15,7 @@ description: Build a durable AI staff, run specialized agents and multi-agent cr
     <meta property="og:image" content="{{ '/screenshots/1. Agents Tab  - Home.png' | absolute_url }}">
     <title>{{ page.title }}</title>
     <link rel="icon" href="{{ '/assets/hive-icon.svg' | relative_url }}" type="image/svg+xml">
-    <link rel="stylesheet" href="{{ '/assets/site.css' | relative_url }}">
+    <link rel="stylesheet" href="{{ '/assets/site.css' | relative_url }}?v={{ site.time | date: '%s' }}">
   </head>
   <body class="home-page">
     {% include site-header.html %}
